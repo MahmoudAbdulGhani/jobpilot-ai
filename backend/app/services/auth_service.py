@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -28,11 +28,20 @@ class InvalidRefreshTokenError(Exception):
     pass
 
 
+OWNER_BOOTSTRAP_LOCK_ID = 0x4A4F4250494C4F54
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
 def create_first_owner(session: Session, *, email: str, password: str) -> User:
+    # Serialize only the one-time bootstrap operation. This does not constrain
+    # future registration or impose a uniqueness rule on the users table.
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_id)"),
+        {"lock_id": OWNER_BOOTSTRAP_LOCK_ID},
+    )
     if session.scalar(select(User)) is not None:
         raise OwnerAlreadyExistsError("an owner account already exists")
     user = User(
@@ -82,8 +91,17 @@ def rotate_refresh(session: Session, *, presented: str) -> tuple[User, str, str]
     return user, create_access_token(user.id), new_refresh
 
 
-def revoke_presented(session: Session, *, presented: str) -> None:
-    row = _lookup_active(session, presented)
+def revoke_presented(
+    session: Session, *, presented: str, user_id: uuid.UUID
+) -> None:
+    row = session.scalar(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == hash_token(presented),
+            RefreshToken.user_id == user_id,
+        )
+    )
+    if row is not None and not row.is_active():
+        row = None
     if row is not None:
         row.revoked_at = datetime.now(timezone.utc)
         session.commit()

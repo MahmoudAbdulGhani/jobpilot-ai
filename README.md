@@ -78,14 +78,6 @@ Run tests:
 The test suite refuses to use the development database and targets the database
 named by `POSTGRES_TEST_DB`.
 
-## Focused security follow-up
-
-Before multi-user account work, review two authentication concerns identified during
-the baseline audit: concurrent `setup-owner` calls are not protected by a database
-singleton/lock, and logout token revocation does not explicitly compare the refresh
-token's `user_id` with the authenticated bearer user's ID. These are review items,
-not confirmed exploits.
-
 ## Roadmap
 
 1. Backend foundation (config, database, auth)

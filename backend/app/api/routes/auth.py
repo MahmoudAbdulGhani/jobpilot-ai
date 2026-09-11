@@ -118,7 +118,9 @@ def logout(
     _enforce_csrf(request)
     presented = request.cookies.get(REFRESH_COOKIE_NAME)
     if presented:
-        auth_service.revoke_presented(db, presented=presented)
+        auth_service.revoke_presented(
+            db, presented=presented, user_id=current_user.id
+        )
     clear_auth_cookies(response)
     return {"status": "logged_out"}
 

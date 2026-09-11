@@ -303,6 +303,22 @@ class TestCsrfEnforcement:
 
 
 class TestLogout:
+    def test_logout_requires_bearer_token(self, auth_client, owner, db_session):
+        login(auth_client)
+        refresh = client_cookie_value(client=auth_client, name=REFRESH_COOKIE_NAME)
+        csrf = client_cookie_value(client=auth_client, name=CSRF_COOKIE_NAME)
+
+        response = auth_client.post(
+            "/api/auth/logout", headers={"X-CSRF-Token": csrf}
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        row = db_session.scalar(
+            select(RefreshToken).where(RefreshToken.token_hash == hash_token(refresh))
+        )
+        db_session.refresh(row)
+        assert row.revoked_at is None
+
     def test_logout_revokes_and_clears_cookies(self, auth_client, owner, db_session):
         login_response = login(auth_client)
         access = login_response.json()["access_token"]
@@ -344,6 +360,87 @@ class TestLogout:
             "/api/auth/logout", headers={"Authorization": f"Bearer {access}"}
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_logout_does_not_revoke_another_users_refresh_token(
+        self, auth_client, owner, db_session
+    ):
+        access = login(auth_client).json()["access_token"]
+        other = User(
+            email="other@jobpilot-test.com",
+            password_hash=hash_password(TEST_PASSWORD),
+            is_active=True,
+        )
+        db_session.add(other)
+        db_session.commit()
+        _, other_refresh = auth_service.issue_session(db_session, user=other)
+        csrf = generate_csrf_token()
+
+        response = auth_client.post(
+            "/api/auth/logout",
+            headers={
+                "Authorization": f"Bearer {access}",
+                "X-CSRF-Token": csrf,
+            },
+            cookies={
+                REFRESH_COOKIE_NAME: other_refresh,
+                CSRF_COOKIE_NAME: csrf,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = db_session.scalar(
+            select(RefreshToken).where(
+                RefreshToken.token_hash == hash_token(other_refresh)
+            )
+        )
+        db_session.refresh(row)
+        assert row.revoked_at is None
+
+    def test_logout_with_invalid_refresh_token_is_idempotent(
+        self, auth_client, owner
+    ):
+        access = login(auth_client).json()["access_token"]
+        csrf = generate_csrf_token()
+
+        response = auth_client.post(
+            "/api/auth/logout",
+            headers={
+                "Authorization": f"Bearer {access}",
+                "X-CSRF-Token": csrf,
+            },
+            cookies={
+                REFRESH_COOKIE_NAME: generate_refresh_token(),
+                CSRF_COOKIE_NAME: csrf,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "logged_out"}
+
+    def test_logout_with_already_revoked_token_is_idempotent(
+        self, auth_client, owner, db_session
+    ):
+        login_response = login(auth_client)
+        access = login_response.json()["access_token"]
+        refresh = client_cookie_value(client=auth_client, name=REFRESH_COOKIE_NAME)
+        csrf = client_cookie_value(client=auth_client, name=CSRF_COOKIE_NAME)
+        row = db_session.scalar(
+            select(RefreshToken).where(RefreshToken.token_hash == hash_token(refresh))
+        )
+        row.revoked_at = datetime.now(timezone.utc)
+        db_session.commit()
+
+        response = auth_client.post(
+            "/api/auth/logout",
+            headers={
+                "Authorization": f"Bearer {access}",
+                "X-CSRF-Token": csrf,
+            },
+            cookies={REFRESH_COOKIE_NAME: refresh, CSRF_COOKIE_NAME: csrf},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "logged_out"}
 
 
 class TestCookieFlags:
