@@ -37,6 +37,15 @@ are added in later phases when first needed.
 
 ## Local development (backend)
 
+Start PostgreSQL from the repository root:
+
+```powershell
+docker compose up -d db
+docker compose ps
+```
+
+Then configure, migrate, and run the backend:
+
 ```powershell
 cd backend
 py -m venv .venv
@@ -44,6 +53,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item ..\.env.example ..\.env   # then edit .env: set SECRET_KEY
 
+.\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
@@ -64,6 +74,17 @@ Run tests:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
+
+The test suite refuses to use the development database and targets the database
+named by `POSTGRES_TEST_DB`.
+
+## Focused security follow-up
+
+Before multi-user account work, review two authentication concerns identified during
+the baseline audit: concurrent `setup-owner` calls are not protected by a database
+singleton/lock, and logout token revocation does not explicitly compare the refresh
+token's `user_id` with the authenticated bearer user's ID. These are review items,
+not confirmed exploits.
 
 ## Roadmap
 

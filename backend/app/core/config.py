@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote_plus
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -19,7 +19,9 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "JobPilot AI"
     ENVIRONMENT: Literal["local", "test", "production"] = "local"
-    DEBUG: bool = False
+    # Use a project-specific environment name because DEBUG is commonly set by
+    # shells and developer tools to non-Boolean values.
+    DEBUG: bool = Field(default=False, validation_alias="JOBPILOT_DEBUG")
     API_PREFIX: str = "/api"
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     SECRET_KEY: str

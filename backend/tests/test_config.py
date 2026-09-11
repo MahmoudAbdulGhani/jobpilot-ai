@@ -25,7 +25,7 @@ def test_defaults_are_applied(monkeypatch: pytest.MonkeyPatch):
         monkeypatch,
         APP_NAME=None,
         ENVIRONMENT=None,
-        DEBUG=None,
+        JOBPILOT_DEBUG=None,
         API_PREFIX=None,
         CORS_ORIGINS=None,
     )
@@ -72,9 +72,17 @@ def test_invalid_environment_value_is_rejected(monkeypatch: pytest.MonkeyPatch):
     assert "ENVIRONMENT" in str(error.value)
 
 
-def test_debug_string_is_coerced_to_bool(monkeypatch: pytest.MonkeyPatch):
-    assert make_settings(monkeypatch, DEBUG="true").DEBUG is True
-    assert make_settings(monkeypatch, DEBUG="false").DEBUG is False
+def test_jobpilot_debug_string_is_coerced_to_bool(monkeypatch: pytest.MonkeyPatch):
+    assert make_settings(monkeypatch, JOBPILOT_DEBUG="true").DEBUG is True
+    assert make_settings(monkeypatch, JOBPILOT_DEBUG="false").DEBUG is False
+
+
+def test_unrelated_debug_environment_variable_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("DEBUG", "release")
+
+    assert make_settings(monkeypatch, JOBPILOT_DEBUG="false").DEBUG is False
 
 
 def test_get_settings_returns_cached_instance():
