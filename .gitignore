@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+.secrets/
+secrets/
+
+# Local databases and private application data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+data/
+uploads/
+storage/
+
+# Frontend (added properly when the frontend phase starts)
+node_modules/
+.next/
+out/
+
+# Editors and OS artifacts
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
