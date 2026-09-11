@@ -9,8 +9,8 @@ source of the latest approved CV; JobPilot owns everything else.
 
 ## Status
 
-Phase 1e - single-owner authentication (Argon2id password hashing, JWT access tokens,
-rotating refresh tokens, CSRF-protected cookie logout, owner-setup CLI).
+Backend foundation with single-owner authentication and private saved-job CRUD,
+filtering, search, archiving, and pagination.
 
 ## Tech stack
 
@@ -32,8 +32,7 @@ jobpilot-ai/
 └── README.md
 ```
 
-Directories such as `models/`, `schemas/`, `services/`, `repositories/`, `agents/`
-are added in later phases when first needed.
+Domain models, validation schemas, services, and API routes live under `backend/app/`.
 
 ## Local development (backend)
 
@@ -77,6 +76,37 @@ Run tests:
 
 The test suite refuses to use the development database and targets the database
 named by `POSTGRES_TEST_DB`.
+
+## Saved jobs API
+
+Saved jobs belong to the authenticated user. Source URLs are stored only as bookmarks;
+JobPilot does not fetch or scrape them. Different users may save the same URL.
+
+Input limits are 200 characters for title and company, 300 for location, 50,000 for
+the job description, 2,048 for an HTTP/HTTPS source URL, and 20,000 for personal
+notes. List searches are limited to 200 characters, and page size is 1–100.
+
+To try the workflow in Swagger at http://127.0.0.1:8000/api/docs:
+
+1. Call `POST /api/auth/login` with the local owner credentials.
+2. Copy the returned access token, choose **Authorize**, and enter the token value.
+3. Call `POST /api/jobs` with a request such as:
+
+   ```json
+   {
+     "title": "Backend Engineer",
+     "company": "Example Systems",
+     "location": "Remote",
+     "description": "Build and maintain reliable APIs.",
+     "source_url": "https://careers.example.com/jobs/backend-engineer",
+     "notes": "Review the platform requirements before applying."
+   }
+   ```
+
+4. Call `GET /api/jobs`; active jobs are returned by default. Use
+   `?archived=true`, `?search=backend`, `?page=1`, and `?page_size=20` as needed.
+5. Call `PATCH /api/jobs/{job_id}` to edit it or send
+   `{"is_archived": true}` to archive it. Use `DELETE` to permanently remove it.
 
 ## Roadmap
 
