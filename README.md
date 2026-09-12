@@ -9,13 +9,14 @@ source of the latest approved CV; JobPilot owns everything else.
 
 ## Status
 
-Backend foundation with single-owner authentication and private saved-job CRUD,
-filtering, search, archiving, and pagination.
+Connected FastAPI/PostgreSQL backend and Next.js Career Journal frontend with
+single-owner authentication and private saved-job CRUD, filtering, search,
+archiving, and pagination.
 
 ## Tech stack
 
 - Backend: Python 3.11+, FastAPI, Pydantic / Pydantic Settings
-- Frontend (later phase): Next.js, TypeScript, Tailwind CSS
+- Frontend: Next.js App Router, TypeScript, Newsreader, DM Sans, Phosphor icons
 - Database (Phase 1b): PostgreSQL via Docker Compose, SQLAlchemy, Alembic
 - Testing: pytest
 
@@ -76,6 +77,43 @@ Run tests:
 
 The test suite refuses to use the development database and targets the database
 named by `POSTGRES_TEST_DB`.
+
+## Local development (frontend)
+
+Use `localhost` for both services; do not mix it with `127.0.0.1`, because the
+refresh and CSRF cookies are host-scoped. After the backend and owner account are
+ready, open a second PowerShell window from the repository root:
+
+```powershell
+cd frontend
+Copy-Item .env.example .env.local
+npm ci
+npm run dev
+```
+
+- Frontend: http://localhost:3000
+- Backend: http://localhost:8000
+- API docs: http://localhost:8000/api/docs
+
+`NEXT_PUBLIC_API_URL` is the non-secret browser-visible API base and defaults to
+`http://localhost:8000/api`. Keep backend secrets only in the repository-root
+`.env`; never use a `NEXT_PUBLIC_` variable for them.
+
+The access token is held only in browser memory. The backend owns the HttpOnly
+`jobpilot_refresh` cookie and readable `jobpilot_csrf` cookie. The frontend sends
+credentials with API calls, restores sessions through `/api/auth/refresh`, sends
+the matching `X-CSRF-Token` on refresh/logout, coordinates concurrent refreshes,
+and retries an authenticated request at most once. Production still requires
+HTTPS with `AUTH_COOKIE_SECURE=true`.
+
+Frontend checks:
+
+```powershell
+cd frontend
+npm run typecheck
+npm run lint
+npm run build
+```
 
 ## Saved jobs API
 
