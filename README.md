@@ -10,8 +10,9 @@ source of the latest approved CV; JobPilot owns everything else.
 ## Status
 
 Connected FastAPI/PostgreSQL backend and Next.js Career Journal frontend with
-single-owner authentication and private saved-job CRUD, filtering, search,
-archiving, and pagination.
+single-owner authentication, private saved-job CRUD with filtering, search,
+archiving, and pagination, and a private candidate profile for the job-search
+snapshot.
 
 ## Tech stack
 
@@ -123,11 +124,13 @@ cd frontend
 npm run test:e2e
 ```
 
-The final verification completed 91 backend tests and 2 connected browser tests.
+The final verification completed 120 backend tests and 3 connected browser tests.
 Coverage includes login and reload restoration, persisted CRUD, nullable-field
 clearing, notes, server search and pagination, archive/restore, deletion
-cancel/confirm, logout, missing IDs, mobile dialog behavior, and two-user isolation.
-Screenshots and the normalized option-2 comparison are under `evidence/`.
+cancel/confirm, logout, missing IDs, mobile dialog behavior, two-user isolation,
+and the connected candidate profile workflow (empty state, create and persist,
+reload, client validation, second-user isolation). Screenshots and the normalized
+option-2 comparison are under `evidence/`.
 
 ## Saved jobs API
 
@@ -159,6 +162,25 @@ To try the workflow in Swagger at http://127.0.0.1:8000/api/docs:
    `?archived=true`, `?search=backend`, `?page=1`, and `?page_size=20` as needed.
 5. Call `PATCH /api/jobs/{job_id}` to edit it or send
    `{"is_archived": true}` to archive it. Use `DELETE` to permanently remove it.
+
+## Candidate profile API
+
+The candidate profile is a private snapshot owned by the signed-in user:
+
+- `GET /api/profile` returns the profile, or `404` before it has been created.
+- `PATCH /api/profile` upserts it: partial updates merge with saved values, and
+  fields sent as `null` are cleared. An empty `{}` payload is valid for
+  updating other fields in parallel before any profile exists.
+
+Supported fields: `headline` (≤200), `target_roles` (≤10), `location` (≤300),
+`remote_preference` (`office|hybrid|remote`), `work_authorization`
+(`citizen|permanent_resident|work_visa|needs_sponsorship|other`), `skills`
+(≤50 of ≤100 chars), `experience` (≤20 `{title, organization, period, notes}`),
+`education` (≤10 `{school, degree, field, period}`), `languages`
+(≤15 `{name, proficiency}` with proficiency
+`basic|conversational|professional|native`), and `salary_preference`
+(`{currency, min, max}` with `min ≤ max`). Empty optional strings normalize to
+`null`, matching the jobs API convention.
 
 ## Roadmap
 

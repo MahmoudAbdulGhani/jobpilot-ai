@@ -6,3 +6,37 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
 .description-block{margin-top:31px}.description-block h2{margin-bottom:13px}.description-section li{font-size:19px;line-height:1.52}.description-section ul{margin:0;padding-inline-start:20px}.description-section li::marker{color:var(--forest);font-size:14px}
 .dialog{overflow:auto}
+.form-body select{border:1px solid #cdcec3;background:#fffefb;border-radius:5px;padding:11px 12px;font-weight:400}
+.profile-notice{display:flex;align-items:center;gap:9px;margin-top:26px;background:#e7efe9;border:1px solid #cfe0d5;color:var(--forest);font-weight:550}
+.profile-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:28px;margin-top:36px}
+.profile-card{border:1px solid var(--line);border-radius:10px;background:#fffdf8;padding:30px 34px}
+.profile-hero{display:flex;align-items:center;gap:22px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+.profile-hero h2{font-size:36px;line-height:1.12;overflow-wrap:anywhere}
+.profile-avatar{width:72px;height:72px;flex:none;background:#dbe1d7;color:var(--forest)}
+.profile-avatar svg{display:block}
+.profile-meta{display:flex;align-items:center;flex-wrap:wrap;gap:11px;margin-top:9px;font-size:17px;color:var(--muted)}
+.profile-meta span{display:flex;align-items:center;gap:7px}
+.profile-section{padding-block:24px;border-bottom:1px solid var(--line)}
+.profile-section:last-child{border-bottom:0;padding-bottom:0}
+.profile-section h3{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-family:var(--serif);font-size:24px;font-weight:600}
+.profile-section .muted{margin-top:4px}
+.chip-list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px}
+.chip{padding:8px 14px;border:1px solid var(--line);border-radius:999px;background:var(--note);font-size:15px}
+.timeline-list,.line-list{list-style:none;margin:0;padding:0;display:grid;gap:18px}
+.timeline-list li,.line-list li{display:flex;flex-direction:column;gap:3px}
+.timeline-list strong{font-size:17px}
+.timeline-list p{font-size:15px;color:#4a4d48;margin-top:5px}
+.line-list li{flex-direction:row;justify-content:space-between;font-size:16px}
+.profile-form{max-width:860px;margin-top:38px;border:1px solid var(--line);border-radius:10px;background:#fffdf8}
+.profile-form .form-body{padding:30px 34px}
+.entry-group{margin-top:24px;padding-top:22px;border-top:1px solid var(--line)}
+.entry-group .text-button{margin-top:14px;padding:0}
+.entry-heading{margin-bottom:8px}
+.entry-heading>span{display:inline-flex;align-items:center;gap:9px;font:600 17px var(--sans)}
+.entry-heading svg{color:var(--forest)}
+.entry-card{border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:20px 20px 16px;margin-top:16px}
+.entry-card-slim{padding:20px 20px 14px}
+.entry-card .form-grid+button{margin-top:4px}
+.entry-remove{display:inline-flex;align-items:center;gap:7px;color:var(--danger);font-size:14px;font-weight:550;padding:6px 2px;margin-top:10px}
+@media(max-width:880px){.profile-grid{grid-template-columns:1fr;gap:20px}.profile-card{padding:24px}.profile-form .form-body{padding:24px}}
+@media(max-width:520px){.profile-hero{flex-direction:column;align-items:flex-start}.profile-avatar{width:60px;height:60px}}
