@@ -17,6 +17,6 @@ export async function api<T>(path:string, init:RequestInit = {}, retry=true):Pro
   if (!response.ok) { let message=`Request failed (${response.status})`; try { const b=await response.json(); message=typeof b.detail==='string'?b.detail:(b.detail?.[0]?.msg||message); } catch {} throw new Error(message); }
   return response.status === 204 ? undefined as T : response.json();
 }
-export async function restoreSession(){ if (!await refresh()) return null; return api<import('./types').User>('/auth/me'); }
+export async function restoreSession(){ if (!csrf() || !await refresh()) return null; return api<import('./types').User>('/auth/me'); }
 export async function login(email:string,password:string){ const x=await api<{access_token:string}>('/auth/login',{method:'POST',body:JSON.stringify({email,password})},false); setAccessToken(x.access_token); return api<import('./types').User>('/auth/me'); }
 export async function logout(){ try { if (!token) await refresh(); await api('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':csrf()}},false); return true; } catch { return false; } finally { setAccessToken(null); } }

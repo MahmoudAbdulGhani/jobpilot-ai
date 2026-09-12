@@ -115,6 +115,20 @@ npm run lint
 npm run build
 ```
 
+Connected browser verification uses Playwright Chromium and a backend explicitly
+pointed at the guarded `jobpilot_test` database. With both local services running:
+
+```powershell
+cd frontend
+npm run test:e2e
+```
+
+The final verification completed 91 backend tests and 2 connected browser tests.
+Coverage includes login and reload restoration, persisted CRUD, nullable-field
+clearing, notes, server search and pagination, archive/restore, deletion
+cancel/confirm, logout, missing IDs, mobile dialog behavior, and two-user isolation.
+Screenshots and the normalized option-2 comparison are under `evidence/`.
+
 ## Saved jobs API
 
 Saved jobs belong to the authenticated user. Source URLs are stored only as bookmarks;
