@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { API, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
+import { bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
 async function createJob(page: Page, title: string, company = 'Cedar Labs') {
   await page.getByRole('button', { name: 'Save a job' }).first().click();

@@ -4,7 +4,7 @@ export const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api
 
 export type E2eUser = { email: string; password: string };
 
-export let createdUsers: string[] = [];
+export const createdUsers: string[] = [];
 
 export function trackUser(email: string) {
   createdUsers.push(email);

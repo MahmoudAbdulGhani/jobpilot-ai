@@ -132,6 +132,26 @@ and the connected candidate profile workflow (empty state, create and persist,
 reload, client validation, second-user isolation). Screenshots and the normalized
 option-2 comparison are under `evidence/`.
 
+## Resume library
+
+The resume library stores each candidate's original file bytes verbatim and
+serves only the owner:
+
+- `POST /api/resumes` accepts a multipart upload and stores the exact bytes from
+  the client (no rewriting, re-encoding, or text re-extraction on the server).
+- `GET /api/resumes` lists the saved resumes; `PATCH /api/resumes/{id}` sets the
+  primary resume or renames it; `DELETE /api/resumes/{id}` removes a resume.
+- `GET /api/resumes/{id}/download` streams the original bytes back with the
+  original filename, so a downloaded DOCX is byte-for-byte the uploaded DOCX.
+
+This is what "DOCX→blob" means in the code: the frontend reads the local upload
+(original bytes → browser `Blob`), uploads it to the private endpoint, and the
+backend persists those bytes as an opaque blob. Validation inspects only the
+magic header and ZIP container to accept `application/pdf` and
+`application/vnd.openxmlformats-officedocument.wordprocessingml.document`; it
+never transforms or silently rewrites a file, and unsupported files are rejected
+with `415` rather than being altered.
+
 ## Saved jobs API
 
 Saved jobs belong to the authenticated user. Source URLs are stored only as bookmarks;
