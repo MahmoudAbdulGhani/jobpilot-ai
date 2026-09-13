@@ -28,6 +28,7 @@ def test_defaults_are_applied(monkeypatch: pytest.MonkeyPatch):
         JOBPILOT_DEBUG=None,
         API_PREFIX=None,
         CORS_ORIGINS=None,
+        E2E_TEST_MODE=None,
     )
 
     assert settings.APP_NAME == "JobPilot AI"
@@ -35,6 +36,12 @@ def test_defaults_are_applied(monkeypatch: pytest.MonkeyPatch):
     assert settings.DEBUG is False
     assert settings.API_PREFIX == "/api"
     assert settings.CORS_ORIGINS == ["http://localhost:3000"]
+    assert settings.E2E_TEST_MODE is False
+
+
+def test_e2e_test_mode_string_is_coerced_to_bool(monkeypatch: pytest.MonkeyPatch):
+    assert make_settings(monkeypatch, E2E_TEST_MODE="true").E2E_TEST_MODE is True
+    assert make_settings(monkeypatch, E2E_TEST_MODE="false").E2E_TEST_MODE is False
 
 
 def test_missing_secret_key_fails_validation(monkeypatch: pytest.MonkeyPatch):

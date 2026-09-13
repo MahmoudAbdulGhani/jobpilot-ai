@@ -42,11 +42,22 @@ DOCUMENT_XML = (
 )
 
 
-def docx_bytes(content_types: str = CONTENT_TYPES_XML, document: str = DOCUMENT_XML) -> bytes:
+def docx_bytes(
+    content_types: str | bytes = CONTENT_TYPES_XML,
+    document: str | bytes = DOCUMENT_XML,
+) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as container:
         container.writestr("[Content_Types].xml", content_types)
         container.writestr("word/document.xml", document)
+    return buffer.getvalue()
+
+
+def docx_with_entries(entries: dict[str, str | bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as container:
+        for name, value in entries.items():
+            container.writestr(name, value)
     return buffer.getvalue()
 
 
@@ -233,6 +244,89 @@ def test_upload_rejects_malformed_docx(resume_client, resume_users):
         resume_client, owner, filename="spreadsheet.docx", data=wrong_position.getvalue()
     )
     assert wrong_position.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_upload_rejects_docx_over_entry_limit(resume_client, resume_users):
+    owner, _ = resume_users
+    entries = {
+        "[Content_Types].xml": CONTENT_TYPES_XML,
+        "word/document.xml": DOCUMENT_XML,
+        **{f"custom/item-{index}.xml": "<item/>" for index in range(63)},
+    }
+    response = upload(
+        resume_client, owner, filename="too-many.docx", data=docx_with_entries(entries)
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_upload_rejects_docx_over_total_expanded_limit(resume_client, resume_users):
+    owner, _ = resume_users
+    response = upload(
+        resume_client,
+        owner,
+        filename="expanded.docx",
+        data=docx_with_entries(
+            {
+                "[Content_Types].xml": CONTENT_TYPES_XML,
+                "word/document.xml": DOCUMENT_XML,
+                "custom/large.bin": b"x" * (8 * 1024 * 1024),
+            }
+        ),
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        {"word/document.xml": DOCUMENT_XML},
+        {"[Content_Types].xml": CONTENT_TYPES_XML},
+    ],
+)
+def test_upload_rejects_docx_missing_required_parts(resume_client, resume_users, entries):
+    owner, _ = resume_users
+    response = upload(
+        resume_client, owner, filename="missing.docx", data=docx_with_entries(entries)
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.parametrize(
+    ("content_types", "document"),
+    [
+        ("<Types>", DOCUMENT_XML),
+        (CONTENT_TYPES_XML, "<w:document>"),
+        (
+            '<!DOCTYPE Types [<!ENTITY x "value">]><Types>&x;</Types>',
+            DOCUMENT_XML,
+        ),
+        (
+            CONTENT_TYPES_XML,
+            '<!DOCTYPE document [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">&x;</w:document>',
+        ),
+        (
+            CONTENT_TYPES_XML,
+            (
+                '<?xml version="1.0" encoding="utf-16"?>'
+                '<!DOCTYPE document [<!ENTITY x "value">]>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+                'wordprocessingml/2006/main">&x;</w:document>'
+            ).encode("utf-16"),
+        ),
+    ],
+)
+def test_upload_rejects_malformed_or_entity_docx_xml(
+    resume_client, resume_users, content_types, document
+):
+    owner, _ = resume_users
+    response = upload(
+        resume_client,
+        owner,
+        filename="malformed.docx",
+        data=docx_bytes(content_types=content_types, document=document),
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
 def test_submitted_filename_is_metadata_only(resume_client, resume_users, storage_dir):
@@ -528,7 +622,10 @@ def test_e2e_bootstrap_and_cleanup_are_guarded_outside_test_database(client):
         == status.HTTP_404_NOT_FOUND
     )
     assert (
-        client.post("/api/e2e/cleanup", json={"email": "guarded@jobpilot-test.com"}).status_code
+        client.post(
+            "/api/e2e/cleanup",
+            json={"email": "guarded@jobpilot-test.com", "password": "password-123"},
+        ).status_code
         == status.HTTP_404_NOT_FOUND
     )
 
@@ -539,6 +636,7 @@ def test_e2e_bootstrap_creates_idempotent_disposable_users(
     fake_settings = SimpleNamespace(
         database_url="postgresql+psycopg://u:p@host:5433/jobpilot_test",
         POSTGRES_TEST_DB="jobpilot_test",
+        E2E_TEST_MODE=True,
     )
     monkeypatch.setattr("app.api.routes.e2e.get_settings", lambda: fake_settings)
     payload = {
@@ -553,11 +651,11 @@ def test_e2e_bootstrap_creates_idempotent_disposable_users(
     stored = db_session.scalar(select(User).where(User.email == payload["email"]))
     assert stored is not None
 
-    cleaned = resume_client.post("/api/e2e/cleanup", json={"email": payload["email"]})
+    cleaned = resume_client.post("/api/e2e/cleanup", json=payload)
     assert cleaned.status_code == status.HTTP_200_OK
     assert cleaned.json() == {"deleted": True}
     assert db_session.scalar(select(User).where(User.email == payload["email"])) is None
-    again = resume_client.post("/api/e2e/cleanup", json={"email": payload["email"]})
+    again = resume_client.post("/api/e2e/cleanup", json=payload)
     assert again.json() == {"deleted": False}
 
 
@@ -567,11 +665,16 @@ def test_e2e_cleanup_removes_resumes_and_their_files(
     fake_settings = SimpleNamespace(
         database_url="postgresql+psycopg://u:p@host:5433/jobpilot_test",
         POSTGRES_TEST_DB="jobpilot_test",
+        E2E_TEST_MODE=True,
     )
     monkeypatch.setattr("app.api.routes.e2e.get_settings", lambda: fake_settings)
+    credentials = {
+        "email": "cleanup-run@jobpilot-test.com",
+        "password": "disposable-password",
+    }
     created = resume_client.post(
         "/api/e2e/bootstrap",
-        json={"email": "cleanup-run@jobpilot-test.com", "password": "disposable-password"},
+        json=credentials,
     ).json()
     user = db_session.scalar(select(User).where(User.email == created["email"]))
 
@@ -580,8 +683,49 @@ def test_e2e_cleanup_removes_resumes_and_their_files(
     assert storage_dir.joinpath(str(resume_id)).is_file()
 
     cleaned = resume_client.post(
-        "/api/e2e/cleanup", json={"email": created["email"]}
+        "/api/e2e/cleanup", json=credentials
     )
     assert cleaned.json() == {"deleted": True}
     assert storage_dir.joinpath(str(resume_id)).exists() is False
     assert db_session.scalar(select(Resume).where(Resume.id == resume_id)) is None
+
+
+@pytest.mark.parametrize(
+    ("enabled", "database_url"),
+    [
+        (False, "postgresql+psycopg://u:p@host:5433/jobpilot_test"),
+        (True, "postgresql+psycopg://u:p@host:5433/jobpilot"),
+    ],
+)
+def test_e2e_endpoints_require_mode_and_test_database(
+    resume_client, monkeypatch, enabled, database_url
+):
+    fake_settings = SimpleNamespace(
+        database_url=database_url,
+        POSTGRES_TEST_DB="jobpilot_test",
+        E2E_TEST_MODE=enabled,
+    )
+    monkeypatch.setattr("app.api.routes.e2e.get_settings", lambda: fake_settings)
+    credentials = {"email": "double-guard@jobpilot-test.com", "password": "password-123"}
+    assert resume_client.post("/api/e2e/bootstrap", json=credentials).status_code == 404
+    assert resume_client.post("/api/e2e/cleanup", json=credentials).status_code == 404
+
+
+def test_e2e_cleanup_cannot_remove_another_runs_user(
+    resume_client, db_session, monkeypatch
+):
+    fake_settings = SimpleNamespace(
+        database_url="postgresql+psycopg://u:p@host:5433/jobpilot_test",
+        POSTGRES_TEST_DB="jobpilot_test",
+        E2E_TEST_MODE=True,
+    )
+    monkeypatch.setattr("app.api.routes.e2e.get_settings", lambda: fake_settings)
+    owner = {"email": "owned-run@jobpilot-test.com", "password": "owner-password"}
+    assert resume_client.post("/api/e2e/bootstrap", json=owner).status_code == 200
+
+    denied = resume_client.post(
+        "/api/e2e/cleanup",
+        json={"email": owner["email"], "password": "different-run-password"},
+    )
+    assert denied.json() == {"deleted": False}
+    assert db_session.scalar(select(User).where(User.email == owner["email"])) is not None

@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     POSTGRES_TEST_DB: str = "jobpilot_test"
     POSTGRES_CONNECT_TIMEOUT: int = 3
 
+    # The e2e support endpoints (bootstrap/cleanup) require an explicit,
+    # disabled-by-default test mode. The endpoints additionally require a
+    # dedicated test database (enforced inside the routes against
+    # POSTGRES_TEST_DB), so both gates must be satisfied together. This flag is
+    # False by default, which keeps the disposable-user/bootstrap surface
+    # unreachable in every ordinary deployment.
+    E2E_TEST_MODE: bool = False
+
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     AUTH_COOKIE_SECURE: bool = False

@@ -116,15 +116,21 @@ npm run lint
 npm run build
 ```
 
-Connected browser verification uses Playwright Chromium and a backend explicitly
-pointed at the guarded `jobpilot_test` database. With both local services running:
+Connected browser verification uses Playwright Chromium. The harness starts its
+own frontend on port 3010 and backend on port 8010; those ports must be free. It
+sets `POSTGRES_DB` to `POSTGRES_TEST_DB` and explicitly enables
+`E2E_TEST_MODE=true` only for that guarded backend process. Do not enable this
+flag on the development server. Both conditions are required for the bootstrap
+and cleanup endpoints; otherwise they return `404`. Cleanup also requires the
+random password generated for that run, so it cannot delete another run's records.
 
 ```powershell
 cd frontend
 npm run test:e2e
 ```
 
-The final verification completed 120 backend tests and 3 connected browser tests.
+The final verification completed 160 backend tests, 19 frontend component tests,
+and 5 connected browser tests.
 Coverage includes login and reload restoration, persisted CRUD, nullable-field
 clearing, notes, server search and pagination, archive/restore, deletion
 cancel/confirm, logout, missing IDs, mobile dialog behavior, two-user isolation,
@@ -147,7 +153,7 @@ serves only the owner:
 This is what "DOCX→blob" means in the code: the frontend reads the local upload
 (original bytes → browser `Blob`), uploads it to the private endpoint, and the
 backend persists those bytes as an opaque blob. Validation inspects only the
-magic header and ZIP container to accept `application/pdf` and
+magic header and bounded ZIP/XML structure to accept `application/pdf` and
 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`; it
 never transforms or silently rewrites a file, and unsupported files are rejected
 with `415` rather than being altered.

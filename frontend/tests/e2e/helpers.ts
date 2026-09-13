@@ -1,10 +1,11 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
-export const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+export const API = 'http://localhost:8010/api';
 
 export type E2eUser = { email: string; password: string };
 
 export const createdUsers: string[] = [];
+const createdUserCredentials = new Map<string, E2eUser>();
 
 export function trackUser(email: string) {
   createdUsers.push(email);
@@ -12,16 +13,20 @@ export function trackUser(email: string) {
 
 export async function bootstrapUser(request: APIRequestContext, tag: string): Promise<E2eUser> {
   const email = `e2e-${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@jobpilot-test.com`;
-  const password = 'E2ePass-2026!';
+  const password = `E2e-${crypto.randomUUID()}!`;
   const response = await request.post(`${API}/e2e/bootstrap`, { data: { email, password } });
   expect(response.ok()).toBeTruthy();
   trackUser(email);
+  createdUserCredentials.set(email, { email, password });
   return { email, password };
 }
 
 export async function cleanupUser(request: APIRequestContext, email: string): Promise<void> {
-  const response = await request.post(`${API}/e2e/cleanup`, { data: { email } });
+  const user = createdUserCredentials.get(email);
+  expect(user).toBeDefined();
+  const response = await request.post(`${API}/e2e/cleanup`, { data: user });
   expect(response.ok()).toBeTruthy();
+  createdUserCredentials.delete(email);
 }
 
 export async function login(page: Page, user: E2eUser): Promise<void> {

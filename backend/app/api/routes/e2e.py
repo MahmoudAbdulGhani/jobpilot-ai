@@ -2,8 +2,8 @@
 
 These endpoints exist so the Playwright suites can provision disposable
 users and clean them up without depending on manually pre-seeded accounts.
-They refuse to run against anything but the guarded test database, returning
-404 (indistinguishable from a missing route) everywhere else.
+They require explicit test mode and the guarded test database, returning 404
+(indistinguishable from a missing route) everywhere else.
 """
 import uuid
 from typing import Annotated
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models import CandidateProfile, User
 from app.services import resume_service
 
@@ -36,6 +36,7 @@ class CleanupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr = Field(max_length=255)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class BootstrapResponse(BaseModel):
@@ -43,9 +44,9 @@ class BootstrapResponse(BaseModel):
     email: EmailStr
 
 
-def _require_test_database(settings: Settings) -> None:
+def _require_e2e_test_mode(settings: Settings) -> None:
     target = urlparse(settings.database_url).path.lstrip("/")
-    if target != settings.POSTGRES_TEST_DB:
+    if not settings.E2E_TEST_MODE or target != settings.POSTGRES_TEST_DB:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=GENERIC_NOT_FOUND)
 
 
@@ -57,7 +58,7 @@ def _find_user(db: Session, email: str):
 def bootstrap_user(
     body: BootstrapRequest, db: Session = Depends(get_db)
 ) -> BootstrapResponse:
-    _require_test_database(get_settings())
+    _require_e2e_test_mode(get_settings())
     user = _find_user(db, body.email)
     if user is None:
         user = User(email=body.email, password_hash=hash_password(body.password))
@@ -71,9 +72,9 @@ def bootstrap_user(
 def cleanup_user(
     body: CleanupRequest, db: Session = Depends(get_db)
 ) -> dict:
-    _require_test_database(get_settings())
+    _require_e2e_test_mode(get_settings())
     user = _find_user(db, body.email)
-    if user is None:
+    if user is None or not verify_password(body.password, user.password_hash):
         return {"deleted": False}
     resume_service.delete_owned_resumes(db, owner_id=user.id)
     db.execute(delete(CandidateProfile).where(CandidateProfile.owner_id == user.id))
