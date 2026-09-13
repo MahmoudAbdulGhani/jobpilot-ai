@@ -12,3 +12,7 @@ export type LanguageEntry = { name: string; proficiency: LanguageProficiency };
 export type SalaryPreference = { currency: string; min: number | null; max: number | null };
 export type CandidateProfile = { id: string; owner_id: string; headline: string | null; target_roles: string[] | null; location: string | null; remote_preference: RemotePreference | null; work_authorization: WorkAuthorization | null; skills: string[] | null; experience: ExperienceEntry[] | null; education: EducationEntry[] | null; languages: LanguageEntry[] | null; salary_preference: SalaryPreference | null; created_at: string; updated_at: string };
 export type CandidateProfileInput = { headline: string | null; target_roles: string[] | null; location: string | null; remote_preference: RemotePreference | null; work_authorization: WorkAuthorization | null; skills: string[] | null; experience: ExperienceEntry[] | null; education: EducationEntry[] | null; languages: LanguageEntry[] | null; salary_preference: SalaryPreference | null };
+
+export type Resume = { id: string; owner_id: string; original_filename: string; display_name: string; file_extension: string; size_bytes: number; is_primary: boolean; created_at: string; updated_at: string };
+export type ResumeList = { items: Resume[] };
+export type ResumeUpdateInput = { display_name?: string; is_primary?: boolean };

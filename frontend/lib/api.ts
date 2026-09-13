@@ -11,11 +11,18 @@ async function refresh() {
   return refreshFlight;
 }
 export async function api<T>(path:string, init:RequestInit = {}, retry=true):Promise<T> {
-  const headers = new Headers(init.headers); if (token) headers.set('Authorization', `Bearer ${token}`); if (init.body) headers.set('Content-Type','application/json');
+  const headers = new Headers(init.headers); if (token) headers.set('Authorization', `Bearer ${token}`); if (typeof init.body === 'string') headers.set('Content-Type','application/json');
   const response = await fetch(`${API}${path}`, {...init, headers, credentials:'include'});
   if (response.status === 401 && retry && path !== '/auth/login' && await refresh()) return api<T>(path, init, false);
   if (!response.ok) { let message=`Request failed (${response.status})`; try { const b=await response.json(); message=typeof b.detail==='string'?b.detail:(b.detail?.[0]?.msg||message); } catch {} const err = new Error(message) as Error & {status?: number}; err.status = response.status; throw err; }
   return response.status === 204 ? undefined as T : response.json();
+}
+export async function downloadResume(path:string):Promise<Blob> {
+  const headers = new Headers(); if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API}${path}`, { headers, credentials:'include' });
+  if (response.status === 401 && await refresh()) { headers.set('Authorization', `Bearer ${token}`); const retried = await fetch(`${API}${path}`, { headers, credentials:'include' }); if (retried.ok) return retried.blob(); }
+  if (!response.ok) { let message=`Request failed (${response.status})`; try { const b=await response.json(); message=typeof b.detail==='string'?b.detail:message; } catch {} const err = new Error(message) as Error & {status?: number}; err.status = response.status; throw err; }
+  return response.blob();
 }
 export async function restoreSession(){ if (!csrf() || !await refresh()) return null; return api<import('./types').User>('/auth/me'); }
 export async function login(email:string,password:string){ const x=await api<{access_token:string}>('/auth/login',{method:'POST',body:JSON.stringify({email,password})},false); setAccessToken(x.access_token); return api<import('./types').User>('/auth/me'); }
