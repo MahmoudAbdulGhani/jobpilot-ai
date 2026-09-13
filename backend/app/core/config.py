@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     AUTH_COOKIE_SECURE: bool = False
 
+    RESUME_STORAGE_DIR: str = str(BASE_DIR / "storage" / "resumes")
+    RESUME_MAX_SIZE_MB: int = 10
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key_strength(cls, value: str) -> str:

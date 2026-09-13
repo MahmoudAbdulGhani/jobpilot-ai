@@ -8,7 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -17,6 +17,42 @@ from app.main import create_application
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
+
+
+def _truncate_all_tables(database_url: str) -> None:
+    """Empty every table so each test session starts from a known state.
+
+    The connected browser suites share the same guarded test database and may
+    leave disposable users, jobs, and resumes behind, so pytest must not rely
+    on a pre-existing empty database.
+    """
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text(
+                    """
+                    DO $$
+                    DECLARE row RECORD;
+                    BEGIN
+                        FOR row IN
+                            SELECT tablename
+                            FROM pg_tables
+                            WHERE schemaname = 'public'
+                              AND tablename <> 'alembic_version'
+                        LOOP
+                            EXECUTE format(
+                                'TRUNCATE TABLE public.%I RESTART IDENTITY CASCADE',
+                                row.tablename
+                            );
+                        END LOOP;
+                    END $$;
+                    """
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture()
@@ -32,6 +68,7 @@ def test_engine():
     config = Config(str(ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", settings.test_database_url)
     command.upgrade(config, "head")
+    _truncate_all_tables(settings.test_database_url)
 
     return create_engine(
         settings.test_database_url,
