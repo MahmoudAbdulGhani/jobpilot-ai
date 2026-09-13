@@ -1,22 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-
-const password = 'QaPass-2026!';
-const primary = 'qa-one@example.com';
-const secondary = 'qa-two@example.com';
-
-async function login(page: Page, email = primary) {
-  await page.goto('/login');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/jobs$/);
-}
-
-async function logout(page: Page) {
-  await page.locator('.account-toggle').click();
-  await page.getByRole('button', { name: 'Log out' }).click();
-  await expect(page).toHaveURL(/\/login$/);
-}
+import { API, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
 async function createJob(page: Page, title: string, company = 'Cedar Labs') {
   await page.getByRole('button', { name: 'Save a job' }).first().click();
@@ -30,12 +13,21 @@ async function createJob(page: Page, title: string, company = 'Cedar Labs') {
   await expect(page.getByRole('dialog')).toBeHidden();
 }
 
-test('connected career journal workflow', async ({ browser }) => {
+test.afterEach(async ({ request }) => {
+  for (const email of createdUsers) {
+    await cleanupUser(request, email);
+  }
+  createdUsers.length = 0;
+});
+
+test('connected career journal workflow', async ({ browser, request }) => {
+  const primary = await bootstrapUser(request, 'journal-primary');
+  const secondary = await bootstrapUser(request, 'journal-secondary');
   const context = await browser.newContext({ viewport: { width: 1488, height: 1058 } });
   const page = await context.newPage();
   const pageErrors: string[] = [];
   page.on('pageerror', error => pageErrors.push(error.message));
-  await login(page);
+  await login(page, primary);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Saved jobs' })).toBeVisible();
   await createJob(page, 'Junior Backend Developer');
@@ -79,7 +71,7 @@ test('connected career journal workflow', async ({ browser }) => {
   await expect(page.getByRole('heading', { name: 'Job not found' })).toBeVisible();
   await logout(page);
 
-  await login(page);
+  await login(page, primary);
   await page.goto(jobUrl);
   await page.getByRole('button', { name: 'Delete job' }).click();
   await page.getByRole('button', { name: 'Delete job' }).last().click();
@@ -90,10 +82,11 @@ test('connected career journal workflow', async ({ browser }) => {
   await context.close();
 });
 
-test('mobile detail and dialog', async ({ browser }) => {
+test('mobile detail and dialog', async ({ browser, request }) => {
+  const user = await bootstrapUser(request, 'journal-mobile');
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
-  await login(page);
+  await login(page, user);
   await createJob(page, 'Mobile Product Engineer', 'Northstar');
   await page.getByRole('link', { name: /Mobile Product Engineer/ }).click();
   await expect(page.locator('.job-workspace')).toHaveCSS('display', 'flex');

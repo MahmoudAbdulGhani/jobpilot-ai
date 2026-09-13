@@ -1,29 +1,21 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
-const password = 'QaPass-2026!';
-const primary = 'qa-one@example.com';
-const secondary = 'qa-two@example.com';
+test.afterEach(async ({ request }) => {
+  for (const email of createdUsers) {
+    await cleanupUser(request, email);
+  }
+  createdUsers.length = 0;
+});
 
-async function login(page: Page, email = primary) {
-  await page.goto('/login');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/jobs$/);
-}
-
-async function logout(page: Page) {
-  await page.locator('.account-toggle').click();
-  await page.getByRole('button', { name: 'Log out' }).click();
-  await expect(page).toHaveURL(/\/login$/);
-}
-
-test('connected candidate profile workflow', async ({ browser }) => {
+test('connected candidate profile workflow', async ({ browser, request }) => {
+  const primary = await bootstrapUser(request, 'profile-primary');
+  const secondary = await bootstrapUser(request, 'profile-secondary');
   const context = await browser.newContext({ viewport: { width: 1488, height: 1058 } });
   const page = await context.newPage();
   const pageErrors: string[] = [];
   page.on('pageerror', error => pageErrors.push(error.message));
-  await login(page);
+  await login(page, primary);
   await page.goto('/profile');
   await expect(page.getByRole('heading', { name: 'Your profile', exact: true })).toBeVisible();
 
