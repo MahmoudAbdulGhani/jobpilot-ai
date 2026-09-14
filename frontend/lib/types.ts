@@ -41,3 +41,18 @@ export type ProfileSuggestionSet = {
   suggestions: ProfileSuggestion[] | null; provider: string; model: string;
   outcome_message: string | null; applied_at: string | null;
 };
+export type JobFitRequirement = {
+  id: string; text: string; job_quote: string;
+  importance: 'required'|'preferred'|'unspecified';
+  assessment: 'supported'|'partially_supported'|'not_evidenced'|'needs_clarification'|'explicit_mismatch';
+  explanation: string; candidate_fact_ids: string[];
+};
+export type JobFitAnalysis = {
+  id: string; job_id: string; status: 'generating'|'ready'|'failed';
+  job_snapshot: Record<string, string|null>;
+  profile_facts: Array<{id:string;path:string;value:string}>;
+  result: {requirements:JobFitRequirement[];strengths:string[];gaps:string[];actions:string[];summary:string}|null;
+  counts: Record<string,number>; provider:string; model:string; prompt_version:string;
+  outcome_message:string|null; is_outdated:boolean; created_at:string; updated_at:string;
+};
+export type JobFitAnalysisList = {items:JobFitAnalysis[];total:number;page:number;page_size:number};

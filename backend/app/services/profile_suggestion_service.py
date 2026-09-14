@@ -34,13 +34,13 @@ def source_hash(text: str) -> str:
 
 def provider_for(settings: Settings):
     if not settings.JOBPILOT_AI_ENABLED:
-        raise SuggestionError(503, "AI profile suggestions are disabled.")
+        raise SuggestionError(503, "AI features are disabled.")
     if settings.JOBPILOT_AI_TEST_PROVIDER:
         if not settings.E2E_TEST_MODE or settings.POSTGRES_DB != settings.POSTGRES_TEST_DB:
             raise SuggestionError(503, "The deterministic AI provider is restricted to guarded tests.")
         return DeterministicTestProvider()
     if not settings.JOBPILOT_OPENAI_API_KEY:
-        raise SuggestionError(503, "AI profile suggestions are not configured.")
+        raise SuggestionError(503, "AI features are not configured.")
     return OpenAIResponsesProvider(
         api_key=settings.JOBPILOT_OPENAI_API_KEY,
         model=settings.JOBPILOT_AI_MODEL,

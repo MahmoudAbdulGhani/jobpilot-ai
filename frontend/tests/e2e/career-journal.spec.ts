@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
+import { accessToken, API, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
 async function createJob(page: Page, title: string, company = 'Cedar Labs') {
   await page.getByRole('button', { name: 'Save a job' }).first().click();
@@ -101,4 +101,24 @@ test('mobile detail and dialog', async ({ browser, request }) => {
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Edit job' })).toBeFocused();
   await context.close();
+});
+
+test('connected explainable fit analysis persists and becomes outdated', async ({ page, request }) => {
+  const user = await bootstrapUser(request, 'job-fit');
+  const token = await accessToken(request, user);
+  const auth = { Authorization: `Bearer ${token}` };
+  expect((await request.patch(`${API}/profile`, { headers: auth, data: { headline: 'Backend engineer', skills: ['Python', 'PostgreSQL'] } })).ok()).toBeTruthy();
+  const created = await request.post(`${API}/jobs`, { headers: auth, data: { title:'Backend Engineer', company:'Synthetic Co', description:'Python is required\nClear communication preferred' } });
+  expect(created.ok()).toBeTruthy(); const job = await created.json();
+  await login(page,user); await page.goto(`/jobs/${job.id}`);
+  await page.getByRole('button',{name:'Analyze fit'}).click();
+  await expect(page.getByText(/Synthetic deterministic analysis/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Python is required'})).toBeVisible();
+  await page.reload(); await expect(page.getByText(/Synthetic deterministic analysis/)).toBeVisible();
+  await page.getByRole('button',{name:'Edit job'}).click();
+  await page.getByLabel('Job description').fill('Go is required');
+  await page.getByRole('button',{name:'Save job'}).click();
+  await expect(page.getByText(/Inputs changed/)).toBeVisible();
+  await page.getByRole('button',{name:'Reanalyze fit'}).click();
+  await expect(page.getByRole('heading',{name:'Go is required'})).toBeVisible();
 });

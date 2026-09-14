@@ -129,8 +129,8 @@ cd frontend
 npm run test:e2e
 ```
 
-The final verification completed 180 backend tests, 22 frontend component tests,
-and 5 connected browser tests.
+The final verification completed 186 backend tests, 24 frontend component tests,
+and 6 connected browser tests.
 Coverage includes login and reload restoration, persisted CRUD, nullable-field
 clearing, notes, server search and pagination, archive/restore, deletion
 cancel/confirm, logout, missing IDs, mobile dialog behavior, two-user isolation,
@@ -211,6 +211,49 @@ The deterministic provider is available only when both `E2E_TEST_MODE=true` and
 normal-server fallback. Live OpenAI behavior and suggestion quality remain
 unverified. After configuring the service, an owner may separately opt into a
 smoke test using a synthetic CV; never use a real CV for initial validation.
+
+### Explainable job fit analysis
+
+An authenticated user can open an owned saved job and explicitly choose **Analyze
+fit**. The job must have a description and the user must have at least one usable
+saved profile fact. JobPilot sends only the saved description and normalized facts
+(with stable snapshot IDs and field paths) to the configured AI provider. It does
+not send private notes, contact details, source URLs, CV files, unconfirmed CV text,
+or unapplied AI suggestions, and it never fetches the original posting.
+
+The response is advisory evidence coverage, not an ATS score or hiring probability.
+Each requirement shows its explicit importance, a verbatim description quote,
+assessment, explanation, and any referenced saved profile evidence. Missing profile
+evidence is labeled `not_evidenced`, not treated as proof that the candidate lacks a
+qualification. Counts are computed on the server from validated requirement records.
+
+Analyses persist as private immutable source snapshots. Description or relevant
+profile changes mark prior results outdated; notes and archive changes do not.
+Reanalysis creates history, while repeated requests with the same idempotency key
+and unchanged inputs reuse the record. A changed payload with the same key is
+rejected. Deleting a job, profile/account, or an individual owned analysis removes
+the corresponding copied snapshots through database cascades.
+
+API contract:
+
+- `POST /api/jobs/{job_id}/fit-analyses` with `{"idempotency_key":"..."}` generates
+  or reuses an analysis.
+- `GET /api/jobs/{job_id}/fit-analyses/latest` retrieves the latest result.
+- `GET /api/jobs/{job_id}/fit-analyses?page=1&page_size=10` returns bounded history.
+- `GET` or `DELETE /api/jobs/{job_id}/fit-analyses/{analysis_id}` reads or deletes
+  one owned result. Cross-owner and cross-job substitutions use the existing `404` shape.
+
+The feature reuses `JOBPILOT_AI_ENABLED`, `JOBPILOT_AI_MODEL`, provider credentials,
+timeouts, input/output bounds and the per-user request limit. The deterministic job-fit
+contract is enabled only by the same guarded test-provider configuration documented
+above. Migration head: `e4f5a6b7c8d9`.
+
+Live semantic quality remains unverified. A separately authorized synthetic smoke
+evaluation should check: (1) a clear skill match, (2) sparse candidate evidence,
+(3) directly comparable explicit mismatch, and (4) a malicious job description that
+attempts to override instructions. It must verify evidence fidelity, cautious treatment
+of unknowns, no tool use, and no record mutations; fake-provider tests do not establish
+real-model accuracy.
 
 ## Saved jobs API
 
