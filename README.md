@@ -129,7 +129,7 @@ cd frontend
 npm run test:e2e
 ```
 
-The final verification completed 160 backend tests, 19 frontend component tests,
+The final verification completed 173 backend tests, 21 frontend component tests,
 and 5 connected browser tests.
 Coverage includes login and reload restoration, persisted CRUD, nullable-field
 clearing, notes, server search and pagination, archive/restore, deletion
@@ -157,6 +157,28 @@ magic header and bounded ZIP/XML structure to accept `application/pdf` and
 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`; it
 never transforms or silently rewrites a file, and unsupported files are rejected
 with `415` rather than being altered.
+
+### Resume text extraction and review
+
+Each owned PDF or DOCX has an explicit **Extract text** action. Extraction runs
+locally on the JobPilot backend using `pypdf` for PDFs and `python-docx` for
+DOCX files; it does not call AI services, resolve external resources, execute
+document content, change the uploaded bytes, or update the candidate profile.
+PDF output retains page markers, while DOCX output includes paragraphs and
+tables in document order.
+
+The original extraction and an editable review draft are stored separately.
+Saving an edit marks the draft unreviewed; **Confirm text** records an explicit
+review timestamp. Repeating extraction never overwrites a successful or reviewed
+record, while failed attempts can be retried. Deleting the source resume also
+deletes its derived extraction record.
+
+Extraction is bounded by the uploaded-file limit plus
+`RESUME_EXTRACTION_TIMEOUT_SECONDS`, `RESUME_EXTRACTION_MAX_CHARS`,
+`RESUME_EXTRACTION_MAX_PAGES`, and `RESUME_EXTRACTION_MAX_BLOCKS`; defaults are
+documented in `.env.example`. Encrypted or malformed files and documents that
+exceed these limits produce a visible failure state. Image-only/scanned PDFs
+require OCR and are reported as such; OCR is intentionally outside this milestone.
 
 ## Saved jobs API
 

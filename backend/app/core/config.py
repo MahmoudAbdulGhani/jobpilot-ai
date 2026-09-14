@@ -48,6 +48,10 @@ class Settings(BaseSettings):
 
     RESUME_STORAGE_DIR: str = str(BASE_DIR / "storage" / "resumes")
     RESUME_MAX_SIZE_MB: int = 10
+    RESUME_EXTRACTION_TIMEOUT_SECONDS: int = 15
+    RESUME_EXTRACTION_MAX_CHARS: int = 200_000
+    RESUME_EXTRACTION_MAX_PAGES: int = 100
+    RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     @field_validator("SECRET_KEY")
     @classmethod
@@ -61,6 +65,18 @@ class Settings(BaseSettings):
     def validate_connect_timeout(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("POSTGRES_CONNECT_TIMEOUT must be a positive number of seconds")
+        return value
+
+    @field_validator(
+        "RESUME_EXTRACTION_TIMEOUT_SECONDS",
+        "RESUME_EXTRACTION_MAX_CHARS",
+        "RESUME_EXTRACTION_MAX_PAGES",
+        "RESUME_EXTRACTION_MAX_BLOCKS",
+    )
+    @classmethod
+    def validate_extraction_limits(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("resume extraction limits must be positive")
         return value
 
     @field_validator("ACCESS_TOKEN_EXPIRE_MINUTES", "REFRESH_TOKEN_EXPIRE_DAYS")

@@ -1,17 +1,29 @@
 import { expect, test } from '@playwright/test';
 import { API, accessToken, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
-const pdfBuffer = Buffer.from(
-  `%PDF-1.4
-1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
-endobj
-2 0 obj
-<< /Type /Pages /Kids [] /Count 0 >>
-endobj
-%%EOF
-`
-);
+function textPdf(text: string): Buffer {
+  const stream = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let output = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(output));
+    output += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(output);
+  output += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  output += offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
+  output += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(output);
+}
+
+const pdfBuffer = textPdf('Connected resume text');
 
 const docxBuffer = Buffer.from(
   'UEsDBBQAAAAAADxrLV0CxKfsSwEAAEsBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbDw/eG1sIHZlcnNpb249IjEuMCIgZW5jb2Rpbmc9IlVURi04IiBzdGFuZGFsb25lPSJ5ZXMiPz48VHlwZXMgeG1sbnM9Imh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy9wYWNrYWdlLzIwMDYvY29udGVudC10eXBlcyI+PERlZmF1bHQgRXh0ZW5zaW9uPSJ4bWwiIENvbnRlbnRUeXBlPSJhcHBsaWNhdGlvbi94bWwiLz48T3ZlcnJpZGUgUGFydE5hbWU9Ii93b3JkL2RvY3VtZW50LnhtbCIgQ29udGVudFR5cGU9ImFwcGxpY2F0aW9uL3ZuZC5vcGVueG1sZm9ybWF0cy1vZmZpY2Vkb2N1bWVudC53b3JkcHJvY2Vzc2luZ21sLmRvY3VtZW50Lm1haW4reG1sIi8+PC9UeXBlcz5QSwMEFAAAAAAAPGstXe3wzaTSAAAA0gAAABEAAAB3b3JkL2RvY3VtZW50LnhtbDw/eG1sIHZlcnNpb249IjEuMCIgZW5jb2Rpbmc9IlVURi04IiBzdGFuZGFsb25lPSJ5ZXMiPz48dzpkb2N1bWVudCB4bWxuczp3PSJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvd29yZHByb2Nlc3NpbmdtbC8yMDA2L21haW4iPjx3OmJvZHk+PHc6cD48dzpyPjx3OnQ+UUEgcmVzdW1lPC93OnQ+PC93OnI+PC93OnA+PC93OmJvZHk+PC93OmRvY3VtZW50PlBLAQIUABQAAAAAADxrLV0CxKfsSwEAAEsBAAATAAAAAAAAAAAAAACAAQAAAABbQ29udGVudF9UeXBlc10ueG1sUEsBAhQAFAAAAAAAPGstXe3wzaTSAAAA0gAAABEAAAAAAAAAAAAAAIABfAEAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAACAAIAgAAAAH0CAAAAAA==',
@@ -66,9 +78,23 @@ test('connected resume library workflow', async ({ browser, request }) => {
   await expect(docxNamedRow.locator('.primary-badge')).toBeVisible();
   await expect(pdfRow.locator('.primary-badge')).toBeHidden();
 
+  await pdfRow.getByRole('button', { name: /Extract text/ }).click();
+  await expect(page.getByLabel('Extracted resume text')).toHaveValue(/Connected resume text/);
+  await page.getByLabel('Extracted resume text').fill('Connected resume text\nReviewed by the owner');
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Needs review')).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm text' }).click();
+  await expect(page.locator('.status-badge', { hasText: 'Confirmed' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+
   await page.reload();
   await expect(page.getByText('Lead Designer CV')).toBeVisible();
   await expect(page.locator('.resume-card', { hasText: 'Lead Designer CV' }).locator('.primary-badge')).toBeVisible();
+  await page.locator('.resume-card', { hasText: 'cv_2026_final.pdf' }).getByRole('button', { name: /Extract text/ }).click();
+  await expect(page.getByLabel('Extracted resume text')).toHaveValue('Connected resume text\nReviewed by the owner');
+  await expect(page.locator('.status-badge', { hasText: 'Confirmed' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
 
   const downloadPromise = page.waitForEvent('download');
   await page.locator('.resume-card', { hasText: 'cv_2026_final.pdf' }).getByRole('button', { name: /Download/ }).click();
@@ -114,6 +140,10 @@ test('resume ownership and isolation', async ({ request }) => {
     data: { display_name: 'stolen' },
   });
   expect(deniedPatch.status()).toBe(404);
+  const deniedExtraction = await request.post(`${API}/resumes/${resumeId}/extract`, {
+    headers: { Authorization: `Bearer ${intruderToken}` },
+  });
+  expect(deniedExtraction.status()).toBe(404);
   const deniedDelete = await request.delete(`${API}/resumes/${resumeId}`, {
     headers: { Authorization: `Bearer ${intruderToken}` },
   });

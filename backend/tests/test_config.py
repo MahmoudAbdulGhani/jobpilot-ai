@@ -44,6 +44,11 @@ def test_e2e_test_mode_string_is_coerced_to_bool(monkeypatch: pytest.MonkeyPatch
     assert make_settings(monkeypatch, E2E_TEST_MODE="false").E2E_TEST_MODE is False
 
 
+def test_resume_extraction_limits_must_be_positive(monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(ValidationError, match="resume extraction limits must be positive"):
+        make_settings(monkeypatch, RESUME_EXTRACTION_MAX_CHARS=0)
+
+
 def test_missing_secret_key_fails_validation(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ValidationError) as error:
         make_settings(monkeypatch, SECRET_KEY=None)

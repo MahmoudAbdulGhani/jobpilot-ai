@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.models import Resume
+from app.models import Resume, ResumeExtraction
 from app.schemas.resumes import ResumeUpdate
 from app.services import resume_store
 
@@ -61,6 +61,18 @@ def get_resume(
             Resume.id == resume_id, Resume.owner_id == owner_id
         )
     )
+
+
+def get_extraction(session: Session, *, resume_id: uuid.UUID) -> ResumeExtraction | None:
+    return session.scalar(
+        select(ResumeExtraction).where(ResumeExtraction.resume_id == resume_id)
+    )
+
+
+def lock_resume(session: Session, *, resume_id: uuid.UUID) -> None:
+    session.execute(
+        select(Resume.id).where(Resume.id == resume_id).with_for_update()
+    ).scalar_one()
 
 
 def update_resume(

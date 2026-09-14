@@ -16,3 +16,17 @@ export type CandidateProfileInput = { headline: string | null; target_roles: str
 export type Resume = { id: string; owner_id: string; original_filename: string; display_name: string; file_extension: string; size_bytes: number; is_primary: boolean; created_at: string; updated_at: string };
 export type ResumeList = { items: Resume[] };
 export type ResumeUpdateInput = { display_name?: string; is_primary?: boolean };
+export type ResumeExtraction = {
+  id: string;
+  resume_id: string;
+  status: 'pending' | 'succeeded' | 'failed';
+  original_text: string | null;
+  draft_text: string | null;
+  parser_name: string | null;
+  parser_version: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};

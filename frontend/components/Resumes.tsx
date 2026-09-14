@@ -5,6 +5,7 @@ import {
   DownloadSimple,
   FileDoc,
   FilePdf,
+  FileText,
   PencilSimple,
   Star,
   Trash,
@@ -12,7 +13,7 @@ import {
 } from '@phosphor-icons/react';
 import { api, downloadResume } from '../lib/api';
 import { Dialog } from './Dialog';
-import type { Resume, ResumeList } from '../lib/types';
+import type { Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
 type PageState = 'loading' | 'ready' | 'error';
 
@@ -37,6 +38,7 @@ export function ResumesView() {
   const [uploading, setUploading] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Resume | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<Resume | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -198,6 +200,9 @@ export function ResumesView() {
                     <Star size={20} />Make primary
                   </button>
                 )}
+                <button className="action-button" onClick={() => { setActionError(''); setReviewTarget(resume); }} title="Extract and review text">
+                  <FileText size={20} />Extract text
+                </button>
                 <button className="action-button" onClick={() => void handleDownload(resume)} title="Download">
                   <DownloadSimple size={20} />Download
                 </button>
@@ -218,7 +223,127 @@ export function ResumesView() {
       {deleteTarget && (
         <DeleteResumeDialog resume={deleteTarget} onClose={() => setDeleteTarget(null)} onDelete={deleteResume} />
       )}
+      {reviewTarget && (
+        <ExtractionDialog resume={reviewTarget} onClose={() => setReviewTarget(null)} />
+      )}
     </div>
+  );
+}
+
+function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => void }) {
+  const [extraction, setExtraction] = useState<ResumeExtraction | null>(null);
+  const [draft, setDraft] = useState('');
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+
+  async function extract() {
+    setPending(true);
+    setState('loading');
+    setError('');
+    try {
+      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extract`, { method: 'POST' });
+      setExtraction(result);
+      setDraft(result.draft_text || '');
+      setState('ready');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not extract this resume.');
+      setState('error');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  useEffect(() => { void extract(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    if (!draft.trim()) {
+      setError('Extracted text cannot be empty.');
+      return;
+    }
+    setPending(true);
+    setError('');
+    try {
+      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction`, {
+        method: 'PATCH',
+        body: JSON.stringify({ draft_text: draft }),
+      });
+      setExtraction(result);
+      setDraft(result.draft_text || '');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save the extracted text.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function confirm() {
+    setPending(true);
+    setError('');
+    try {
+      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction/confirm`, { method: 'POST' });
+      setExtraction(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not confirm the extracted text.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const savedDraft = extraction?.draft_text || '';
+  const hasUnsavedChanges = draft !== savedDraft;
+  const isConfirmed = Boolean(extraction?.reviewed_at) && !hasUnsavedChanges;
+
+  return (
+    <Dialog title="Review extracted text" description={resume.display_name} onClose={onClose}>
+      <div className="extraction-body">
+        {state === 'loading' && <div className="extraction-state" role="status">Extracting text locally…</div>}
+        {state === 'error' && (
+          <div className="extraction-state">
+            <p className="form-error" role="alert">{error}</p>
+            <button className="secondary-button" disabled={pending} onClick={() => void extract()}>Try again</button>
+          </div>
+        )}
+        {state === 'ready' && extraction?.status === 'failed' && (
+          <div className="extraction-state">
+            <p className="status-badge is-unreviewed">Extraction failed</p>
+            <p role="alert">{extraction.failure_message}</p>
+            <button className="primary-button" disabled={pending} onClick={() => void extract()}>{pending ? 'Retrying…' : 'Retry extraction'}</button>
+          </div>
+        )}
+        {state === 'ready' && extraction?.status === 'succeeded' && (
+          <>
+            <div className="extraction-summary">
+              <span className={`status-badge ${isConfirmed ? 'is-confirmed' : 'is-unreviewed'}`}>
+                {isConfirmed ? 'Confirmed' : hasUnsavedChanges ? 'Unsaved changes' : 'Needs review'}
+              </span>
+              <span className="muted">{extraction.parser_name} {extraction.parser_version}</span>
+            </div>
+            <label htmlFor="extracted_text">Extracted resume text</label>
+            <p className="muted extraction-help">Check the reading order and correct any parsing mistakes. This does not change your uploaded file or candidate profile.</p>
+            <textarea
+              id="extracted_text"
+              value={draft}
+              onChange={event => setDraft(event.target.value)}
+              rows={18}
+              maxLength={200000}
+            />
+            {error && <p className="form-error" role="alert">{error}</p>}
+          </>
+        )}
+      </div>
+      {state === 'ready' && extraction?.status === 'succeeded' && (
+        <footer className="dialog-footer extraction-footer">
+          <button className="secondary-button" onClick={onClose}>Close</button>
+          <button className="secondary-button" disabled={pending || !hasUnsavedChanges || !draft.trim()} onClick={() => void save()}>
+            {pending ? 'Saving…' : 'Save changes'}
+          </button>
+          <button className="primary-button" disabled={pending || hasUnsavedChanges || isConfirmed} onClick={() => void confirm()}>
+            <CheckCircle size={19} />{isConfirmed ? 'Confirmed' : 'Confirm text'}
+          </button>
+        </footer>
+      )}
+    </Dialog>
   );
 }
 
