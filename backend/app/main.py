@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.application_packs import router as application_packs_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.e2e import router as e2e_router
 from app.api.routes.health import router as health_router
@@ -32,8 +33,11 @@ def create_application() -> FastAPI:
     application.include_router(jobs_router, prefix=settings.API_PREFIX)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)
-    application.include_router(profile_suggestions_router, prefix=settings.API_PREFIX)
+    application.include_router(
+        profile_suggestions_router, prefix=settings.API_PREFIX)
     application.include_router(resumes_router, prefix=settings.API_PREFIX)
+    application.include_router(
+        application_packs_router, prefix=settings.API_PREFIX)
     application.include_router(e2e_router, prefix=settings.API_PREFIX)
     return application
 
