@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -10,6 +10,15 @@ from app.models.base import Base, TimestampMixin
 
 class ProfileSuggestionSet(Base, TimestampMixin):
     __tablename__ = "profile_suggestion_sets"
+    __table_args__ = (
+        Index(
+            "uq_profile_suggestion_sets_generating",
+            "owner_id",
+            "resume_id",
+            unique=True,
+            postgresql_where=text("status = 'generating'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

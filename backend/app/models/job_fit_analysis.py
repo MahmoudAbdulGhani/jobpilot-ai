@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, JSON, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -9,7 +9,16 @@ from app.models.base import Base, TimestampMixin
 
 class JobFitAnalysis(Base, TimestampMixin):
     __tablename__ = "job_fit_analyses"
-    __table_args__ = (UniqueConstraint("owner_id", "idempotency_key", name="uq_job_fit_owner_key"),)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_job_fit_owner_key"),
+        Index(
+            "uq_job_fit_generating_job",
+            "owner_id",
+            "job_id",
+            unique=True,
+            postgresql_where=text("status = 'generating'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

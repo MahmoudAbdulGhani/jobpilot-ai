@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -9,6 +9,9 @@ from app.models.base import Base, TimestampMixin
 
 class ResumeExtraction(Base, TimestampMixin):
     __tablename__ = "resume_extractions"
+    __table_args__ = (
+        UniqueConstraint("resume_id", name="uq_resume_extractions_resume_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     resume_id: Mapped[uuid.UUID] = mapped_column(
