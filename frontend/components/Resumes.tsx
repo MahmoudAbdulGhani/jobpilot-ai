@@ -8,12 +8,13 @@ import {
   FileText,
   PencilSimple,
   Star,
+  Sparkle,
   Trash,
   UploadSimple,
 } from '@phosphor-icons/react';
 import { api, downloadResume } from '../lib/api';
 import { Dialog } from './Dialog';
-import type { Resume, ResumeExtraction, ResumeList } from '../lib/types';
+import type { ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
 type PageState = 'loading' | 'ready' | 'error';
 
@@ -236,6 +237,28 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [suggestionSet, setSuggestionSet] = useState<ProfileSuggestionSet | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [suggestionDrafts, setSuggestionDrafts] = useState<Record<string, string>>({});
+  const [aiError, setAiError] = useState('');
+
+  function adoptSuggestions(result: ProfileSuggestionSet) {
+    setSuggestionSet(result);
+    const suggestions = result.suggestions || [];
+    setSelected(new Set(suggestions.map(item => item.id)));
+    setSuggestionDrafts(Object.fromEntries(suggestions.map(item => [
+      item.id,
+      typeof item.value === 'string' ? item.value : JSON.stringify(item.value, null, 2),
+    ])));
+  }
+
+  async function loadLatest() {
+    try {
+      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`));
+    } catch (cause) {
+      if ((cause as { status?: number }).status !== 404) setAiError(cause instanceof Error ? cause.message : 'Could not load suggestions.');
+    }
+  }
 
   async function extract() {
     setPending(true);
@@ -246,6 +269,7 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
       setExtraction(result);
       setDraft(result.draft_text || '');
       setState('ready');
+      if (result.reviewed_at) await loadLatest();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not extract this resume.');
       setState('error');
@@ -290,6 +314,39 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
     }
   }
 
+  async function generateSuggestions() {
+    setPending(true);
+    setAiError('');
+    try {
+      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' }));
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function applySuggestions() {
+    if (!suggestionSet) return;
+    setPending(true);
+    setAiError('');
+    try {
+      const selections = (suggestionSet.suggestions || []).filter(item => selected.has(item.id)).map(item => ({
+        ...item,
+        value: item.field === 'headline' || item.field === 'location'
+          ? suggestionDrafts[item.id]
+          : JSON.parse(suggestionDrafts[item.id]),
+      }));
+      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
+        method: 'POST', body: JSON.stringify({ selections }),
+      }));
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : 'Could not apply the selected changes.');
+    } finally {
+      setPending(false);
+    }
+  }
+
   const savedDraft = extraction?.draft_text || '';
   const hasUnsavedChanges = draft !== savedDraft;
   const isConfirmed = Boolean(extraction?.reviewed_at) && !hasUnsavedChanges;
@@ -328,6 +385,25 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
               rows={18}
               maxLength={200000}
             />
+            {isConfirmed && (
+              <section className="ai-suggestions">
+                <h3><Sparkle size={20} />AI profile suggestions</h3>
+                <p className="muted">Provider: OpenAI when configured. Your confirmed CV text will leave JobPilot only when you request generation. Review every fact and quote before applying.</p>
+                {!suggestionSet && <button className="secondary-button" disabled={pending} onClick={() => void generateSuggestions()}><Sparkle size={18} />{pending ? 'Generating…' : 'Suggest profile details with AI'}</button>}
+                {suggestionSet?.status === 'failed' && <button className="secondary-button" onClick={() => void generateSuggestions()}>Retry suggestions</button>}
+                {suggestionSet?.suggestions?.map(item => (
+                  <article className="suggestion-card" key={item.id}>
+                    <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet.status === 'applied'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use {item.field}</label>
+                    <textarea aria-label={`Proposed ${item.field}`} value={suggestionDrafts[item.id] || ''} disabled={suggestionSet.status === 'applied'} onChange={event => setSuggestionDrafts(current => ({ ...current, [item.id]: event.target.value }))} rows={3} />
+                    {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
+                  </article>
+                ))}
+                {suggestionSet?.outcome_message && <p className="muted">{suggestionSet.outcome_message}</p>}
+                {suggestionSet?.status === 'ready' && <button className="primary-button" disabled={pending || selected.size === 0} onClick={() => void applySuggestions()}>{pending ? 'Applying…' : 'Apply selected changes'}</button>}
+                {suggestionSet?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Selected profile changes applied.</p>}
+                {aiError && <p className="form-error" role="alert">{aiError}</p>}
+              </section>
+            )}
             {error && <p className="form-error" role="alert">{error}</p>}
           </>
         )}

@@ -30,3 +30,14 @@ export type ResumeExtraction = {
   created_at: string;
   updated_at: string;
 };
+export type ProfileSuggestion = {
+  id: string;
+  field: 'headline'|'location'|'skills'|'experience'|'education'|'languages';
+  value: unknown;
+  evidence: Array<{ quote: string }>;
+};
+export type ProfileSuggestionSet = {
+  id: string; resume_id: string; status: 'generating'|'ready'|'failed'|'applied';
+  suggestions: ProfileSuggestion[] | null; provider: string; model: string;
+  outcome_message: string | null; applied_at: string | null;
+};

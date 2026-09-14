@@ -86,7 +86,18 @@ test('connected resume library workflow', async ({ browser, request }) => {
   await expect(page.getByText('Needs review')).toBeVisible();
   await page.getByRole('button', { name: 'Confirm text' }).click();
   await expect(page.locator('.status-badge', { hasText: 'Confirmed' })).toBeVisible();
+  await page.getByRole('button', { name: 'Suggest profile details with AI' }).click();
+  await expect(page.getByLabel('Proposed headline')).toHaveValue('Connected resume text');
+  await page.getByLabel('Proposed headline').fill('AI-reviewed connected profile');
+  await page.getByRole('button', { name: 'Apply selected changes' }).click();
+  await expect(page.getByText('Selected profile changes applied.')).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+  await page.goto('/profile');
+  await expect(page.getByRole('heading', { name: 'AI-reviewed connected profile' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'AI-reviewed connected profile' })).toBeVisible();
+  await page.goto('/resumes');
 
   await page.reload();
   await expect(page.getByText('Lead Designer CV')).toBeVisible();

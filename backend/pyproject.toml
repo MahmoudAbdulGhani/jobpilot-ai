@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pypdf>=6.0,<7",
     "python-docx>=1.2,<2",
+    "openai>=2.0,<3",
 ]
 
 [project.optional-dependencies]

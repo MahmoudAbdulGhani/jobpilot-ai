@@ -21,6 +21,8 @@ export default defineConfig({
         ...process.env,
         POSTGRES_DB: process.env.POSTGRES_TEST_DB || 'jobpilot_test',
         E2E_TEST_MODE: 'true',
+        JOBPILOT_AI_ENABLED: 'true',
+        JOBPILOT_AI_TEST_PROVIDER: 'true',
         CORS_ORIGINS: 'http://localhost:3010',
       },
       timeout: 120_000,

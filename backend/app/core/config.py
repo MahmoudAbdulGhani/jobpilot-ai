@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_PAGES: int = 100
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
+    JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_AI_MODEL: str = "gpt-5-mini"
+    JOBPILOT_OPENAI_API_KEY: str | None = None
+    JOBPILOT_AI_TIMEOUT_SECONDS: int = 30
+    JOBPILOT_AI_MAX_INPUT_CHARS: int = 100_000
+    JOBPILOT_AI_MAX_OUTPUT_TOKENS: int = 4_000
+    JOBPILOT_AI_MAX_REQUESTS_PER_USER: int = 20
+    JOBPILOT_AI_TEST_PROVIDER: bool = False
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key_strength(cls, value: str) -> str:
@@ -72,6 +81,10 @@ class Settings(BaseSettings):
         "RESUME_EXTRACTION_MAX_CHARS",
         "RESUME_EXTRACTION_MAX_PAGES",
         "RESUME_EXTRACTION_MAX_BLOCKS",
+        "JOBPILOT_AI_TIMEOUT_SECONDS",
+        "JOBPILOT_AI_MAX_INPUT_CHARS",
+        "JOBPILOT_AI_MAX_OUTPUT_TOKENS",
+        "JOBPILOT_AI_MAX_REQUESTS_PER_USER",
     )
     @classmethod
     def validate_extraction_limits(cls, value: int) -> int:

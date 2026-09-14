@@ -250,4 +250,26 @@ describe('ResumesView', () => {
     expect(await screen.findByText(/needs OCR/)).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Retry extraction' })).not.toBeNull();
   });
+
+  it('shows the AI disclosure and applies an edited selected suggestion', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    expect(await screen.findByText(/confirmed CV text will leave JobPilot/)).not.toBeNull();
+    apiMock.mockResolvedValueOnce({
+      id: 'set-1', resume_id: pdfResume.id, status: 'ready', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: null,
+      suggestions: [{ id: 'headline-1', field: 'headline', value: 'Ada Lovelace', evidence: [{ quote: 'Ada Lovelace' }] }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
+    const proposed = await screen.findByLabelText('Proposed headline');
+    fireEvent.change(proposed, { target: { value: 'Computing pioneer' } });
+    apiMock.mockResolvedValueOnce({
+      id: 'set-1', resume_id: pdfResume.id, status: 'applied', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected changes' }));
+    expect(await screen.findByText(/Selected profile changes applied/)).not.toBeNull();
+  });
 });

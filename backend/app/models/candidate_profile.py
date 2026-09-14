@@ -28,3 +28,4 @@ class CandidateProfile(Base, TimestampMixin):
     salary_preference: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True
     )
+    ai_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

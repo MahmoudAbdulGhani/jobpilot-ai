@@ -129,7 +129,7 @@ cd frontend
 npm run test:e2e
 ```
 
-The final verification completed 173 backend tests, 21 frontend component tests,
+The final verification completed 180 backend tests, 22 frontend component tests,
 and 5 connected browser tests.
 Coverage includes login and reload restoration, persisted CRUD, nullable-field
 clearing, notes, server search and pagination, archive/restore, deletion
@@ -179,6 +179,38 @@ Extraction is bounded by the uploaded-file limit plus
 documented in `.env.example`. Encrypted or malformed files and documents that
 exceed these limits produce a visible failure state. Image-only/scanned PDFs
 require OCR and are reported as such; OCR is intentionally outside this milestone.
+
+### AI profile suggestions
+
+After confirming extracted CV text, choose **Suggest profile details with AI**.
+JobPilot shows the configured provider, proposed values, and exact supporting
+passages together. Select and edit the facts you accept, then use **Apply selected
+changes**; generation alone never changes the candidate profile. Supported fields
+are headline, candidate location, skills, experience, education, and languages.
+Target roles, salary, remote preference, and work authorization remain manual.
+
+AI is disabled by default. To opt in, set `JOBPILOT_AI_ENABLED=true`, choose a
+Structured-Outputs-capable `JOBPILOT_AI_MODEL`, and set
+`JOBPILOT_OPENAI_API_KEY` in the private repository-root `.env`. The adapter uses
+the official OpenAI Python SDK and Responses API with Structured Outputs,
+`store=false`, no tools, a request timeout, no SDK retries, and bounded input and
+output. Confirmed CV text leaves JobPilot only after the explicit generation
+action. `store=false` disables response-object storage but is not described here
+as a zero-retention guarantee; review OpenAI's current API data controls before
+enabling the service.
+
+Lists append selected entries and skip exact normalized duplicates; they are
+never fuzzily merged or automatically removed. Scalars show explicit replacement.
+Apply is atomic and rejects stale profile or confirmed-CV revisions. Accepted
+facts retain provenance; later manual field edits relabel that field as user-edited.
+Deleting the source CV removes suggestion snapshots while retaining applied profile
+values with the source marked unavailable and without retained evidence quotes.
+
+The deterministic provider is available only when both `E2E_TEST_MODE=true` and
+`JOBPILOT_AI_TEST_PROVIDER=true` run against `POSTGRES_TEST_DB`; it is never a
+normal-server fallback. Live OpenAI behavior and suggestion quality remain
+unverified. After configuring the service, an owner may separately opt into a
+smoke test using a synthetic CV; never use a real CV for initial validation.
 
 ## Saved jobs API
 
