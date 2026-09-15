@@ -42,6 +42,19 @@ class Settings(BaseSettings):
     # unreachable in every ordinary deployment.
     E2E_TEST_MODE: bool = False
 
+    # Jira Cloud integration (create-only, disabled by default).
+    # JIRA_ENABLED must be explicitly set to True before any request is made;
+    # this stays False so the create-issuer is inert in every ordinary
+    # deployment. The API token is read from the gitignored local .env only
+    # (ATLASSIAN_API_TOKEN) and is never part of committed config.
+    JIRA_ENABLED: bool = False
+    JIRA_SITE_URL: str = ""
+    JIRA_PROJECT_KEY: str = ""
+    # The account email is the Basic-auth user id for Atlassian Cloud API
+    # tokens (payload is ``email:token``); required only when Jira is enabled.
+    JIRA_USER_EMAIL: str = ""
+    JIRA_API_TOKEN: str = Field(default="", repr=False)
+
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     AUTH_COOKIE_SECURE: bool = False

