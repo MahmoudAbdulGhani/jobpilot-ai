@@ -287,7 +287,14 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
         return Context()
 
     slept = []
-    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    state = {"now": 0.0}
+
+    def advance(seconds):
+        slept.append(seconds)
+        state["now"] += seconds
+
+    monkeypatch.setattr("time.monotonic", lambda: state["now"])
+    monkeypatch.setattr("time.sleep", advance)
     monkeypatch.setattr(openai, "OpenAI", client_factory)
     monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
     monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "groq-secret-key-1234")
@@ -308,11 +315,12 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     assert construction_kwargs["max_retries"] == 0
 
     assert len(captured_requests) == 3
-    # Token-budget scheduling replaces a fixed 2-second delay: the fit and
-    # pack requests wait for their complete input+output budgets to refill.
+    # Rolling-window scheduling: profile dispatches at t=0, then fit waits for
+    # the 60-second profile window to expire (5311+6198 > 8000 TPM), and pack
+    # waits for the fit window to expire. Ideal dispatch times 0/60/120.
     assert len(slept) == 2
-    assert all(s > 0 for s in slept)
-    assert set(slept) != {2.0}
+    assert all(s == pytest.approx(60.0) for s in slept)
+    assert state["now"] == pytest.approx(120.0)
 
     report = json.loads(report_path.read_text())
     assert report["semantic_quality"] == "pending_human_review"
@@ -336,34 +344,44 @@ class _FakeClock:
         self.now += seconds
 
 
-def test_token_scheduler_paces_by_token_budget_with_fake_clock():
-    clock = _FakeClock()
+def test_token_scheduler_regression_5311_6198_7584():
+    # Fake-clock regression: with instantaneous requests, dispatches happen
+    # no earlier than t=0, t=60 and t=120 (each reservation holds the full
+    # 60-second window; 5311+6198 would alone exceed the 8000 TPM budget).
+    clock = _FakeClock(start=0.0)
     slept = []
     scheduler = evaluation.TokenScheduler(
-        6000, clock=clock, sleeper=lambda s: (slept.append(s), clock.advance(s)))
-    # 3000 of 6000 available: no wait.
-    assert scheduler.reserve(3000) is None
-    assert slept == []
-    # Remaining 3000 < 4000: wait (4000 - 3000) / (6000/60) = 10 seconds.
-    scheduler.reserve(4000)
-    assert len(slept) == 1 and slept[0] == pytest.approx(10.0)
-    # Bucket is empty: wait 2000 / 100 = 20 seconds.
-    scheduler.reserve(2000)
-    assert len(slept) == 2 and slept[1] == pytest.approx(20.0)
-    # A single reservation larger than the minute budget is rejected.
+        8000, clock=clock, sleeper=lambda s: (slept.append(s), clock.advance(s)))
+    dispatch_times = []
+    for tokens in (5311, 6198, 7584):
+        scheduler.reserve(tokens)
+        dispatch_times.append(round(clock(), 3))
+        # Rolling-window invariant: active reservations never exceed TPM.
+        assert scheduler.active_tokens() <= scheduler.capacity
+    assert dispatch_times == [0.0, 60.0, 120.0]
+    assert len(slept) == 2
+    assert all(s == pytest.approx(60.0) for s in slept)
+    assert scheduler.active_tokens() == pytest.approx(7584.0)
+
+
+def test_token_scheduler_waits_until_window_expiry_before_dispatch():
+    clock = _FakeClock(start=0.0)
+    slept = []
+    scheduler = evaluation.TokenScheduler(
+        8000, clock=clock, sleeper=lambda s: (slept.append(s), clock.advance(s)))
+    scheduler.reserve(5311)  # t=0; active window sum 5311.
+    clock.advance(59)        # t=59, still inside the first window.
+    assert scheduler.active_tokens() == pytest.approx(5311.0)
+    scheduler.reserve(4000)  # 5311+4000 > 8000: block until t=60, then dispatch.
+    assert clock() == pytest.approx(60.0)
+    assert slept == [pytest.approx(1.0)]
+    assert scheduler.active_tokens() <= scheduler.capacity
+    assert scheduler.active_tokens() == pytest.approx(4000.0)
+
+
+def test_capacity_rejects_oversize_single_reservation():
     with pytest.raises(ValueError):
-        scheduler.reserve(6001)
-
-
-def test_capacity_refills_between_reservations_with_fake_clock():
-    clock = _FakeClock()
-    slept = []
-    scheduler = evaluation.TokenScheduler(
-        6000, clock=clock, sleeper=lambda s: clock.advance(s))
-    scheduler.reserve(3000)
-    clock.advance(30)  # 30s * 100 tokens/s = 3000 tokens refilled.
-    scheduler.reserve(3000)  # No sleep needed once refilled.
-    assert slept == []
+        evaluation.TokenScheduler(8000).reserve(8001)
     with pytest.raises(ValueError):
         evaluation.TokenScheduler(0)
 

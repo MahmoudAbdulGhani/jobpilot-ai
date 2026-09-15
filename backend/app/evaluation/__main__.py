@@ -242,39 +242,49 @@ class Meter:
 
 
 class TokenScheduler:
-    """Rolling-60-second token-budget scheduler with a refillable bucket.
+    """Rolling-60-second token-budget scheduler with timestamped reservations.
 
-    The bucket refills at ``tokens_per_minute / 60`` tokens per second.
-    Acceptable ``clock`` / ``sleeper`` callables allow deterministic
+    Each reservation keeps its full estimated input+maximum-output tokens for
+    a 60-second window. Before dispatch, reservations whose window has expired
+    are removed; the request is dispatched only when the active-window sum plus
+    the new reservation is within ``tokens_per_minute``. Otherwise the
+    scheduler waits until enough reservations expire, then recalculates.
+    Injectable ``clock`` / ``sleeper`` callables allow deterministic
     fake-clock tests.
     """
+
+    WINDOW_SECONDS = 60.0
 
     def __init__(self, tokens_per_minute, clock=None, sleeper=None):
         if tokens_per_minute <= 0:
             raise ValueError("tokens_per_minute must be positive")
         self.capacity = float(tokens_per_minute)
-        self.refill_per_second = self.capacity / 60.0
-        self.tokens = self.capacity
         self._clock = clock or time.monotonic
         self._sleep = sleeper or time.sleep
-        self._last = self._clock()
+        self._reservations = []
         self.recorded_waits = []
+
+    def active_tokens(self):
+        """Prune expired windows and return the remaining active reservation sum."""
+        now = self._clock()
+        self._reservations = [(expiry, tokens)
+                              for expiry, tokens in self._reservations if expiry > now]
+        return sum(tokens for _, tokens in self._reservations)
 
     def reserve(self, tokens):
         if tokens > self.capacity:
             raise ValueError("Request exceeds the complete input+output token allowance")
-        now = self._clock()
-        elapsed = now - self._last
-        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_second)
-        self._last = now
-        if self.tokens < tokens:
-            wait = (tokens - self.tokens) / self.refill_per_second
+        while True:
+            active = self.active_tokens()
+            if active + tokens <= self.capacity:
+                now = self._clock()
+                self._reservations.append((now + self.WINDOW_SECONDS, tokens))
+                return
+            now = self._clock()
+            earliest_expiry = min(expiry for expiry, _ in self._reservations)
+            wait = max(earliest_expiry - now, 0.0)
             self._sleep(wait)
             self.recorded_waits.append(wait)
-            now = self._clock()
-            self.tokens = min(self.capacity, self.tokens + (now - self._last) * self.refill_per_second)
-            self._last = now
-        self.tokens -= tokens
 
 
 def execute(client, plan, save, scheduler=None, stop_on_failure=False):
