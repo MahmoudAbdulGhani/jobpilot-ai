@@ -255,6 +255,31 @@ attempts to override instructions. It must verify evidence fidelity, cautious tr
 of unknowns, no tool use, and no record mutations; fake-provider tests do not establish
 real-model accuracy.
 
+### Controlled AI quality evaluation
+
+The standalone [evaluation workflow and human review rubric](docs/ai-quality-evaluation.md)
+cover profile suggestions, explainable fit, and tailored CV/cover-letter packs with
+five synthetic cases each. The command defaults to an offline plan; live execution
+requires a separate explicit opt-in and cost acknowledgement. It reuses production
+adapters and evidence validators without changing the server's test-provider guards.
+Proposed baseline: `gpt-5-mini`, at most 15 requests, 32,000 estimated input tokens
+and 4,000 output tokens per request, maximum estimated cost USD 0.24.
+No live API calls were made during preparation; semantic quality is unverified.
+
+Preparation checks (2026-09-15): **121 passed**, 29 existing dependency/HTTP-status
+deprecation warnings, using the command below from `backend`. This covers the new
+offline evaluation tests, provider contracts, profile suggestions, job fit,
+application tracking, resume extraction/storage, configuration guards and pack
+export. The offline CLI plan succeeded with zero requests sent; the largest
+request input estimate was 6,458 tokens. Alembic reports `9c0d1e2f3a4b` as its sole
+head. `git diff --check` passed. Frontend checks were not rerun because preparation
+changes no frontend files; the reported prior 24 component tests/typecheck are
+baseline information, not new verification.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_ai_evaluation.py tests/test_pack_provider.py tests/test_profile_suggestions.py tests/test_job_fit.py tests/test_application_tracking.py tests/test_resume_extraction.py tests/test_resumes.py tests/test_config.py tests/test_pack_export.py
+```
+
 ## Application tracking
 
 From an owned saved job, review an approved application pack and record one
