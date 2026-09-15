@@ -37,6 +37,7 @@ export type ApplicationPack = {
   created_at: string;
 };
 export type PackPage<T> = { items: T[]; total: number; page: number; page_size: number };
+export type PackVersionList = PackPage<PackVersion>;
 export type PackOptions = {
   provider: string;
   model: string;

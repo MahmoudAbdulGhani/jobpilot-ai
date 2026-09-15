@@ -1,5 +1,6 @@
 from app.models.base import Base
 from app.models.application_pack import AIUsage, ApplicationPack, ApplicationPackVersion, ApplicationPackOperation
+from app.models.application_tracking import ApplicationRecord, ApplicationStatusEvent
 from app.models.candidate_profile import CandidateProfile
 from app.models.refresh_token import RefreshToken
 from app.models.profile_suggestion import ProfileSuggestionSet
@@ -11,6 +12,7 @@ from app.models.user import User
 
 __all__ = [
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",
+    "ApplicationRecord", "ApplicationStatusEvent",
     "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",
     "ResumeExtraction",
     "ProfileSuggestionSet",

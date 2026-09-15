@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.application_packs import router as application_packs_router
+from app.api.routes.application_tracking import router as application_tracking_router
+from app.api.routes.application_tracking import router_global as application_tracking_global_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.e2e import router as e2e_router
 from app.api.routes.health import router as health_router
@@ -38,6 +40,10 @@ def create_application() -> FastAPI:
     application.include_router(resumes_router, prefix=settings.API_PREFIX)
     application.include_router(
         application_packs_router, prefix=settings.API_PREFIX)
+    application.include_router(
+        application_tracking_router, prefix=settings.API_PREFIX)
+    application.include_router(
+        application_tracking_global_router, prefix=settings.API_PREFIX)
     application.include_router(e2e_router, prefix=settings.API_PREFIX)
     return application
 

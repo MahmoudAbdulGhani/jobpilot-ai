@@ -82,6 +82,49 @@ test('connected career journal workflow', async ({ browser, request }) => {
   await context.close();
 });
 
+test('connected application tracking record reload edit status history delete flow', async ({ browser, request }) => {
+  const user = await bootstrapUser(request, 'tracking-e2e');
+  const context = await browser.newContext({ viewport: { width: 1488, height: 1058 } });
+  const page = await context.newPage();
+  await login(page, user);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Saved jobs' })).toBeVisible();
+
+  await createJob(page, 'Application Tracking Job');
+  await page.reload();
+  await page.getByRole('link', { name: /Application Tracking Job/ }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+
+  await page.getByLabel('Submission date').fill('2026-09-14');
+  await page.getByLabel('Method').selectOption('email');
+  await page.getByLabel('Status').selectOption('Applied');
+  await page.getByLabel('Follow up date').fill('2026-09-21');
+  await page.getByLabel('Notes').fill('Follow up this week.');
+  await page.getByRole('button', { name: 'Record application' }).click();
+  await expect(page.getByText('Follow up this week.')).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText('Status history')).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Applied' })).toBeVisible();
+
+  await page.getByLabel('Status').selectOption('Interview');
+  await page.getByLabel('Notes').fill('Follow up this week and keep applying.');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Follow up this week and keep applying.')).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Interview' })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Applications' }).click();
+  await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
+  await page.getByLabel('Status filter').selectOption('Interview');
+  await page.getByRole('link', { name: /Open saved job/ }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+
+  await page.getByRole('button', { name: 'Delete' }).nth(1).click();
+
+  await expect(page.getByRole('button', { name: 'Record application' })).toBeVisible();
+  await context.close();
+});
+
 test('mobile detail and dialog', async ({ browser, request }) => {
   const user = await bootstrapUser(request, 'journal-mobile');
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });

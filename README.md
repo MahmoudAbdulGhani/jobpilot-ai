@@ -255,6 +255,32 @@ attempts to override instructions. It must verify evidence fidelity, cautious tr
 of unknowns, no tool use, and no record mutations; fake-provider tests do not establish
 real-model accuracy.
 
+## Application tracking
+
+From an owned saved job, review an approved application pack and record one
+application. The record stores the submission date, method, status, notes, and an
+optional follow-up date. Statuses are `Applied`, `Interview`, `Offer`, `Rejected`,
+and `Withdrawn`; each status is recorded once in the private status history.
+
+API contract:
+
+- `POST /api/jobs/{job_id}/applications` creates the job's one application record;
+  an optional `pack_id` and `pack_version` must identify an approved pack version.
+- `GET /api/applications?page=1&page_size=10` lists the owner's applications;
+  `status` and `job_id` filters are supported. The job-scoped `GET` route is also
+  available at `/api/jobs/{job_id}/applications`.
+- `PATCH /api/jobs/{job_id}/applications/{application_id}` updates the record and
+  adds a new status-history event only when the status changes.
+- `GET /api/jobs/{job_id}/applications/{application_id}/events` returns status
+  history, and `DELETE` permanently removes the application and its history.
+
+When a pack is attached, its CV and cover letter are copied into immutable
+application snapshots. Editing, replacing, or deleting the source pack does not
+change those captured documents. Deleting the saved job or account cascades to
+the application; deleting the source pack only clears the pack reference while
+retaining the application and its document snapshots. Cross-owner and wrong-job
+pack references are rejected, as are unapproved versions.
+
 ## Saved jobs API
 
 Saved jobs belong to the authenticated user. Source URLs are stored only as bookmarks;

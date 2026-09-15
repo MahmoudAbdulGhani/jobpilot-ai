@@ -56,3 +56,19 @@ export type JobFitAnalysis = {
   outcome_message:string|null; is_outdated:boolean; created_at:string; updated_at:string;
 };
 export type JobFitAnalysisList = {items:JobFitAnalysis[];total:number;page:number;page_size:number};
+
+export type ApplicationMethod = 'email'|'employer_website'|'linkedin_manual'|'other';
+export type ApplicationStatus = 'Applied'|'Interview'|'Offer'|'Rejected'|'Withdrawn';
+export type ApplicationRecord = {
+  id: string; owner_id: string; job_id: string; submission_date: string;
+  method: ApplicationMethod; notes: string | null; status: ApplicationStatus;
+  follow_up_date: string | null; pack_id: string | null; pack_version: number | null;
+  cv_snapshot: unknown | null; cover_letter_snapshot: unknown | null;
+  created_at: string; updated_at: string;
+};
+export type ApplicationRecordList = { items: ApplicationRecord[]; total: number; page: number; page_size: number };
+export type ApplicationEvent = {
+  id: string; application_id: string; status: ApplicationStatus; changed_at: string;
+  created_at: string; updated_at: string;
+};
+export type ApplicationEventList = { items: ApplicationEvent[]; total: number; page: number; page_size: number };

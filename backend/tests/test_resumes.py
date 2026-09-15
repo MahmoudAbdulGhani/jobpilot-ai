@@ -3,6 +3,8 @@ import uuid
 import zipfile
 from types import SimpleNamespace
 
+FIXED_ZIP_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
+
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -42,22 +44,28 @@ DOCUMENT_XML = (
 )
 
 
+def _zip_info(name: str, date_time: tuple[int, int, int, int, int, int] = FIXED_ZIP_TIMESTAMP) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(filename=name, date_time=date_time)
+    info.compress_type = zipfile.ZIP_STORED
+    return info
+
+
 def docx_bytes(
     content_types: str | bytes = CONTENT_TYPES_XML,
     document: str | bytes = DOCUMENT_XML,
 ) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as container:
-        container.writestr("[Content_Types].xml", content_types)
-        container.writestr("word/document.xml", document)
+        container.writestr(_zip_info("[Content_Types].xml"), content_types)
+        container.writestr(_zip_info("word/document.xml"), document)
     return buffer.getvalue()
 
 
 def docx_with_entries(entries: dict[str, str | bytes]) -> bytes:
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as container:
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as container:
         for name, value in entries.items():
-            container.writestr(name, value)
+            container.writestr(_zip_info(name), value)
     return buffer.getvalue()
 
 
@@ -356,12 +364,15 @@ def test_download_returns_private_content_without_caching(
     resume_client, resume_users
 ):
     owner, _ = resume_users
-    uploaded = upload(resume_client, owner, filename="My CV.pdf").json()
+    uploaded_bytes = pdf_bytes(b"downloaded exact bytes")
+    uploaded = upload(
+        resume_client, owner, filename="My CV.pdf", data=uploaded_bytes
+    ).json()
     response = resume_client.get(
         f"/api/resumes/{uploaded['id']}/download", headers=auth_headers(owner)
     )
     assert response.status_code == status.HTTP_200_OK
-    assert response.content == pdf_bytes()
+    assert response.content == uploaded_bytes
     assert response.headers["content-type"].startswith("application/pdf")
     assert "no-store" in response.headers["cache-control"]
     assert "private" in response.headers["cache-control"]
