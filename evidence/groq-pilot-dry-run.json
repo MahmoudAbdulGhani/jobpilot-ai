@@ -6,12 +6,11 @@
     "pilot": true,
     "max_requests": 3,
     "max_input_tokens_estimate_per_request": 32000,
-    "max_output_tokens_per_request": 4000,
+    "max_output_tokens_per_request": 1500,
     "timeout_seconds": 60,
     "retries": 0,
-    "pacing_seconds": 2.0,
     "live_supported": true,
-    "max_estimated_cost_usd": 0.0108,
+    "max_estimated_cost_usd": 0.002444,
     "rates_usd_per_million": {
       "input": 0.075,
       "output": 0.3
@@ -21,24 +20,42 @@
         "case": "strong",
         "task": "profile",
         "prompt_version": "profile-suggestions-v1",
-        "sha256": "a36eb609e58f779896aa985ba7d2d8abf8d2b4d1d524177133c619da7a8497f6",
-        "input_token_estimate": 3811
+        "sha256": "f962bc0ca24b9b61945eb81d2277218e1d7dbdd8b59e6ef0c52484cbab3035d5",
+        "input_token_estimate": 3811,
+        "max_output_tokens": 1500,
+        "complete_token_estimate": 5311
       },
       {
         "case": "strong",
         "task": "fit",
         "prompt_version": "job-fit-v1",
-        "sha256": "7d4f237ce0de07db72eb54e15d447b40b97dbc469f46a348b794afdf257af33a",
-        "input_token_estimate": 4698
+        "sha256": "38ae5948489170b2f7b5a1aa81a6dc9180766667330a60c2a86e4d7bff8e90a2",
+        "input_token_estimate": 4698,
+        "max_output_tokens": 1500,
+        "complete_token_estimate": 6198
       },
       {
         "case": "strong",
         "task": "pack",
         "prompt_version": "application-pack-v1",
-        "sha256": "a83e7b4d26bdd189fc6c9fe2073e3cd91bb90b03166033b6ac376caa2872e811",
-        "input_token_estimate": 6084
+        "sha256": "021cc0e067aa61499bc94ccb68fe98f519ec743d25daa14dc3b6446c525e87c4",
+        "input_token_estimate": 6084,
+        "max_output_tokens": 1500,
+        "complete_token_estimate": 7584
       }
-    ]
+    ],
+    "tokens_per_minute": 8000,
+    "tokens_per_minute_source": "documented_assumption",
+    "rate_limit_documented": {
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 8000,
+      "tpd": 200000
+    },
+    "limits_are_assumptions": true,
+    "billing_plan_verified": false,
+    "free_tier_assumed_zero_cost": false,
+    "pricing_note": "Groq free and paid Developer tiers have different rate limits and pricing; reservation rates are Developer-tier documented assumptions, not proof of this account's billing plan or a guarantee of zero cost."
   },
   "cases": [
     {

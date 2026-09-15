@@ -11,12 +11,16 @@ from app.services.ai_provider import DeterministicTestProvider
 
 
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
+def offline(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Evaluation tests must never open a network connection")
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.delenv("JOBPILOT_EVAL_ALLOW_LIVE", raising=False)
+    monkeypatch.delenv("JOBPILOT_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("JOBPILOT_GROQ_API_KEY", raising=False)
+    # Tests must never read the real private .env.
+    monkeypatch.setattr(evaluation, "ENV_FILE", tmp_path / "no-private-env.env")
 
 
 def test_default_is_offline_even_with_credentials_and_application_flags(tmp_path, monkeypatch):

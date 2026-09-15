@@ -8,6 +8,8 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
+from dotenv import dotenv_values
+
 from app.evaluation.fixtures import cases
 from app.schemas.job_fit import CandidateFact
 from app.services.ai_provider import (
@@ -30,14 +32,46 @@ OUTPUT_USD_PER_MILLION = 2.0
 PER_REQUEST_USD = 0.016
 MAX_COST_USD = 0.24
 
+# Groq documented rate limits for openai/gpt-oss-20b published March 2026
+# (30 RPM, 1,000 RPD, 8,000 TPM, 200,000 TPD). These are labeled as
+# assumptions; the CLI never discovers the account's actual billing plan
+# or tier. If the limit is known, supply JOBPILOT_GROQ_TPM in the
+# gitignored .env or environment.
+GROQ_DOCUMENTED_LIMITS = {
+    "rpm": 30, "rpd": 1_000, "tpm": 8_000, "tpd": 200_000,
+}
+GROQ_TPM_ENV = "JOBPILOT_GROQ_TPM"
+GROQ_MAX_OUTPUT_TOKENS = 1_500
+# Reservation rates are Developer-tier documented pricing assumptions used
+# only to bound the pilot cost acknowledgment. The free tier does not imply
+# a zero-cost guarantee; the account's billing plan is not verified.
 GROQ_INPUT_USD_PER_MILLION = 0.075
 GROQ_OUTPUT_USD_PER_MILLION = 0.30
-GROQ_PER_REQUEST_USD = 0.0036
-GROQ_PILOT_MAX_COST_USD = 0.0108
-GROQ_PACING_SECONDS = 2.0
 
 TASKS = {"profile": PROMPT_VERSION,
          "fit": JOB_FIT_PROMPT_VERSION, "pack": PACK_PROMPT_VERSION}
+
+ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+
+
+def groq_tokens_per_minute(env=None):
+    env = env or {}
+    raw = os.environ.get(GROQ_TPM_ENV) or env.get(GROQ_TPM_ENV)
+    if raw:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value, "account_from_env"
+    return GROQ_DOCUMENTED_LIMITS["tpm"], "documented_assumption"
+
+
+def _load_dotenv(path=None):
+    path = Path(path) if path is not None else ENV_FILE
+    if not path.exists():
+        return {}
+    return dict(dotenv_values(path))
 
 
 def dispatch(provider, task, source):
@@ -53,7 +87,10 @@ class Planned(ProviderFailure):
     pass
 
 
-def request_plan(task, source, provider_name="openai"):
+def request_plan(task, source, provider_name="openai", max_output_tokens=None,
+                 max_total_tokens=None):
+    if max_output_tokens is None:
+        max_output_tokens = MAX_OUTPUT_TOKENS
     captured = {}
 
     def capture(**kwargs):
@@ -63,7 +100,7 @@ def request_plan(task, source, provider_name="openai"):
     provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
     provider = provider_class(
         api_key="offline-placeholder", model=GROQ_MODEL if provider_name == "groq" else MODEL, timeout=TIMEOUT,
-        max_output_tokens=MAX_OUTPUT_TOKENS,
+        max_output_tokens=max_output_tokens,
         client=SimpleNamespace(responses=SimpleNamespace(parse=capture)),
     )
     try:
@@ -79,54 +116,88 @@ def request_plan(task, source, provider_name="openai"):
     estimate = len(encoded) + 2048
     if estimate > MAX_INPUT_TOKENS_ESTIMATE:
         raise ValueError("Request exceeds the evaluation input allowance")
+    complete = estimate + max_output_tokens
+    if max_total_tokens is not None and complete > max_total_tokens:
+        raise ValueError(
+            "Request exceeds the complete input+output token allowance")
     if captured.get("store") is not False or "tools" in captured:
         raise ValueError("Evaluation requires tool-free, nonstored requests")
-    return {"sha256": hashlib.sha256(encoded).hexdigest(), "input_token_estimate": estimate}
+    return {"sha256": hashlib.sha256(encoded).hexdigest(),
+            "input_token_estimate": estimate,
+            "max_output_tokens": max_output_tokens,
+            "complete_token_estimate": complete}
 
 
-def build_plan(provider_name="openai", pilot=False):
+def build_plan(provider_name="openai", pilot=False, env=None):
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
+    env = env or {}
     all_cases = cases()
     selected_cases = all_cases[:1] if pilot else all_cases
     expected_requests = PILOT_REQUESTS if pilot else MAX_REQUESTS
+    groq = provider_name == "groq"
+    output_cap = GROQ_MAX_OUTPUT_TOKENS if groq else MAX_OUTPUT_TOKENS
+    tokens_per_minute = None
+    rate_limit_source = None
+    if groq:
+        tokens_per_minute, rate_limit_source = groq_tokens_per_minute(env)
     entries = []
     for case in selected_cases:
         for task, version in TASKS.items():
             entries.append({"case": case["id"], "task": task, "prompt_version": version,
-                            **request_plan(task, case["source"], provider_name)})
+                            **request_plan(task, case["source"], provider_name,
+                                           max_output_tokens=output_cap,
+                                           max_total_tokens=tokens_per_minute)})
     if len(entries) != expected_requests:
         raise ValueError(
             "Fixture count changed; review the request and cost budget")
 
-    if provider_name == "groq":
+    if groq:
         live_supported = bool(pilot)
         rates = {"input": GROQ_INPUT_USD_PER_MILLION,
                  "output": GROQ_OUTPUT_USD_PER_MILLION} if pilot else None
-        max_cost = GROQ_PILOT_MAX_COST_USD if pilot else None
-        pacing = GROQ_PACING_SECONDS if pilot else 0.0
+        max_cost = (
+            round(sum(
+                (e["input_token_estimate"] * GROQ_INPUT_USD_PER_MILLION +
+                 e["max_output_tokens"] * GROQ_OUTPUT_USD_PER_MILLION) / 1_000_000
+                for e in entries), 6) if pilot else None
+        )
     else:
         live_supported = True
         rates = {"input": INPUT_USD_PER_MILLION,
                  "output": OUTPUT_USD_PER_MILLION}
         max_cost = round(len(entries) * PER_REQUEST_USD, 4)
-        pacing = 0.0
 
-    return {
+    plan = {
         "provider": provider_name,
         "model": GROQ_MODEL if provider_name == "groq" else MODEL,
         "pilot": pilot,
         "max_requests": expected_requests,
         "max_input_tokens_estimate_per_request": MAX_INPUT_TOKENS_ESTIMATE,
-        "max_output_tokens_per_request": MAX_OUTPUT_TOKENS,
+        "max_output_tokens_per_request": output_cap,
         "timeout_seconds": TIMEOUT,
         "retries": 0,
-        "pacing_seconds": pacing,
         "live_supported": live_supported,
         "max_estimated_cost_usd": max_cost,
         "rates_usd_per_million": rates,
         "requests": entries,
     }
+
+    if groq:
+        plan["tokens_per_minute"] = tokens_per_minute
+        plan["tokens_per_minute_source"] = rate_limit_source
+        plan["rate_limit_documented"] = dict(GROQ_DOCUMENTED_LIMITS)
+        plan["limits_are_assumptions"] = rate_limit_source == "documented_assumption"
+        plan["billing_plan_verified"] = False
+        plan["free_tier_assumed_zero_cost"] = False
+        plan["pricing_note"] = (
+            "Groq free and paid Developer tiers have different rate limits "
+            "and pricing; reservation rates are Developer-tier documented "
+            "assumptions, not proof of this account's billing plan or a "
+            "guarantee of zero cost."
+        )
+
+    return plan
 
 
 def check_output(task, output, source):
@@ -170,7 +241,43 @@ class Meter:
         return response
 
 
-def execute(client, plan, save, pacing_seconds=0.0):
+class TokenScheduler:
+    """Rolling-60-second token-budget scheduler with a refillable bucket.
+
+    The bucket refills at ``tokens_per_minute / 60`` tokens per second.
+    Acceptable ``clock`` / ``sleeper`` callables allow deterministic
+    fake-clock tests.
+    """
+
+    def __init__(self, tokens_per_minute, clock=None, sleeper=None):
+        if tokens_per_minute <= 0:
+            raise ValueError("tokens_per_minute must be positive")
+        self.capacity = float(tokens_per_minute)
+        self.refill_per_second = self.capacity / 60.0
+        self.tokens = self.capacity
+        self._clock = clock or time.monotonic
+        self._sleep = sleeper or time.sleep
+        self._last = self._clock()
+        self.recorded_waits = []
+
+    def reserve(self, tokens):
+        if tokens > self.capacity:
+            raise ValueError("Request exceeds the complete input+output token allowance")
+        now = self._clock()
+        elapsed = now - self._last
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_second)
+        self._last = now
+        if self.tokens < tokens:
+            wait = (tokens - self.tokens) / self.refill_per_second
+            self._sleep(wait)
+            self.recorded_waits.append(wait)
+            now = self._clock()
+            self.tokens = min(self.capacity, self.tokens + (now - self._last) * self.refill_per_second)
+            self._last = now
+        self.tokens -= tokens
+
+
+def execute(client, plan, save, scheduler=None, stop_on_failure=False):
     provider_name = plan.get("provider", "openai")
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
@@ -178,12 +285,13 @@ def execute(client, plan, save, pacing_seconds=0.0):
         raise ValueError(
             "Groq evaluation is dry-run only; prepare a separate live budget first")
     max_requests = plan.get("max_requests", MAX_REQUESTS)
+    output_cap = plan.get("max_output_tokens_per_request", MAX_OUTPUT_TOKENS)
     meter = Meter(client, max_requests=max_requests)
     provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
     model = plan.get("model", GROQ_MODEL if provider_name == "groq" else MODEL)
     provider = provider_class(
         api_key="injected-client", model=model, timeout=TIMEOUT,
-        max_output_tokens=MAX_OUTPUT_TOKENS, client=meter,
+        max_output_tokens=output_cap, client=meter,
     )
 
     plan_case_ids = [r["case"] for r in plan["requests"]]
@@ -197,10 +305,11 @@ def execute(client, plan, save, pacing_seconds=0.0):
         if provider_name == "groq"
         else {"input": INPUT_USD_PER_MILLION, "output": OUTPUT_USD_PER_MILLION}
     )
-    per_request_usd = round(
-        (plan["max_input_tokens_estimate_per_request"] * rates["input"] +
-         plan["max_output_tokens_per_request"] * rates["output"]) / 1_000_000, 4
-    )
+    max_cost = plan.get("max_estimated_cost_usd")
+    per_request_usd = max_cost / max_requests if max_cost else 0.0
+
+    complete_by_key = {(r["case"], r["task"]): r["complete_token_estimate"]
+                       for r in plan["requests"]}
 
     report = {"mode": "live", "plan": plan, "cases": target_cases, "results": [],
               "semantic_quality": "pending_human_review"}
@@ -210,8 +319,9 @@ def execute(client, plan, save, pacing_seconds=0.0):
         case_tasks = [r["task"]
                       for r in plan["requests"] if r["case"] == case["id"]]
         for task in case_tasks:
-            if meter.calls > 0 and pacing_seconds > 0:
-                time.sleep(pacing_seconds)
+            if scheduler is not None:
+                required = complete_by_key.get((case["id"], task), 0)
+                scheduler.reserve(required)
             started = time.perf_counter()
             row = {"case": case["id"], "task": task, "status": "provider_failure",
                    "output": None, "human_review": {"reviewer": None, "scores": None, "notes": None}}
@@ -242,7 +352,11 @@ def execute(client, plan, save, pacing_seconds=0.0):
             report["reserved_cost_usd"] = round(
                 meter.calls * per_request_usd, 6)
             save(report)
-            if usage and (usage["input_tokens"] > MAX_INPUT_TOKENS_ESTIMATE or usage["output_tokens"] > MAX_OUTPUT_TOKENS):
+            if stop_on_failure and row["status"] == "provider_failure":
+                report["stopped"] = "Provider failure; pilot stops without retry or fallback"
+                save(report)
+                return report
+            if usage and (usage["input_tokens"] > MAX_INPUT_TOKENS_ESTIMATE or usage["output_tokens"] > output_cap):
                 report["stopped"] = "Provider usage exceeded planned allowance"
                 save(report)
                 return report
@@ -263,30 +377,33 @@ def main(argv=None):
                         help="New report file; never overwrite evidence")
     args = parser.parse_args(argv)
 
+    dotenv = _load_dotenv()
+
+    try:
+        plan = build_plan(args.provider, pilot=args.pilot, env=dotenv)
+    except ValueError as error:
+        parser.error(str(error))
+
     if args.live:
         if args.provider == "groq" and not args.pilot:
             parser.error(
-                "Groq evaluation is pilot-only for live runs; use --pilot with --max-cost-usd 0.0108")
+                "Groq evaluation is pilot-only for live runs; use --pilot with --max-cost-usd")
 
         if args.provider == "groq":
-            expected_cost = GROQ_PILOT_MAX_COST_USD
             key_name = "JOBPILOT_GROQ_API_KEY"
         else:
-            expected_cost = round(
-                PILOT_REQUESTS * PER_REQUEST_USD, 4) if args.pilot else MAX_COST_USD
             key_name = "JOBPILOT_OPENAI_API_KEY"
 
-        if os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd != expected_cost:
+        expected_cost = plan.get("max_estimated_cost_usd")
+
+        if os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd is None or round(args.max_cost_usd, 6) != round(expected_cost, 6):
             parser.error(
                 f"Live requires JOBPILOT_EVAL_ALLOW_LIVE=1 and --max-cost-usd {expected_cost}")
-        if not os.environ.get(key_name):
+        if not (os.environ.get(key_name) or dotenv.get(key_name)):
             parser.error(
-                f"Live requires {key_name} in the process environment")
+                f"Live requires {key_name} in the process environment or .env")
 
-    # No .env loading, Settings construction, database access, or provider factory.
-    # Application AI flags and test-provider guards are entirely unchanged.
     try:
-        plan = build_plan(args.provider, pilot=args.pilot)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         plan_case_ids = [r["case"] for r in plan["requests"]]
         unique_case_ids = list(dict.fromkeys(plan_case_ids))
@@ -295,8 +412,8 @@ def main(argv=None):
                         for cid in unique_case_ids if cid in all_cases_by_id]
         with args.output.open("x", encoding="utf-8") as handle:
             json.dump({"mode": "planned", "plan": plan,
-                      "cases": target_cases}, handle, indent=2)
-    except (ValueError, OSError):
+                       "cases": target_cases}, handle, indent=2)
+    except OSError:
         parser.error(
             "Preflight failed or output exists/is unwritable; choose a new report path")
 
@@ -318,24 +435,31 @@ def main(argv=None):
         temporary.replace(args.output)
 
     try:
+        groq_key = os.environ.get("JOBPILOT_GROQ_API_KEY") or dotenv.get("JOBPILOT_GROQ_API_KEY")
+        openai_key = os.environ.get("JOBPILOT_OPENAI_API_KEY") or dotenv.get("JOBPILOT_OPENAI_API_KEY")
         if args.provider == "groq":
             client_kwargs = {
-                "api_key": os.environ["JOBPILOT_GROQ_API_KEY"],
+                "api_key": groq_key,
                 "base_url": GROQ_BASE_URL,
                 "timeout": TIMEOUT,
                 "max_retries": 0,
             }
         else:
             client_kwargs = {
-                "api_key": os.environ["JOBPILOT_OPENAI_API_KEY"],
+                "api_key": openai_key,
                 "base_url": "https://api.openai.com/v1",
                 "timeout": TIMEOUT,
                 "max_retries": 0,
             }
 
+        scheduler = None
+        if plan.get("tokens_per_minute"):
+            scheduler = TokenScheduler(plan["tokens_per_minute"])
+
         with OpenAI(**client_kwargs) as client:
             report = execute(client, plan, save,
-                             pacing_seconds=plan.get("pacing_seconds", 0.0))
+                             scheduler=scheduler,
+                             stop_on_failure=(plan.get("provider") == "groq"))
     except Exception:
         print(
             "Evaluation stopped; inspect the checkpoint report. Error details suppressed.")

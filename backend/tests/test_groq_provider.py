@@ -16,11 +16,14 @@ from app.services.profile_suggestion_service import provider_configuration, prov
 
 
 @pytest.fixture(autouse=True)
-def block_network(monkeypatch):
+def block_network(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Network is forbidden in Groq tests")
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
+    # Tests must never read the real private .env.
+    monkeypatch.setattr(evaluation, "ENV_FILE", tmp_path / "no-private-env.env")
 
 
 def settings(**overrides):
@@ -196,9 +199,25 @@ def test_groq_pilot_dry_run_and_zero_network(tmp_path, monkeypatch):
     assert [r["task"] for r in plan["requests"]] == ["profile", "fit", "pack"]
     assert all(r["case"] == "strong" for r in plan["requests"])
     assert plan["live_supported"] is True
-    assert plan["max_estimated_cost_usd"] == 0.0108
+    assert plan["max_output_tokens_per_request"] == evaluation.GROQ_MAX_OUTPUT_TOKENS
+    assert all(r["max_output_tokens"] == evaluation.GROQ_MAX_OUTPUT_TOKENS
+               for r in plan["requests"])
+    expected_cost = round(sum(
+        (r["input_token_estimate"] * 0.075 + r["max_output_tokens"] * 0.30) / 1_000_000
+        for r in plan["requests"]), 6)
+    assert plan["max_estimated_cost_usd"] == expected_cost
     assert plan["rates_usd_per_million"] == {"input": 0.075, "output": 0.30}
-    assert plan["pacing_seconds"] == 2.0
+    assert plan["tokens_per_minute"] == evaluation.GROQ_DOCUMENTED_LIMITS["tpm"]
+    assert plan["tokens_per_minute_source"] == "documented_assumption"
+    assert plan["limits_are_assumptions"] is True
+    assert plan["billing_plan_verified"] is False
+    assert plan["free_tier_assumed_zero_cost"] is False
+    assert "pacing_seconds" not in plan
+    assert all(r["complete_token_estimate"] ==
+               r["input_token_estimate"] + r["max_output_tokens"]
+               for r in plan["requests"])
+    assert all(r["complete_token_estimate"] <= plan["tokens_per_minute"]
+               for r in plan["requests"])
     assert all(r["input_token_estimate"] < 32000 for r in plan["requests"])
     assert "synthetic-secret-key" not in path.read_text()
 
@@ -234,7 +253,7 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     def parse(**kwargs):
         captured_requests.append(kwargs)
         assert kwargs["store"] is False and "tools" not in kwargs
-        assert kwargs["max_output_tokens"] == 4000
+        assert kwargs["max_output_tokens"] == evaluation.GROQ_MAX_OUTPUT_TOKENS
         assert kwargs["service_tier"] == "default"
         index = len(captured_requests) - 1
         case = cases()[0]  # canonical "strong" case
@@ -274,10 +293,13 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "groq-secret-key-1234")
     monkeypatch.setattr(evaluation.logging, "disable", lambda *args: None)
 
+    expected_cost = evaluation.build_plan("groq", pilot=True)[
+        "max_estimated_cost_usd"]
+
     report_path = tmp_path / "groq-pilot-run.json"
     exit_code = evaluation.main([
         "--provider", "groq", "--pilot", "--live",
-        "--max-cost-usd", "0.0108", "--output", str(report_path),
+        "--max-cost-usd", str(expected_cost), "--output", str(report_path),
     ])
     assert exit_code == 0
     assert construction_kwargs["base_url"] == "https://api.groq.com/openai/v1"
@@ -286,16 +308,129 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     assert construction_kwargs["max_retries"] == 0
 
     assert len(captured_requests) == 3
-    # Pacing is called between requests 1->2 and 2->3
+    # Token-budget scheduling replaces a fixed 2-second delay: the fit and
+    # pack requests wait for their complete input+output budgets to refill.
     assert len(slept) == 2
-    assert all(s == 2.0 for s in slept)
+    assert all(s > 0 for s in slept)
+    assert set(slept) != {2.0}
 
     report = json.loads(report_path.read_text())
     assert report["semantic_quality"] == "pending_human_review"
     assert report["attempted_requests"] == 3
     assert len(report["results"]) == 3
     assert all(r["status"] == "contract_pass" for r in report["results"])
-    assert report["reserved_cost_usd"] == pytest.approx(0.0108)
+    assert report["reserved_cost_usd"] == pytest.approx(expected_cost)
     # 3 requests * (2000 * 0.075 + 500 * 0.30) / 1,000,000 = 3 * (0.15 + 0.15) / 1000 = 0.0009
     assert report["known_usage_cost_usd"] == pytest.approx(0.0009)
     assert "groq-secret-key-1234" not in report_path.read_text()
+
+
+class _FakeClock:
+    def __init__(self, start=1000.0):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def test_token_scheduler_paces_by_token_budget_with_fake_clock():
+    clock = _FakeClock()
+    slept = []
+    scheduler = evaluation.TokenScheduler(
+        6000, clock=clock, sleeper=lambda s: (slept.append(s), clock.advance(s)))
+    # 3000 of 6000 available: no wait.
+    assert scheduler.reserve(3000) is None
+    assert slept == []
+    # Remaining 3000 < 4000: wait (4000 - 3000) / (6000/60) = 10 seconds.
+    scheduler.reserve(4000)
+    assert len(slept) == 1 and slept[0] == pytest.approx(10.0)
+    # Bucket is empty: wait 2000 / 100 = 20 seconds.
+    scheduler.reserve(2000)
+    assert len(slept) == 2 and slept[1] == pytest.approx(20.0)
+    # A single reservation larger than the minute budget is rejected.
+    with pytest.raises(ValueError):
+        scheduler.reserve(6001)
+
+
+def test_capacity_refills_between_reservations_with_fake_clock():
+    clock = _FakeClock()
+    slept = []
+    scheduler = evaluation.TokenScheduler(
+        6000, clock=clock, sleeper=lambda s: clock.advance(s))
+    scheduler.reserve(3000)
+    clock.advance(30)  # 30s * 100 tokens/s = 3000 tokens refilled.
+    scheduler.reserve(3000)  # No sleep needed once refilled.
+    assert slept == []
+    with pytest.raises(ValueError):
+        evaluation.TokenScheduler(0)
+
+
+def test_groq_build_plan_rejects_oversize_complete_request(monkeypatch):
+    monkeypatch.setenv("JOBPILOT_GROQ_TPM", "500")
+    with pytest.raises(ValueError, match="complete input"):
+        evaluation.build_plan("groq", pilot=True)
+
+
+def test_groq_pilot_oversize_rejected_before_client_creation(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "synthetic-secret")
+    monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
+    monkeypatch.setenv("JOBPILOT_GROQ_TPM", "500")
+    monkeypatch.setattr("openai.OpenAI", lambda **
+                        kwargs: pytest.fail("Oversize plan constructed a network client"))
+    out = tmp_path / "nope.json"
+    with pytest.raises(SystemExit) as caught:
+        evaluation.main(["--provider", "groq", "--pilot", "--live",
+                         "--max-cost-usd", "0.01", "--output", str(out)])
+    assert caught.value.code == 2
+    assert not out.exists()
+
+
+def test_groq_accepted_tpm_from_env_file_without_private_env(tmp_path, monkeypatch):
+    env_file = tmp_path / "limits.env"
+    env_file.write_text('JOBPILOT_GROQ_TPM="12000"\n')
+    monkeypatch.setattr(evaluation, "ENV_FILE", env_file)
+    path = tmp_path / "plan.json"
+    assert evaluation.main(["--provider", "groq", "--pilot",
+                            "--output", str(path)]) == 0
+    report = json.loads(path.read_text())
+    assert report["plan"]["tokens_per_minute"] == 12000
+    assert report["plan"]["tokens_per_minute_source"] == "account_from_env"
+    assert report["plan"]["limits_are_assumptions"] is False
+
+
+def test_groq_tokens_per_minute_override_labeling():
+    plan = evaluation.build_plan("groq", pilot=True,
+                                 env={"JOBPILOT_GROQ_TPM": "12000"})
+    assert plan["tokens_per_minute"] == 12000
+    assert plan["tokens_per_minute_source"] == "account_from_env"
+    assert plan["limits_are_assumptions"] is False
+    fallback = evaluation.build_plan("groq", pilot=True,
+                                     env={"JOBPILOT_GROQ_TPM": "0"})
+    assert fallback["tokens_per_minute"] == 8000
+    assert fallback["tokens_per_minute_source"] == "documented_assumption"
+    assert fallback["limits_are_assumptions"] is True
+
+
+def test_groq_execute_reports_incomplete_as_failure_and_stops():
+    plan = evaluation.build_plan("groq", pilot=True)
+
+    def parse(**kwargs):
+        return SimpleNamespace(
+            status="incomplete", output_parsed=None, model="openai/gpt-oss-20b",
+            usage=SimpleNamespace(input_tokens=100, output_tokens=50,
+                                  output_tokens_details=SimpleNamespace(reasoning_tokens=0)),
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    checkpoints = []
+    report = evaluation.execute(client, plan,
+                                lambda r: checkpoints.append(json.dumps(r)),
+                                scheduler=None, stop_on_failure=True)
+    assert report["stopped"] == "Provider failure; pilot stops without retry or fallback"
+    assert report["attempted_requests"] == 1
+    assert len(report["results"]) == 1
+    assert report["results"][0]["status"] == "provider_failure"
+    assert report["results"][0]["provider_status"] == "incomplete"
