@@ -21,6 +21,7 @@ from app.services.application_pack_service import validate_generated
 MODEL = "gpt-5-mini"
 GROQ_MODEL = "openai/gpt-oss-20b"
 MAX_REQUESTS = 15
+PILOT_REQUESTS = 3
 MAX_INPUT_TOKENS_ESTIMATE = 32_000
 MAX_OUTPUT_TOKENS = 4_000
 TIMEOUT = 60
@@ -28,7 +29,15 @@ INPUT_USD_PER_MILLION = 0.25
 OUTPUT_USD_PER_MILLION = 2.0
 PER_REQUEST_USD = 0.016
 MAX_COST_USD = 0.24
-TASKS = {"profile": PROMPT_VERSION, "fit": JOB_FIT_PROMPT_VERSION, "pack": PACK_PROMPT_VERSION}
+
+GROQ_INPUT_USD_PER_MILLION = 0.075
+GROQ_OUTPUT_USD_PER_MILLION = 0.30
+GROQ_PER_REQUEST_USD = 0.0036
+GROQ_PILOT_MAX_COST_USD = 0.0108
+GROQ_PACING_SECONDS = 2.0
+
+TASKS = {"profile": PROMPT_VERSION,
+         "fit": JOB_FIT_PROMPT_VERSION, "pack": PACK_PROMPT_VERSION}
 
 
 def dispatch(provider, task, source):
@@ -63,8 +72,10 @@ def request_plan(task, source, provider_name="openai"):
         pass
     # Include schema/instructions, not just source text. UTF-8 byte count is a
     # deliberately conservative token estimate, plus protocol/schema allowance.
-    serializable = {**captured, "text_format": captured["text_format"].model_json_schema()}
-    encoded = json.dumps(serializable, ensure_ascii=True, sort_keys=True).encode()
+    serializable = {**captured,
+                    "text_format": captured["text_format"].model_json_schema()}
+    encoded = json.dumps(serializable, ensure_ascii=True,
+                         sort_keys=True).encode()
     estimate = len(encoded) + 2048
     if estimate > MAX_INPUT_TOKENS_ESTIMATE:
         raise ValueError("Request exceeds the evaluation input allowance")
@@ -73,24 +84,49 @@ def request_plan(task, source, provider_name="openai"):
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "input_token_estimate": estimate}
 
 
-def build_plan(provider_name="openai"):
+def build_plan(provider_name="openai", pilot=False):
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
+    all_cases = cases()
+    selected_cases = all_cases[:1] if pilot else all_cases
+    expected_requests = PILOT_REQUESTS if pilot else MAX_REQUESTS
     entries = []
-    for case in cases():
+    for case in selected_cases:
         for task, version in TASKS.items():
             entries.append({"case": case["id"], "task": task, "prompt_version": version,
                             **request_plan(task, case["source"], provider_name)})
-    if len(entries) != MAX_REQUESTS:
-        raise ValueError("Fixture count changed; review the request and cost budget")
-    return {"provider": provider_name, "model": GROQ_MODEL if provider_name == "groq" else MODEL, "max_requests": MAX_REQUESTS,
-            "max_input_tokens_estimate_per_request": MAX_INPUT_TOKENS_ESTIMATE,
-            "max_output_tokens_per_request": MAX_OUTPUT_TOKENS,
-            "timeout_seconds": TIMEOUT, "retries": 0,
-            "live_supported": provider_name == "openai",
-            "max_estimated_cost_usd": MAX_COST_USD if provider_name == "openai" else None,
-            "rates_usd_per_million": {"input": INPUT_USD_PER_MILLION, "output": OUTPUT_USD_PER_MILLION} if provider_name == "openai" else None,
-            "requests": entries}
+    if len(entries) != expected_requests:
+        raise ValueError(
+            "Fixture count changed; review the request and cost budget")
+
+    if provider_name == "groq":
+        live_supported = bool(pilot)
+        rates = {"input": GROQ_INPUT_USD_PER_MILLION,
+                 "output": GROQ_OUTPUT_USD_PER_MILLION} if pilot else None
+        max_cost = GROQ_PILOT_MAX_COST_USD if pilot else None
+        pacing = GROQ_PACING_SECONDS if pilot else 0.0
+    else:
+        live_supported = True
+        rates = {"input": INPUT_USD_PER_MILLION,
+                 "output": OUTPUT_USD_PER_MILLION}
+        max_cost = round(len(entries) * PER_REQUEST_USD, 4)
+        pacing = 0.0
+
+    return {
+        "provider": provider_name,
+        "model": GROQ_MODEL if provider_name == "groq" else MODEL,
+        "pilot": pilot,
+        "max_requests": expected_requests,
+        "max_input_tokens_estimate_per_request": MAX_INPUT_TOKENS_ESTIMATE,
+        "max_output_tokens_per_request": MAX_OUTPUT_TOKENS,
+        "timeout_seconds": TIMEOUT,
+        "retries": 0,
+        "pacing_seconds": pacing,
+        "live_supported": live_supported,
+        "max_estimated_cost_usd": max_cost,
+        "rates_usd_per_million": rates,
+        "requests": entries,
+    }
 
 
 def check_output(task, output, source):
@@ -109,38 +145,73 @@ def check_output(task, output, source):
 
 class Meter:
     """Observe usage without changing the production adapter or printing errors."""
-    def __init__(self, client):
+
+    def __init__(self, client, max_requests=MAX_REQUESTS):
         self.client = client
         self.responses = self
         self.calls = 0
+        self.max_requests = max_requests
         self.last = {}
 
     def parse(self, **kwargs):
-        if self.calls >= MAX_REQUESTS:
+        if self.calls >= self.max_requests:
             raise ProviderFailure("Evaluation request budget exhausted")
         self.calls += 1  # Failures consume the allowance too; never retry.
-        self.last = {"provider_status": "transport_or_parse_failure", "usage": None}
-        response = self.client.responses.parse(**kwargs, service_tier="default")
+        self.last = {
+            "provider_status": "transport_or_parse_failure", "usage": None}
+        response = self.client.responses.parse(
+            **kwargs, service_tier="default")
         usage = getattr(response, "usage", None)
         self.last = {"provider_status": getattr(response, "status", "unknown"),
                      "returned_model": getattr(response, "model", None), "usage": None}
         if usage is not None:
             self.last["usage"] = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
-                "reasoning_tokens": getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None)}
+                                  "reasoning_tokens": getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None)}
         return response
 
 
-def execute(client, plan, save):
-    if plan.get("provider", "openai") != "openai":
-        raise ValueError("Groq evaluation is dry-run only; prepare a separate live budget first")
-    meter = Meter(client)
-    provider = OpenAIResponsesProvider(api_key="injected-client", model=MODEL,
-        timeout=TIMEOUT, max_output_tokens=MAX_OUTPUT_TOKENS, client=meter)
-    report = {"mode": "live", "plan": plan, "cases": cases(), "results": [],
+def execute(client, plan, save, pacing_seconds=0.0):
+    provider_name = plan.get("provider", "openai")
+    if provider_name not in {"openai", "groq"}:
+        raise ValueError("Unsupported evaluation provider")
+    if provider_name == "groq" and not plan.get("live_supported", False):
+        raise ValueError(
+            "Groq evaluation is dry-run only; prepare a separate live budget first")
+    max_requests = plan.get("max_requests", MAX_REQUESTS)
+    meter = Meter(client, max_requests=max_requests)
+    provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
+    model = plan.get("model", GROQ_MODEL if provider_name == "groq" else MODEL)
+    provider = provider_class(
+        api_key="injected-client", model=model, timeout=TIMEOUT,
+        max_output_tokens=MAX_OUTPUT_TOKENS, client=meter,
+    )
+
+    plan_case_ids = [r["case"] for r in plan["requests"]]
+    unique_case_ids = list(dict.fromkeys(plan_case_ids))
+    all_cases_by_id = {c["id"]: c for c in cases()}
+    target_cases = [all_cases_by_id[cid]
+                    for cid in unique_case_ids if cid in all_cases_by_id]
+
+    rates = plan.get("rates_usd_per_million") or (
+        {"input": GROQ_INPUT_USD_PER_MILLION, "output": GROQ_OUTPUT_USD_PER_MILLION}
+        if provider_name == "groq"
+        else {"input": INPUT_USD_PER_MILLION, "output": OUTPUT_USD_PER_MILLION}
+    )
+    per_request_usd = round(
+        (plan["max_input_tokens_estimate_per_request"] * rates["input"] +
+         plan["max_output_tokens_per_request"] * rates["output"]) / 1_000_000, 4
+    )
+
+    report = {"mode": "live", "plan": plan, "cases": target_cases, "results": [],
               "semantic_quality": "pending_human_review"}
     save(report)  # Persist before the first request; checkpoint every result.
+
     for case in report["cases"]:
-        for task in TASKS:
+        case_tasks = [r["task"]
+                      for r in plan["requests"] if r["case"] == case["id"]]
+        for task in case_tasks:
+            if meter.calls > 0 and pacing_seconds > 0:
+                time.sleep(pacing_seconds)
             started = time.perf_counter()
             row = {"case": case["id"], "task": task, "status": "provider_failure",
                    "output": None, "human_review": {"reviewer": None, "scores": None, "notes": None}}
@@ -158,14 +229,18 @@ def execute(client, plan, save):
             row["latency_seconds"] = round(time.perf_counter() - started, 3)
             usage = row.get("usage")
             row["estimated_cost_usd"] = (
-                (usage["input_tokens"] * INPUT_USD_PER_MILLION + usage["output_tokens"] * OUTPUT_USD_PER_MILLION) / 1_000_000
+                (usage["input_tokens"] * rates["input"] +
+                 usage["output_tokens"] * rates["output"]) / 1_000_000
                 if usage else None)
-            row["reserved_cost_usd"] = PER_REQUEST_USD
+            row["reserved_cost_usd"] = per_request_usd
             report["results"].append(row)
             report["attempted_requests"] = meter.calls
-            report["known_usage_cost_usd"] = sum(r["estimated_cost_usd"] or 0 for r in report["results"])
-            report["unknown_usage_requests"] = sum(r.get("usage") is None for r in report["results"])
-            report["reserved_cost_usd"] = round(meter.calls * PER_REQUEST_USD, 6)
+            report["known_usage_cost_usd"] = sum(
+                r["estimated_cost_usd"] or 0 for r in report["results"])
+            report["unknown_usage_requests"] = sum(
+                r.get("usage") is None for r in report["results"])
+            report["reserved_cost_usd"] = round(
+                meter.calls * per_request_usd, 6)
             save(report)
             if usage and (usage["input_tokens"] > MAX_INPUT_TOKENS_ESTIMATE or usage["output_tokens"] > MAX_OUTPUT_TOKENS):
                 report["stopped"] = "Provider usage exceeded planned allowance"
@@ -176,47 +251,99 @@ def execute(client, plan, save):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--live", action="store_true", help="Explicitly authorize this synthetic API run")
-    parser.add_argument("--provider", choices=["openai", "groq"], default="openai", help="Groq currently supports offline planning only")
-    parser.add_argument("--max-cost-usd", type=float, help="Required live cost acknowledgement: 0.24")
-    parser.add_argument("--output", type=Path, required=True, help="New report file; never overwrite evidence")
+    parser.add_argument("--live", action="store_true",
+                        help="Explicitly authorize this synthetic API run")
+    parser.add_argument("--pilot", action="store_true",
+                        help="Run a 3-request pilot on the canonical case (profile, fit, pack)")
+    parser.add_argument("--provider", choices=["openai", "groq"],
+                        default="openai", help="Evaluation provider (default: openai)")
+    parser.add_argument("--max-cost-usd", type=float,
+                        help="Required live cost acknowledgement")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="New report file; never overwrite evidence")
     args = parser.parse_args(argv)
-    if args.live and args.provider == "groq":
-        parser.error("Groq evaluation is dry-run only; prepare a separate live budget first")
-    if args.live and (os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd != MAX_COST_USD):
-        parser.error("Live requires JOBPILOT_EVAL_ALLOW_LIVE=1 and --max-cost-usd 0.24")
-    if args.live and not os.environ.get("JOBPILOT_OPENAI_API_KEY"):
-        parser.error("Live requires JOBPILOT_OPENAI_API_KEY in the process environment")
+
+    if args.live:
+        if args.provider == "groq" and not args.pilot:
+            parser.error(
+                "Groq evaluation is pilot-only for live runs; use --pilot with --max-cost-usd 0.0108")
+
+        if args.provider == "groq":
+            expected_cost = GROQ_PILOT_MAX_COST_USD
+            key_name = "JOBPILOT_GROQ_API_KEY"
+        else:
+            expected_cost = round(
+                PILOT_REQUESTS * PER_REQUEST_USD, 4) if args.pilot else MAX_COST_USD
+            key_name = "JOBPILOT_OPENAI_API_KEY"
+
+        if os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd != expected_cost:
+            parser.error(
+                f"Live requires JOBPILOT_EVAL_ALLOW_LIVE=1 and --max-cost-usd {expected_cost}")
+        if not os.environ.get(key_name):
+            parser.error(
+                f"Live requires {key_name} in the process environment")
+
     # No .env loading, Settings construction, database access, or provider factory.
     # Application AI flags and test-provider guards are entirely unchanged.
     try:
-        plan = build_plan(args.provider)
+        plan = build_plan(args.provider, pilot=args.pilot)
         args.output.parent.mkdir(parents=True, exist_ok=True)
+        plan_case_ids = [r["case"] for r in plan["requests"]]
+        unique_case_ids = list(dict.fromkeys(plan_case_ids))
+        all_cases_by_id = {c["id"]: c for c in cases()}
+        target_cases = [all_cases_by_id[cid]
+                        for cid in unique_case_ids if cid in all_cases_by_id]
         with args.output.open("x", encoding="utf-8") as handle:
-            json.dump({"mode": "planned", "plan": plan, "cases": cases()}, handle, indent=2)
+            json.dump({"mode": "planned", "plan": plan,
+                      "cases": target_cases}, handle, indent=2)
     except (ValueError, OSError):
-        parser.error("Preflight failed or output exists/is unwritable; choose a new report path")
+        parser.error(
+            "Preflight failed or output exists/is unwritable; choose a new report path")
+
     if not args.live:
-        print(f"Offline {args.provider} plan: 15 requests proposed; 0 sent.")
+        mode_label = f"{args.provider} pilot" if args.pilot else args.provider
+        print(
+            f"Offline {mode_label} plan: {len(plan['requests'])} requests proposed; 0 sent.")
         return 0
+
     # Suppress SDK/HTTP debug logs even if enabled externally. Never log keys.
     logging.disable(logging.CRITICAL)
     from openai import OpenAI
+    from app.services.ai_provider import GROQ_BASE_URL
 
     def save(report):
         temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-        temporary.write_text(json.dumps(report, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.write_text(json.dumps(
+            report, indent=2, ensure_ascii=True), encoding="utf-8")
         temporary.replace(args.output)
 
     try:
-        with OpenAI(api_key=os.environ["JOBPILOT_OPENAI_API_KEY"],
-                    base_url="https://api.openai.com/v1", timeout=TIMEOUT, max_retries=0) as client:
-            report = execute(client, plan, save)
+        if args.provider == "groq":
+            client_kwargs = {
+                "api_key": os.environ["JOBPILOT_GROQ_API_KEY"],
+                "base_url": GROQ_BASE_URL,
+                "timeout": TIMEOUT,
+                "max_retries": 0,
+            }
+        else:
+            client_kwargs = {
+                "api_key": os.environ["JOBPILOT_OPENAI_API_KEY"],
+                "base_url": "https://api.openai.com/v1",
+                "timeout": TIMEOUT,
+                "max_retries": 0,
+            }
+
+        with OpenAI(**client_kwargs) as client:
+            report = execute(client, plan, save,
+                             pacing_seconds=plan.get("pacing_seconds", 0.0))
     except Exception:
-        print("Evaluation stopped; inspect the checkpoint report. Error details suppressed.")
+        print(
+            "Evaluation stopped; inspect the checkpoint report. Error details suppressed.")
         return 1
-    print(f"Completed {report['attempted_requests']} requests; semantic quality requires human review.")
-    return 0 if len(report["results"]) == MAX_REQUESTS and all(r["status"] == "contract_pass" for r in report["results"]) and not report.get("stopped") else 1
+
+    print(
+        f"Completed {report['attempted_requests']} requests; semantic quality requires human review.")
+    return 0 if len(report["results"]) == plan["max_requests"] and all(r["status"] == "contract_pass" for r in report["results"]) and not report.get("stopped") else 1
 
 
 if __name__ == "__main__":
