@@ -13,6 +13,7 @@ from app.schemas.profile_suggestions import ProfileSuggestion, ProviderSuggestio
 from app.services.ai_provider import (
     DeterministicTestProvider,
     OpenAIResponsesProvider,
+    GroqResponsesProvider,
     PROMPT_VERSION,
     ProviderFailure,
 )
@@ -32,18 +33,31 @@ def source_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def provider_for(settings: Settings):
+def provider_configuration(settings: Settings):
+    """Resolve metadata without constructing a client; enforce the same gates for UI and generation."""
     if not settings.JOBPILOT_AI_ENABLED:
         raise SuggestionError(503, "AI features are disabled.")
     if settings.JOBPILOT_AI_TEST_PROVIDER:
         if not settings.E2E_TEST_MODE or settings.POSTGRES_DB != settings.POSTGRES_TEST_DB:
             raise SuggestionError(503, "The deterministic AI provider is restricted to guarded tests.")
-        return DeterministicTestProvider()
-    if not settings.JOBPILOT_OPENAI_API_KEY:
+        return "deterministic-test", "synthetic-v1", None
+    if settings.JOBPILOT_AI_PROVIDER == "groq":
+        key, model = settings.JOBPILOT_GROQ_API_KEY, settings.JOBPILOT_GROQ_MODEL
+    else:
+        key, model = settings.JOBPILOT_OPENAI_API_KEY, settings.JOBPILOT_AI_MODEL
+    if not key or not key.strip():
         raise SuggestionError(503, "AI features are not configured.")
-    return OpenAIResponsesProvider(
-        api_key=settings.JOBPILOT_OPENAI_API_KEY,
-        model=settings.JOBPILOT_AI_MODEL,
+    return settings.JOBPILOT_AI_PROVIDER, model, key
+
+
+def provider_for(settings: Settings):
+    name, model, key = provider_configuration(settings)
+    if name == "deterministic-test":
+        return DeterministicTestProvider()
+    provider_class = GroqResponsesProvider if name == "groq" else OpenAIResponsesProvider
+    return provider_class(
+        api_key=key,
+        model=model,
         timeout=settings.JOBPILOT_AI_TIMEOUT_SECONDS,
         max_output_tokens=settings.JOBPILOT_AI_MAX_OUTPUT_TOKENS,
     )

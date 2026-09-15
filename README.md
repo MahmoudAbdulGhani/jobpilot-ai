@@ -212,6 +212,49 @@ normal-server fallback. Live OpenAI behavior and suggestion quality remain
 unverified. After configuring the service, an owner may separately opt into a
 smoke test using a synthetic CV; never use a real CV for initial validation.
 
+#### Groq provider
+
+The backend also accepts `JOBPILOT_AI_PROVIDER="groq"` and reads
+`JOBPILOT_GROQ_API_KEY` from the private repository-root `.env` through the existing
+settings loader. Keep `JOBPILOT_AI_ENABLED="false"` during preparation; a stored key
+does not enable calls. `.env` remains ignored and must never be committed.
+
+`JOBPILOT_GROQ_MODEL` defaults to `openai/gpt-oss-20b`. OpenAI remains the default
+provider and retains `JOBPILOT_AI_MODEL` and `JOBPILOT_OPENAI_API_KEY`; switching
+providers does not reuse the other provider's key or model. Missing credentials
+fail closed, with no provider fallback. The environment template contains blank
+key placeholders only. Both AI keys are excluded from settings repr/serialization.
+
+Groq uses the existing OpenAI Python SDK against its fixed
+`https://api.groq.com/openai/v1` endpoint, as described by
+[Groq's Responses API documentation](https://console.groq.com/docs/responses-api).
+All three tasks reuse the same prompts, schemas, evidence validators, input/output
+bounds, timeouts, zero-retry policy, `store=false` and tool-free requests.
+Pack options report the selected provider/model and respect the same test-provider
+guards as generation. Groq documents Responses as beta; live compatibility and
+semantic quality are not yet verified. SDK serialization is tested with a mocked
+HTTP transport, including incomplete, refused, malformed and failed responses.
+
+For a Groq offline plan (from `backend`, with a new report filename):
+
+```powershell
+.\.venv\Scripts\python.exe -m app.evaluation --provider groq --output ..\storage\ai-evaluation\groq-plan.json
+```
+
+This captures 15 synthetic requests in memory and makes zero API calls. It does not
+load `.env` or require credentials. Groq `--live` is deliberately rejected by this
+evaluation command until a separate Groq cost plan is prepared; the existing
+OpenAI evaluation budget is not applied to Groq. Backend provider support is ready
+for later explicit enablement, but no live calls were made during implementation.
+
+Groq verification (2026-09-15): **98 passed**, one Starlette/httpx deprecation
+warning; the Groq CLI dry run planned 15 requests and sent zero. `git diff --check`
+passed, and `.env` was confirmed ignored and untracked. From `backend`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_groq_provider.py tests/test_ai_evaluation.py tests/test_pack_provider.py tests/test_profile_suggestions.py tests/test_job_fit.py tests/test_application_tracking.py tests/test_config.py tests/test_pack_export.py
+```
+
 ### Explainable job fit analysis
 
 An authenticated user can open an owned saved job and explicitly choose **Analyze

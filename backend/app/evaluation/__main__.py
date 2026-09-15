@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from app.evaluation.fixtures import cases
 from app.schemas.job_fit import CandidateFact
 from app.services.ai_provider import (
-    OpenAIResponsesProvider, ProviderFailure, PROMPT_VERSION,
+    OpenAIResponsesProvider, GroqResponsesProvider, ProviderFailure, PROMPT_VERSION,
     JOB_FIT_PROMPT_VERSION, PACK_PROMPT_VERSION,
 )
 from app.services.profile_suggestion_service import validate_output as validate_suggestions
@@ -19,6 +19,7 @@ from app.services.job_fit_service import validate_output as validate_fit
 from app.services.application_pack_service import validate_generated
 
 MODEL = "gpt-5-mini"
+GROQ_MODEL = "openai/gpt-oss-20b"
 MAX_REQUESTS = 15
 MAX_INPUT_TOKENS_ESTIMATE = 32_000
 MAX_OUTPUT_TOKENS = 4_000
@@ -43,15 +44,16 @@ class Planned(ProviderFailure):
     pass
 
 
-def request_plan(task, source):
+def request_plan(task, source, provider_name="openai"):
     captured = {}
 
     def capture(**kwargs):
         captured.update(kwargs)
         raise Planned()
 
-    provider = OpenAIResponsesProvider(
-        api_key="offline-placeholder", model=MODEL, timeout=TIMEOUT,
+    provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
+    provider = provider_class(
+        api_key="offline-placeholder", model=GROQ_MODEL if provider_name == "groq" else MODEL, timeout=TIMEOUT,
         max_output_tokens=MAX_OUTPUT_TOKENS,
         client=SimpleNamespace(responses=SimpleNamespace(parse=capture)),
     )
@@ -71,19 +73,23 @@ def request_plan(task, source):
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "input_token_estimate": estimate}
 
 
-def build_plan():
+def build_plan(provider_name="openai"):
+    if provider_name not in {"openai", "groq"}:
+        raise ValueError("Unsupported evaluation provider")
     entries = []
     for case in cases():
         for task, version in TASKS.items():
             entries.append({"case": case["id"], "task": task, "prompt_version": version,
-                            **request_plan(task, case["source"])})
+                            **request_plan(task, case["source"], provider_name)})
     if len(entries) != MAX_REQUESTS:
         raise ValueError("Fixture count changed; review the request and cost budget")
-    return {"model": MODEL, "max_requests": MAX_REQUESTS,
+    return {"provider": provider_name, "model": GROQ_MODEL if provider_name == "groq" else MODEL, "max_requests": MAX_REQUESTS,
             "max_input_tokens_estimate_per_request": MAX_INPUT_TOKENS_ESTIMATE,
             "max_output_tokens_per_request": MAX_OUTPUT_TOKENS,
-            "timeout_seconds": TIMEOUT, "retries": 0, "max_estimated_cost_usd": MAX_COST_USD,
-            "rates_usd_per_million": {"input": INPUT_USD_PER_MILLION, "output": OUTPUT_USD_PER_MILLION},
+            "timeout_seconds": TIMEOUT, "retries": 0,
+            "live_supported": provider_name == "openai",
+            "max_estimated_cost_usd": MAX_COST_USD if provider_name == "openai" else None,
+            "rates_usd_per_million": {"input": INPUT_USD_PER_MILLION, "output": OUTPUT_USD_PER_MILLION} if provider_name == "openai" else None,
             "requests": entries}
 
 
@@ -125,6 +131,8 @@ class Meter:
 
 
 def execute(client, plan, save):
+    if plan.get("provider", "openai") != "openai":
+        raise ValueError("Groq evaluation is dry-run only; prepare a separate live budget first")
     meter = Meter(client)
     provider = OpenAIResponsesProvider(api_key="injected-client", model=MODEL,
         timeout=TIMEOUT, max_output_tokens=MAX_OUTPUT_TOKENS, client=meter)
@@ -169,9 +177,12 @@ def execute(client, plan, save):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true", help="Explicitly authorize this synthetic API run")
+    parser.add_argument("--provider", choices=["openai", "groq"], default="openai", help="Groq currently supports offline planning only")
     parser.add_argument("--max-cost-usd", type=float, help="Required live cost acknowledgement: 0.24")
     parser.add_argument("--output", type=Path, required=True, help="New report file; never overwrite evidence")
     args = parser.parse_args(argv)
+    if args.live and args.provider == "groq":
+        parser.error("Groq evaluation is dry-run only; prepare a separate live budget first")
     if args.live and (os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd != MAX_COST_USD):
         parser.error("Live requires JOBPILOT_EVAL_ALLOW_LIVE=1 and --max-cost-usd 0.24")
     if args.live and not os.environ.get("JOBPILOT_OPENAI_API_KEY"):
@@ -179,14 +190,14 @@ def main(argv=None):
     # No .env loading, Settings construction, database access, or provider factory.
     # Application AI flags and test-provider guards are entirely unchanged.
     try:
-        plan = build_plan()
+        plan = build_plan(args.provider)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("x", encoding="utf-8") as handle:
             json.dump({"mode": "planned", "plan": plan, "cases": cases()}, handle, indent=2)
     except (ValueError, OSError):
         parser.error("Preflight failed or output exists/is unwritable; choose a new report path")
     if not args.live:
-        print("Offline plan: 15 requests proposed; 0 sent; maximum estimated live cost USD 0.24.")
+        print(f"Offline {args.provider} plan: 15 requests proposed; 0 sent.")
         return 0
     # Suppress SDK/HTTP debug logs even if enabled externally. Never log keys.
     logging.disable(logging.CRITICAL)

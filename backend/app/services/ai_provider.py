@@ -9,6 +9,7 @@ from app.schemas.profile_suggestions import ProviderSuggestionOutput
 PROMPT_VERSION = "profile-suggestions-v1"
 JOB_FIT_PROMPT_VERSION = "job-fit-v1"
 PACK_PROMPT_VERSION = "application-pack-v1"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 class ProviderFailure(Exception):
@@ -196,3 +197,20 @@ class OpenAIResponsesProvider:
             raise
         except Exception as error:
             raise ProviderFailure("The AI provider is currently unavailable. Try again later.") from error
+
+
+class GroqResponsesProvider(OpenAIResponsesProvider):
+    """Groq's compatible Responses endpoint, with the same contracts and prompts.
+
+    No provider fallback, schema relaxation, or tools are enabled on failure.
+    """
+    name = "groq"
+
+    def __init__(self, *, api_key: str, model: str, timeout: int, max_output_tokens: int, client=None):
+        from openai import OpenAI
+
+        groq_client = client if client is not None else OpenAI(
+            api_key=api_key, base_url=GROQ_BASE_URL, timeout=timeout, max_retries=0,
+        )
+        super().__init__(api_key=api_key, model=model, timeout=timeout,
+                         max_output_tokens=max_output_tokens, client=groq_client)

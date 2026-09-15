@@ -54,8 +54,11 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_AI_PROVIDER: Literal["openai", "groq"] = "openai"
     JOBPILOT_AI_MODEL: str = "gpt-5-mini"
-    JOBPILOT_OPENAI_API_KEY: str | None = None
+    JOBPILOT_OPENAI_API_KEY: str | None = Field(default=None, repr=False, exclude=True)
+    JOBPILOT_GROQ_API_KEY: str | None = Field(default=None, repr=False, exclude=True)
+    JOBPILOT_GROQ_MODEL: str = "openai/gpt-oss-20b"
     JOBPILOT_AI_TIMEOUT_SECONDS: int = 30
     JOBPILOT_AI_MAX_INPUT_CHARS: int = 100_000
     JOBPILOT_AI_MAX_OUTPUT_TOKENS: int = 4_000

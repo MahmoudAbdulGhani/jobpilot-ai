@@ -1,5 +1,21 @@
 # Controlled AI quality evaluation
 
+## Groq offline planning
+
+The backend now supports Groq alongside OpenAI. Use `--provider groq` on the offline
+command to capture the same 15 synthetic cases through `GroqResponsesProvider`,
+with model `openai/gpt-oss-20b`. All validation and input/output allowances apply.
+This command does not load the private `.env`, instantiate a network client, or
+require a key. Plan pricing fields are `null`, and `live_supported` is `false`:
+the OpenAI rates below must not be used for Groq. `--provider groq --live` is
+rejected even with all OpenAI live gates enabled. A Groq live evaluation needs a
+separately prepared and authorized cost plan. The default remains OpenAI.
+
+```powershell
+Set-Location C:\Users\Admin\Desktop\jobpilot-ai\backend
+.\.venv\Scripts\python.exe -m app.evaluation --provider groq --output ..\storage\ai-evaluation\groq-plan.json
+```
+
 ## Status and scope
 
 Preparation only: no live AI calls have been made. Semantic quality, account access,

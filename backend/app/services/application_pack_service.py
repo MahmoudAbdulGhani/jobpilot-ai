@@ -23,7 +23,7 @@ from app.schemas.application_packs import (
 from app.schemas.profile import CandidateProfileUpdate
 from app.services import ai_usage
 from app.services.ai_provider import ProviderFailure
-from app.services.profile_suggestion_service import SuggestionError, provider_for
+from app.services.profile_suggestion_service import SuggestionError, provider_for, provider_configuration
 
 PROMPT_VERSION = "application-pack-v1"
 MAX_VERSIONS = 100
@@ -295,10 +295,12 @@ def edit_or_approve(db, owner_id, job_id, pack_id, body, approve=False):
 
 def options(db, owner_id, job_id, settings):
     owned_job(db, owner_id, job_id)
-    provider = "deterministic-test" if settings.JOBPILOT_AI_TEST_PROVIDER else "openai" if settings.JOBPILOT_AI_ENABLED and settings.JOBPILOT_OPENAI_API_KEY else "unknown"
-    model = settings.JOBPILOT_AI_MODEL
-    available = bool(settings.JOBPILOT_AI_ENABLED and (
-        settings.JOBPILOT_AI_TEST_PROVIDER or settings.JOBPILOT_OPENAI_API_KEY))
+    model = settings.JOBPILOT_GROQ_MODEL if settings.JOBPILOT_AI_PROVIDER == "groq" else settings.JOBPILOT_AI_MODEL
+    try:
+        provider, model, _ = provider_configuration(settings)
+        available = True
+    except SuggestionError:
+        provider, available = "unknown", False
     reason = None if available else "AI generation is unavailable in this environment."
     profile = db.scalar(select(CandidateProfile).where(
         CandidateProfile.owner_id == owner_id).execution_options(populate_existing=True))
