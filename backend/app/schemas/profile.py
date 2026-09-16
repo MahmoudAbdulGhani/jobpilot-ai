@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 HEADLINE_MAX_LENGTH = 200
 LOCATION_MAX_LENGTH = 300
@@ -31,9 +31,13 @@ LANGUAGE_PROFICIENCIES = Literal["basic", "conversational", "professional", "nat
 
 
 class ExperienceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    title: str = Field(min_length=1, max_length=ENTRY_TITLE_MAX_LENGTH)
+    title: str = Field(
+        validation_alias=AliasChoices("title", "job_title"),
+        min_length=1,
+        max_length=ENTRY_TITLE_MAX_LENGTH,
+    )
     organization: str = Field(min_length=1, max_length=ORGANIZATION_MAX_LENGTH)
     period: str | None = Field(default=None, max_length=PERIOD_MAX_LENGTH)
     notes: str | None = Field(default=None, max_length=ENTRY_NOTES_MAX_LENGTH)

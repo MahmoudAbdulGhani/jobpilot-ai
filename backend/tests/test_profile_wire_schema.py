@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
 from app.evaluation.validation_diagnostics import validation_diagnostics
+from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProviderSuggestionOutput, _compact_wire_schema
 from app.services.ai_provider import GroqResponsesProvider
 
@@ -50,12 +51,6 @@ def test_serialized_sdk_schema_preserves_title_and_all_discriminators():
                 "SkillsSuggestion": "skills", "ExperienceSuggestion": "experience",
                 "EducationSuggestion": "education", "LanguageSuggestion": "languages"}
     for schema in (local, compact, wire):
-        entry = schema["$defs"]["ExperienceEntry"]
-        assert "title" in entry["required"]
-        assert entry["properties"]["title"]["type"] == "string"
-        assert entry["properties"]["title"]["minLength"] == 1
-        assert entry["properties"]["title"]["maxLength"] == 200
-        assert entry["additionalProperties"] is False
         assert schema["$defs"]["ExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ExperienceEntry"}
         assert {item["$ref"] for item in schema["properties"]["suggestions"]["items"]["anyOf"]} == {
             f"#/$defs/{variant}" for variant in variants}
@@ -63,6 +58,23 @@ def test_serialized_sdk_schema_preserves_title_and_all_discriminators():
             branch = schema["$defs"][variant]
             assert "field" in branch["required"]
             assert branch["properties"]["field"]["const"] == literal
+    # The domain/local schema keeps the real ``title`` field name.
+    local_entry = local["$defs"]["ExperienceEntry"]
+    assert "title" in local_entry["required"]
+    assert local_entry["properties"]["title"]["type"] == "string"
+    assert local_entry["properties"]["title"]["minLength"] == 1
+    assert local_entry["properties"]["title"]["maxLength"] == 200
+    assert local_entry["additionalProperties"] is False
+    # The wire and its compact source rename only the colliding property to
+    # ``job_title`` (JSON-Schema annotation keyword collision on the provider).
+    for schema in (compact, wire):
+        entry = schema["$defs"]["ExperienceEntry"]
+        assert "job_title" in entry["required"]
+        assert "title" not in entry["properties"]
+        assert entry["properties"]["job_title"]["type"] == "string"
+        assert entry["properties"]["job_title"]["minLength"] == 1
+        assert entry["properties"]["job_title"]["maxLength"] == 200
+        assert entry["additionalProperties"] is False
 
 
 def test_compaction_preserves_names_that_match_metadata_keywords():
@@ -124,3 +136,30 @@ def test_local_experience_title_validation_is_not_relaxed(title):
         value["title"] = title
     with pytest.raises(ValidationError):
         ProviderSuggestionOutput.model_validate({"suggestions": [suggestion("experience", value)]})
+
+
+def test_wire_job_title_parses_and_round_trips_to_domain_title():
+    payload = {"suggestions": [{
+        "id": "exp-1", "field": "experience",
+        "value": {"job_title": "Engineer", "organization": "Cedar Demo",
+                  "period": None, "notes": None},
+        "evidence": [{"quote": "Engineer at Cedar Demo"}]}]}
+    parsed = ProviderSuggestionOutput.model_validate(payload)
+    value = parsed.suggestions[0].value
+    assert value.title == "Engineer"
+    # Serialization and downstream apply keep the domain ``title`` shape.
+    dumped = parsed.suggestions[0].model_dump(mode="json")
+    assert dumped["value"] == {
+        "title": "Engineer", "organization": "Cedar Demo",
+        "period": None, "notes": None}
+    CandidateProfileUpdate.model_validate({"experience": [value]})
+    CandidateProfileUpdate.model_validate({"experience": [dumped["value"]]})
+
+
+def test_client_selections_still_accept_the_domain_title_key():
+    payload = {"suggestions": [{
+        "id": "exp-1", "field": "experience",
+        "value": {"title": "Engineer", "organization": "Cedar Demo"},
+        "evidence": [{"quote": "Engineer at Cedar Demo"}]}]}
+    parsed = ProviderSuggestionOutput.model_validate(payload)
+    assert parsed.suggestions[0].value.title == "Engineer"

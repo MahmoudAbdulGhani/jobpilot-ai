@@ -139,6 +139,20 @@ def _compact_wire_schema(schema):
             spec = node.get(prop)
             if isinstance(spec, dict):
                 spec.pop("minLength", None)
+    # The provider rejects a property literally named ``title`` (the wire
+    # inliner collides it with the JSON-Schema annotation keyword), so the wire
+    # sends the same fully typed field under ``job_title``. Local parse accepts
+    # both names via ``ExperienceEntry``; serialization and every non-wire
+    # schema keep ``title``.
+    experience = compacted.get("$defs", {}).get("ExperienceEntry")
+    if isinstance(experience, dict):
+        props = experience.get("properties")
+        if isinstance(props, dict) and "title" in props:
+            props["job_title"] = props.pop("title")
+            required = experience.get("required")
+            if isinstance(required, list):
+                experience["required"] = [
+                    "job_title" if name == "title" else name for name in required]
     return compacted
 
 

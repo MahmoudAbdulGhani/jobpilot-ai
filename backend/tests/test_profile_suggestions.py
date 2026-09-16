@@ -226,7 +226,7 @@ def test_suggestion_schema_constrains_per_field_values():
     assert defs["ExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ExperienceEntry"}
     assert defs["EducationSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/EducationEntry"}
     assert defs["LanguageSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/LanguageEntry"}
-    assert defs["ExperienceEntry"]["required"] == ["title", "organization"]
+    assert defs["ExperienceEntry"]["required"] == ["job_title", "organization"]
     assert defs["HeadlineSuggestion"]["properties"]["value"]["type"] == "string"
     assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
