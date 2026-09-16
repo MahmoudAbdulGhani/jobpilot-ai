@@ -76,15 +76,15 @@ ProfileSuggestion = Union[
 def _compact_wire_schema(schema):
     """Trim the provider-facing JSON schema to fit the documented token budget.
 
-    Keeps the full typed contract (value ``$ref``s, field enums, ``required``
+    Keeps the typed structure (value ``$ref``s, field enums, ``required``
     keys, ``additionalProperties``, evidence shape, max-length bounds on the
-    string value fields) and drops only content that is tautological or
-    duplicated locally:
+    string value fields). The wire contract is weaker than local validation:
+    omitted constraints below can cause schema-compliant output to fail parsing.
     - ``title`` / ``default`` / ``description`` (informative only),
     - the per-suggestion ``id`` length/pattern keys (the production parse still
       enforces them through the ``_SuggestionShape`` Field constraints),
-    - ``suggestions.maxItems`` (bounded by the output token limit; enforced at
-      application parse),
+    - ``suggestions.maxItems`` (the token cap does not guarantee this bound;
+      enforced at application parse),
     - ``Evidence.quote`` min/max-length keys and string-value ``minLength``
       bounds (local parse re-validates the returned content against those same
       Field constraints; the wire schema keeps ``maxLength`` on values and

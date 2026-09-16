@@ -454,3 +454,88 @@ def test_groq_execute_reports_incomplete_as_failure_and_stops():
     assert len(report["results"]) == 1
     assert report["results"][0]["status"] == "provider_failure"
     assert report["results"][0]["provider_status"] == "incomplete"
+
+
+@pytest.mark.parametrize("mode,kind,path", [
+    ("json", "json_invalid", []),
+    ("type", "string_type", ["suggestions", 0, "HeadlineSuggestion", "value"]),
+    ("empty", "string_too_short", ["suggestions", 0, "HeadlineSuggestion", "value"]),
+    ("id", "string_pattern_mismatch", ["suggestions", 0, "HeadlineSuggestion", "id"]),
+    ("quote", "string_too_long", ["suggestions", 0, "HeadlineSuggestion", "evidence", 0, "quote"]),
+    ("count", "too_long", ["suggestions"]),
+    ("extra", "extra_forbidden", ["<redacted>"]),
+    ("envelope", "float_parsing", ["created_at"]),
+])
+def test_sdk_validation_report_is_safe_and_stops(tmp_path, mode, kind, path):
+    secret = "synthetic-secret-do-not-record"
+    suggestion = {"id": "h-1", "field": "headline", "value": "Engineer",
+                  "evidence": [{"quote": "Engineer"}]}
+    payload = {"suggestions": [suggestion], "partial": False, "message": None}
+    if mode == "type":
+        suggestion["value"] = {"private": secret}
+    elif mode == "empty":
+        suggestion["value"] = ""
+    elif mode == "id":
+        suggestion["id"] = "has spaces " + secret
+    elif mode == "quote":
+        suggestion["evidence"][0]["quote"] = secret * 100
+    elif mode == "count":
+        payload["suggestions"] = [suggestion] * 51
+    elif mode == "extra":
+        payload[secret] = secret
+    calls = []
+
+    def transport(request):
+        calls.append(request)
+        return httpx.Response(200, json={
+            "id": "resp-test", "object": "response", "created_at": secret if mode == "envelope" else 0,
+            "model": "openai/gpt-oss-20b", "status": "completed",
+            "parallel_tool_calls": False, "tool_choice": "auto", "tools": [],
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+                      "input_tokens_details": {"cached_tokens": 0},
+                      "output_tokens_details": {"reasoning_tokens": 0}},
+            "output": [{"id": "msg-test", "type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "annotations": [],
+                                     "text": '{"' + secret if mode == "json" else json.dumps(payload)}]}],
+        })
+
+    report_path = tmp_path / "mock-report.json"
+    with OpenAI(api_key=secret, max_retries=0, _strict_response_validation=(mode == "envelope"),
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        report = evaluation.execute(client, evaluation.build_plan("groq", pilot=True),
+                                    lambda r: report_path.write_text(json.dumps(r)), stop_on_failure=True)
+    assert len(calls) == report["attempted_requests"] == len(report["results"]) == 1
+    row = json.loads(report_path.read_text())["results"][0]
+    assert row["provider_status"] == ("completed" if mode == "envelope" else "unknown")
+    if mode == "envelope":
+        assert row["usage"] == {"input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 0}
+    else:
+        assert row["usage"] is None  # Content parse errors hide response/usage.
+    assert row["status_code"] == (200 if mode == "envelope" else None)
+    assert row["validation"]["model"] == ("Response" if mode == "envelope" else "ProviderSuggestionOutput")
+    assert any(e["type"] == kind and e["location"] == path for e in row["validation"]["errors"])
+    assert secret not in report_path.read_text()
+    assert all(set(e) == {"type", "location", "location_truncated"} for e in row["validation"]["errors"])
+    assert report["stopped"]
+
+
+def test_validation_diagnostics_bound_and_redact_untrusted_metadata():
+    from app.evaluation.validation_diagnostics import validation_diagnostics
+    secret = "synthetic-credential"
+    error = ValidationError.from_exception_data(secret, [
+        {"type": "extra_forbidden", "loc": ("suggestions", i, secret, *(["value"] * 20)), "input": secret}
+        for i in range(30)
+    ])
+    result = validation_diagnostics(error)["validation"]
+    assert result["model"] == "unknown"
+    assert result["errors_truncated"] and len(result["errors"]) == 20
+    assert all(e["location_truncated"] and len(e["location"]) == 8 for e in result["errors"])
+    assert secret not in json.dumps(result)
+
+
+def test_error_body_tags_cannot_leak_short_credentials():
+    from openai import BadRequestError
+    response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid"))
+    error = BadRequestError("private-message", response=response,
+                            body={"error": {"type": "private-key", "code": "private-key"}})
+    assert evaluation._safe_error_tags(error) == {"failure_type": "BadRequestError", "status_code": 400}

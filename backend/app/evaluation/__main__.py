@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from dotenv import dotenv_values
 
 from app.evaluation.fixtures import cases
+from app.evaluation.validation_diagnostics import validation_diagnostics
 from app.schemas.job_fit import CandidateFact
 from app.services.ai_provider import (
     OpenAIResponsesProvider, GroqResponsesProvider, ProviderFailure, PROMPT_VERSION,
@@ -36,8 +37,8 @@ MAX_COST_USD = 0.24
 # figure is ~8,000 TPM; the pilot assumes that documented value unless the
 # account's actual limits (or retained provider headers) prove otherwise.
 # The scheduler GATE uses this ceiling, so every planned request must fit:
-# the profile wire schema is kept budget-sized by omitting tautological
-# schema metadata and id-bound duplication that the local parse re-validates,
+# the profile wire schema is kept budget-sized by omitting metadata and some
+# constraints that local parsing still enforces (and can therefore reject),
 # never by inflating the assumed limit or shrinking the estimate. A higher
 # account tier can be supplied through JOBPILOT_GROQ_TPM in the gitignored
 # .env or environment.
@@ -221,10 +222,8 @@ def check_output(task, output, source):
 def _safe_error_tags(error):
     """Bound, type-checked failure metadata; never messages or payloads.
 
-    Provider SDK errors commonly expose ``status_code`` and a structured error
-    body with ``error.type`` / ``error.code``. Only the numeric status and
-    short enum-like codes are retained; exception messages, request bodies and
-    long strings are always discarded because they may contain credentials.
+    Retain numeric status and allowlisted validation metadata. Provider body
+    type/code strings are untrusted too: even short strings can be credentials.
     """
     tags = {"failure_type": type(error).__name__}
     status_code = getattr(error, "status_code", None)
@@ -232,21 +231,27 @@ def _safe_error_tags(error):
         status_code = getattr(getattr(error, "response", None), "status_code", None)
     if isinstance(status_code, int):
         tags["status_code"] = status_code
-    body = getattr(error, "body", None)
-    if not isinstance(body, (dict, str, bytes)):
-        body = None
-    if isinstance(body, (str, bytes)):
-        try:
-            body = json.loads(body)
-        except (TypeError, ValueError):
-            body = None
-    if isinstance(body, dict):
-        inner = body.get("error")
-        if isinstance(inner, dict):
-            for key in ("type", "code"):
-                value = inner.get(key)
-                if isinstance(value, str) and 0 < len(value) <= 64:
-                    tags[f"error_{key}"] = value
+    # Envelope validation errors expose the received body. Retain only known
+    # status enums and checked token counts; never copy the body itself.
+    from openai import APIResponseValidationError
+    if isinstance(error, APIResponseValidationError) and isinstance(error.body, dict):
+        status = error.body.get("status")
+        if isinstance(status, str) and status in {
+            "completed", "failed", "in_progress", "cancelled", "queued", "incomplete",
+        }:
+            tags["provider_status"] = status
+        usage = error.body.get("usage")
+        if isinstance(usage, dict) and all(
+            type(usage.get(key)) is int and 0 <= usage[key] <= 10**12
+            for key in ("input_tokens", "output_tokens")
+        ):
+            details = usage.get("output_tokens_details")
+            reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+            tags["usage"] = {
+                "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                "reasoning_tokens": reasoning if type(reasoning) is int and 0 <= reasoning <= 10**12 else None,
+            }
+    tags.update(validation_diagnostics(error))
     return tags
 
 
@@ -265,18 +270,19 @@ class Meter:
             raise ProviderFailure("Evaluation request budget exhausted")
         self.calls += 1  # Failures consume the allowance too; never retry.
         self.last = {
-            "provider_status": "transport_or_parse_failure", "usage": None}
+            "provider_status": "unknown", "status_code": None, "usage": None}
         try:
             response = self.client.responses.parse(
                 **kwargs, service_tier="default")
         except Exception as error:
             # Record only bounded, typed tags (exception class, numeric status
-            # code, short provider error type/code); never messages or payloads,
+            # code, allowlisted validation metadata); never messages or payloads,
             # which may include credentials or the request body.
             self.last.update(_safe_error_tags(error))
             raise
         usage = getattr(response, "usage", None)
         self.last = {"provider_status": getattr(response, "status", "unknown"),
+                     "status_code": None,
                      "returned_model": getattr(response, "model", None), "usage": None}
         if usage is not None:
             self.last["usage"] = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
@@ -394,7 +400,7 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
                 cause = getattr(error, "__cause__", None)
                 row["failure_type"] = (
                     type(cause).__name__ if cause is not None else type(error).__name__)
-                pass
+                row.update(validation_diagnostics(error))
             row.update(meter.last)
             row["latency_seconds"] = round(time.perf_counter() - started, 3)
             usage = row.get("usage")

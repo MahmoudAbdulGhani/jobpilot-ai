@@ -225,6 +225,11 @@ def test_schema_contract_violation_halts_eval_without_fallbacks():
     assert row["provider_status"] == "completed"
     assert row["failure_type"] == "ValidationError"
     assert row["usage"]["input_tokens"] == 508
+    assert row["usage"]["output_tokens"] == 1097
+    assert row["status_code"] is None
+    assert row["validation"]["model"] == "ProviderSuggestionOutput"
+    assert row["validation"]["errors"]
+    assert row["estimated_cost_usd"] == pytest.approx(0.0003672)
     assert report["stopped"] == \
         "Provider failure; pilot stops without retry or fallback"
 
@@ -279,7 +284,7 @@ def test_stop_on_failure_records_only_exception_class_for_provider_failure():
     assert report["attempted_requests"] == 1
     row = report["results"][0]
     assert row["status"] == "provider_failure"
-    assert row["provider_status"] == "transport_or_parse_failure"
+    assert row["provider_status"] == "unknown"
     assert row["failure_type"] == "RuntimeError"
     assert row["usage"] is None
     assert report["stopped"] == \
