@@ -32,15 +32,17 @@ OUTPUT_USD_PER_MILLION = 2.0
 PER_REQUEST_USD = 0.016
 MAX_COST_USD = 0.24
 
-# Assumed Groq rate limits for openai/gpt-oss-20b. The published figure is
-# around 8,000 TPM, but the profile request now carries a stricter per-field
-# JSON schema whose byte-conservative estimate is near 10,000; the TPM guard
-# is only a scheduler-pacing ceiling, so 16,000 keeps dry-run planning valid
-# while real usage stays far below it. These are assumptions; the CLI never
-# discovers the account's actual billing plan or tier. If the limit is known,
-# supply JOBPILOT_GROQ_TPM in the gitignored .env or environment.
+# Assumed Groq rate limits for openai/gpt-oss-20b. The published developer
+# figure is ~8,000 TPM; the pilot assumes that documented value unless the
+# account's actual limits (or retained provider headers) prove otherwise.
+# The scheduler GATE uses this ceiling, so every planned request must fit:
+# the profile wire schema is kept budget-sized by omitting tautological
+# schema metadata and id-bound duplication that the local parse re-validates,
+# never by inflating the assumed limit or shrinking the estimate. A higher
+# account tier can be supplied through JOBPILOT_GROQ_TPM in the gitignored
+# .env or environment.
 GROQ_DOCUMENTED_LIMITS = {
-    "rpm": 30, "rpd": 1_000, "tpm": 16_000, "tpd": 200_000,
+    "rpm": 30, "rpd": 1_000, "tpm": 8_000, "tpd": 200_000,
 }
 GROQ_TPM_ENV = "JOBPILOT_GROQ_TPM"
 GROQ_MAX_OUTPUT_TOKENS = 1_500

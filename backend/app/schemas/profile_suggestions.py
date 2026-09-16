@@ -73,11 +73,70 @@ ProfileSuggestion = Union[
 ]
 
 
+def _compact_wire_schema(schema):
+    """Trim the provider-facing JSON schema to fit the documented token budget.
+
+    Keeps the full typed contract (value ``$ref``s, field enums, ``required``
+    keys, ``additionalProperties``, evidence shape, max-length bounds on the
+    string value fields) and drops only content that is tautological or
+    duplicated locally:
+    - ``title`` / ``default`` / ``description`` (informative only),
+    - the per-suggestion ``id`` length/pattern keys (the production parse still
+      enforces them through the ``_SuggestionShape`` Field constraints),
+    - ``suggestions.maxItems`` (bounded by the output token limit; enforced at
+      application parse),
+    - ``Evidence.quote`` min/max-length keys and string-value ``minLength``
+      bounds (local parse re-validates the returned content against those same
+      Field constraints; the wire schema keeps ``maxLength`` on values and
+      ``type: string`` everywhere so the provider still sees a typed contract).
+    """
+    def visit(node):
+        if isinstance(node, dict):
+            trimmed = {key: visit(value) for key, value in node.items()
+                       if key not in {"title", "default", "description"}}
+            id_spec = trimmed.get("properties", {}).get("id")
+            if isinstance(id_spec, dict) and len(id_spec) > 1:
+                trimmed["properties"]["id"] = {
+                    key: value for key, value in id_spec.items()
+                    if key not in {"minLength", "maxLength", "pattern"}}
+            return trimmed
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        return node
+
+    compacted = visit(schema)
+    sug = compacted.get("properties", {}).get("suggestions")
+    if isinstance(sug, dict):
+        sug.pop("maxItems", None)
+    ev_quote = (compacted.get("$defs", {}).get("Evidence", {})
+                .get("properties", {}).get("quote"))
+    if isinstance(ev_quote, dict):
+        ev_quote.pop("minLength", None)
+        ev_quote.pop("maxLength", None)
+    # String value fields retain maxLength (provider guidance for bounded
+    # content); minLength is local-parse only (keeps the wire schema smaller
+    # while never weakening the application contract).
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion"):
+        val = (compacted.get("$defs", {}).get(branch, {})
+               .get("properties", {}).get("value"))
+        if isinstance(val, dict):
+            val.pop("minLength", None)
+    return compacted
+
+
 class ProviderSuggestionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     suggestions: list[ProfileSuggestion] = Field(max_length=50)
     partial: bool = False
     message: str | None = Field(default=None, max_length=500)
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs):
+        # The SDK loads the text-format schema via model_json_schema(), so the
+        # wire payload (and the evaluation request plan, which estimates from
+        # the same call) is the compact form below; parsing of the returned
+        # content always goes through this class's own pydantic validation.
+        return _compact_wire_schema(super().model_json_schema(*args, **kwargs))
 
 
 class SuggestionSetResponse(BaseModel):

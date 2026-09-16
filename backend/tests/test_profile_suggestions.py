@@ -216,6 +216,49 @@ def test_suggestion_schema_constrains_per_field_values():
     assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
     assert defs["LocationSuggestion"]["properties"]["value"]["maxLength"] == 300
+    # The wire schema drops only tautological keys and duplicated id/quote/value
+    # min-bounds; the typed structure ("required", "$ref", enums, maxLength,
+    # additionalProperties) stays so the provider still sees the contract.
+    assert defs["HeadlineSuggestion"]["properties"]["id"] == {"type": "string"}
+    for branch in ("HeadlineSuggestion", "ExperienceSuggestion"):
+        assert defs[branch]["additionalProperties"] is False
+        assert set(defs[branch]["required"]) == {"id", "field", "value", "evidence"}
+        assert "minLength" not in defs[branch]["properties"]["id"]
+        assert "maxLength" not in defs[branch]["properties"]["id"]
+        assert "pattern" not in defs[branch]["properties"]["id"]
+    assert "maxItems" not in schema["properties"]["suggestions"]
+    assert "minLength" not in defs["HeadlineSuggestion"]["properties"]["value"]
+    assert defs["Evidence"]["properties"]["quote"] == {"type": "string"}
+    assert defs["HeadlineSuggestion"]["properties"]["field"] == {"type": "string", "const": "headline"}
+
+
+def test_wire_compaction_never_weakens_local_parse():
+    """The wire schema may omit id bounds, value minLength and quote length
+    guidance, but the production parse enforces the same constraints locally."""
+    quote_ok = [{"id": "exp-1", "field": "experience",
+                 "value": {"title": "Engineer", "organization": "Cedar Demo", "period": "2021-2024"},
+                 "evidence": [{"quote": "Engineer at Cedar Demo, 2021-2024"}]}]
+    valid = {"suggestions": quote_ok}
+    ProviderSuggestionOutput.model_validate(valid)
+    def invalid(**suggestion):
+        return ProviderSuggestionOutput.model_validate(
+            {"suggestions": [dict(quote_ok[0], **suggestion)]})
+    with pytest.raises(ValidationError):
+        invalid(id="has a space")
+    with pytest.raises(ValidationError):
+        invalid(id="x" * 65)
+    with pytest.raises(ValidationError):
+        invalid(id="x", value={"title": "Engineer", "organization": ""})
+    with pytest.raises(ValidationError):
+        invalid(id="x", evidence=[{"quote": ""}])
+    with pytest.raises(ValidationError):
+        invalid(id="x", evidence=[{"quote": "e" * 1001}])
+    # A skills/id headline value that is an empty string is rejected locally
+    # even though the wire schema no longer advertises minLength.
+    with pytest.raises(ValidationError):
+        ProviderSuggestionOutput.model_validate({"suggestions": [
+            {"id": "headline-1", "field": "headline", "value": "",
+             "evidence": [{"quote": "Backend engineer"}]}]})
 
 
 def test_apply_rejects_out_of_contract_and_unsecured_values_without_profile_change(

@@ -315,13 +315,14 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     assert construction_kwargs["max_retries"] == 0
 
     assert len(captured_requests) == 3
-    # Rolling-window scheduling: profile (estimate ~9611) and fit (~6198)
-    # together are 15809 <= 16000 assumed TPM, so both dispatch at t=0; pack
-    # (~7584) then has to wait for the profile window to expire at t=60.
-    # Ideal dispatch times 0/0/60.
-    assert len(slept) == 1
-    assert slept == [pytest.approx(60.0)]
-    assert state["now"] == pytest.approx(60.0)
+    # Rolling-window scheduling under the 8,000 TPM documented assumption:
+    # profile (complete ~7880) dispatches at t=0; fit (~6198) would push the
+    # active window over 8000 while profile is still reserved, so it waits for
+    # the profile window to expire at t=60; pack (~7584) likewise waits for
+    # fit to expire at t=120. Ideal dispatch times 0/60/120.
+    assert len(slept) == 2
+    assert slept == [pytest.approx(60.0), pytest.approx(60.0)]
+    assert state["now"] == pytest.approx(120.0)
 
     report = json.loads(report_path.read_text())
     assert report["semantic_quality"] == "pending_human_review"
