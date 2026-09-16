@@ -92,7 +92,11 @@ def _compact_wire_schema(schema):
     """
     def visit(node):
         if isinstance(node, dict):
-            trimmed = {key: visit(value) for key, value in node.items()
+            # These maps contain user field/model names, not schema keywords.
+            # In particular ExperienceEntry.properties.title is a real field.
+            trimmed = {key: ({name: visit(spec) for name, spec in value.items()}
+                             if key in {"properties", "$defs", "definitions", "patternProperties"}
+                             else visit(value)) for key, value in node.items()
                        if key not in {"title", "default", "description"}}
             id_spec = trimmed.get("properties", {}).get("id")
             if isinstance(id_spec, dict) and len(id_spec) > 1:
@@ -121,6 +125,20 @@ def _compact_wire_schema(schema):
                .get("properties", {}).get("value"))
         if isinstance(val, dict):
             val.pop("minLength", None)
+    # Entry string fields follow the same rule, except ExperienceEntry.title:
+    # it stays fully typed (minLength 1) on the wire so the previously restored
+    # title requirement is explicit. The other entry strings are max-bounded on
+    # the wire and min-bounded at application parse, keeping every Groq request
+    # within the documented token budget.
+    for entry, props in (("ExperienceEntry", ("organization",)),
+                         ("EducationEntry", ("school",)),
+                         ("LanguageEntry", ("name",))):
+        node = (compacted.get("$defs", {}).get(entry, {})
+                .get("properties", {}))
+        for prop in props:
+            spec = node.get(prop)
+            if isinstance(spec, dict):
+                spec.pop("minLength", None)
     return compacted
 
 

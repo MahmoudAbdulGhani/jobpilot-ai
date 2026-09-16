@@ -195,6 +195,21 @@ def test_typed_structured_values_validate_with_source_evidence():
         {item["field"]: [item["value"]] for item in accepted})
 
 
+def test_valid_experience_object_parses_and_applies_to_profile():
+    """Minimal mocked reproduction: a valid experience suggestion parses and
+    the value round-trips into CandidateProfileUpdate (the downstream apply
+    target). See test_profile_wire_schema.py for the missing-title, wrong
+    discriminator and plain-string reproductions of the live failure."""
+    output = ProviderSuggestionOutput.model_validate(
+        {"suggestions": [{
+            "id": "exp-1", "field": "experience",
+            "value": {"title": "Engineer", "organization": "Cedar Demo"},
+            "evidence": [{"quote": "Engineer at Cedar Demo"}]}]})
+    assert output.suggestions[0].value.title == "Engineer"
+    CandidateProfileUpdate.model_validate(
+        {"experience": [output.suggestions[0].value.model_dump()]})
+
+
 def test_suggestion_schema_constrains_per_field_values():
     """The JSON schema sent to the provider must not have the value: Any
     loophole; each field's value is typed to the shape it will be validated
