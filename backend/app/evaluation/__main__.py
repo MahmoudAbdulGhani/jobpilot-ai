@@ -133,13 +133,18 @@ def request_plan(task, source, provider_name="openai", max_output_tokens=None,
             "complete_token_estimate": complete}
 
 
-def build_plan(provider_name="openai", pilot=False, env=None):
+def build_plan(provider_name="openai", pilot=False, env=None, task=None):
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
+    if task is not None and task not in TASKS:
+        raise ValueError("Unsupported evaluation task")
+    selected_tasks = {name: version for name, version in TASKS.items()
+                      if task is None or name == task}
     env = env or {}
     all_cases = cases()
     selected_cases = all_cases[:1] if pilot else all_cases
-    expected_requests = PILOT_REQUESTS if pilot else MAX_REQUESTS
+    expected_requests = ((PILOT_REQUESTS if pilot else MAX_REQUESTS)
+                         // len(TASKS) * len(selected_tasks))
     groq = provider_name == "groq"
     output_cap = GROQ_MAX_OUTPUT_TOKENS if groq else MAX_OUTPUT_TOKENS
     tokens_per_minute = None
@@ -148,7 +153,7 @@ def build_plan(provider_name="openai", pilot=False, env=None):
         tokens_per_minute, rate_limit_source = groq_tokens_per_minute(env)
     entries = []
     for case in selected_cases:
-        for task, version in TASKS.items():
+        for task, version in selected_tasks.items():
             entries.append({"case": case["id"], "task": task, "prompt_version": version,
                             **request_plan(task, case["source"], provider_name,
                                            max_output_tokens=output_cap,
@@ -437,7 +442,9 @@ def main(argv=None):
     parser.add_argument("--live", action="store_true",
                         help="Explicitly authorize this synthetic API run")
     parser.add_argument("--pilot", action="store_true",
-                        help="Run a 3-request pilot on the canonical case (profile, fit, pack)")
+                        help="Run the canonical strong case (all 3 tasks unless --task is set)")
+    parser.add_argument("--task", choices=list(TASKS),
+                        help="Select one task; defaults to all tasks")
     parser.add_argument("--provider", choices=["openai", "groq"],
                         default="openai", help="Evaluation provider (default: openai)")
     parser.add_argument("--max-cost-usd", type=float,
@@ -449,7 +456,7 @@ def main(argv=None):
     dotenv = _load_dotenv()
 
     try:
-        plan = build_plan(args.provider, pilot=args.pilot, env=dotenv)
+        plan = build_plan(args.provider, pilot=args.pilot, env=dotenv, task=args.task)
     except ValueError as error:
         parser.error(str(error))
 

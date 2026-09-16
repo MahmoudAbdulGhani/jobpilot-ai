@@ -539,3 +539,85 @@ def test_error_body_tags_cannot_leak_short_credentials():
     error = BadRequestError("private-message", response=response,
                             body={"error": {"type": "private-key", "code": "private-key"}})
     assert evaluation._safe_error_tags(error) == {"failure_type": "BadRequestError", "status_code": 400}
+
+
+@pytest.mark.parametrize("pilot", [True, False])
+@pytest.mark.parametrize("task", [None, "profile", "fit", "pack"])
+def test_task_selection_precedes_estimation(pilot, task, monkeypatch):
+    original = evaluation.request_plan
+    estimated_tasks = []
+
+    def estimate(selected_task, *args, **kwargs):
+        estimated_tasks.append(selected_task)
+        assert task is None or selected_task == task
+        return original(selected_task, *args, **kwargs)
+
+    monkeypatch.setattr(evaluation, "request_plan", estimate)
+    plan = evaluation.build_plan("groq", pilot=pilot, task=task)
+    count = (1 if pilot else 5) * (3 if task is None else 1)
+    assert len(plan["requests"]) == plan["max_requests"] == len(estimated_tasks) == count
+    assert {r["task"] for r in plan["requests"]} == (set(evaluation.TASKS) if task is None else {task})
+    if pilot:
+        assert {r["case"] for r in plan["requests"]} == {"strong"}
+        assert plan["max_estimated_cost_usd"] == round(sum(
+            (r["input_token_estimate"] * 0.075 + r["max_output_tokens"] * 0.30) / 1_000_000
+            for r in plan["requests"]), 6)
+
+
+@pytest.mark.parametrize("mode", ["success", "failure"])
+def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "synthetic-key")
+    monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
+    monkeypatch.setattr(evaluation.logging, "disable", lambda *args: None)
+    monkeypatch.setattr("openai.OpenAI", lambda **kwargs: pytest.fail("Dry run constructed client"))
+    dry_path = tmp_path / "dry.json"
+    args = ["--provider", "groq", "--pilot", "--task", "profile"]
+    assert evaluation.main([*args, "--output", str(dry_path)]) == 0
+    dry = json.loads(dry_path.read_text())
+    assert dry["plan"]["max_requests"] == len(dry["plan"]["requests"]) == 1
+    assert [c["id"] for c in dry["cases"]] == ["strong"]
+    assert dry["plan"]["tokens_per_minute"] == 8000
+    assert dry["plan"]["max_output_tokens_per_request"] == 1500
+    assert dry["plan"]["retries"] == 0
+    calls, reservations = [], []
+    reserve = evaluation.TokenScheduler.reserve
+
+    def record_reservation(self, tokens):
+        assert self.capacity == 8000
+        reservations.append(tokens)
+        reserve(self, tokens)
+
+    monkeypatch.setattr(evaluation.TokenScheduler, "reserve", record_reservation)
+
+    def parse(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["max_output_tokens"] == 1500
+        assert kwargs["text_format"].__name__ == "ProviderSuggestionOutput"
+        if mode == "failure":
+            kwargs["text_format"].model_validate_json('{')
+        return SimpleNamespace(status="completed", usage=None, model="synthetic",
+                               output_parsed=DeterministicTestProvider().suggest(cases()[0]["source"]["cv_text"]))
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["max_retries"] == 0
+            self.responses = SimpleNamespace(parse=parse)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("openai.OpenAI", Client)
+    live_path = tmp_path / "mocked-live.json"
+    assert evaluation.main([*args, "--live", "--max-cost-usd",
+                            str(dry["plan"]["max_estimated_cost_usd"]),
+                            "--output", str(live_path)]) == (0 if mode == "success" else 1)
+    live = json.loads(live_path.read_text())
+    assert live["plan"] == dry["plan"]
+    assert live["attempted_requests"] == len(calls) == len(live["results"]) == 1
+    assert reservations == [dry["plan"]["requests"][0]["complete_token_estimate"]]
+    if mode == "failure":
+        assert live["stopped"]
+        assert live["results"][0]["validation"]["errors"][0]["type"] == "json_invalid"
