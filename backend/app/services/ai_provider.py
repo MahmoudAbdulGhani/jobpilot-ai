@@ -2,6 +2,8 @@
 import json
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from app.schemas.application_packs import PackProviderOutput
 from app.schemas.job_fit import CandidateFact, ProviderJobFitOutput
 from app.schemas.profile_suggestions import ProviderSuggestionOutput
@@ -130,7 +132,12 @@ class OpenAIResponsesProvider:
             parsed = response.output_parsed
             if parsed is None:
                 raise ProviderFailure("The AI provider refused or returned no structured result.")
-            return ProviderSuggestionOutput.model_validate(parsed)
+            try:
+                return ProviderSuggestionOutput.model_validate(parsed)
+            except ValidationError as error:
+                raise ProviderFailure(
+                    "The AI provider returned structured content outside the agreed schema."
+                ) from error
         except ProviderFailure:
             raise
         except Exception as error:

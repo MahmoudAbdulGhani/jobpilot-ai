@@ -315,12 +315,13 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     assert construction_kwargs["max_retries"] == 0
 
     assert len(captured_requests) == 3
-    # Rolling-window scheduling: profile dispatches at t=0, then fit waits for
-    # the 60-second profile window to expire (5311+6198 > 8000 TPM), and pack
-    # waits for the fit window to expire. Ideal dispatch times 0/60/120.
-    assert len(slept) == 2
-    assert all(s == pytest.approx(60.0) for s in slept)
-    assert state["now"] == pytest.approx(120.0)
+    # Rolling-window scheduling: profile (estimate ~9611) and fit (~6198)
+    # together are 15809 <= 16000 assumed TPM, so both dispatch at t=0; pack
+    # (~7584) then has to wait for the profile window to expire at t=60.
+    # Ideal dispatch times 0/0/60.
+    assert len(slept) == 1
+    assert slept == [pytest.approx(60.0)]
+    assert state["now"] == pytest.approx(60.0)
 
     report = json.loads(report_path.read_text())
     assert report["semantic_quality"] == "pending_human_review"
@@ -427,7 +428,7 @@ def test_groq_tokens_per_minute_override_labeling():
     assert plan["limits_are_assumptions"] is False
     fallback = evaluation.build_plan("groq", pilot=True,
                                      env={"JOBPILOT_GROQ_TPM": "0"})
-    assert fallback["tokens_per_minute"] == 8000
+    assert fallback["tokens_per_minute"] == evaluation.GROQ_DOCUMENTED_LIMITS["tpm"]
     assert fallback["tokens_per_minute_source"] == "documented_assumption"
     assert fallback["limits_are_assumptions"] is True
 

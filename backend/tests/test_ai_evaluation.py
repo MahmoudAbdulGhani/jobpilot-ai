@@ -171,9 +171,9 @@ def test_live_client_is_bounded_and_report_written_with_mock_only(tmp_path, monk
 
 def _profile_output_with_plain_string_structured_values():
     """Mirror the demonstrated live profile failure: the provider returned the
-    experience/education suggestions as plain strings, which the strict
-    CandidateProfileUpdate contract (ExperienceEntry/EducationEntry) rejects.
-    Builder returns a ProviderSuggestionOutput through the provider boundary."""
+    experience/education suggestions as plain strings. The provider JSON schema
+    now rejects these shapes at the structured-output boundary (the strict
+    CandidateProfileUpdate contract they break is enforced per field)."""
     return {
         "suggestions": [
             {"id": "headline-1", "field": "headline", "value": "Backend engineer",
@@ -194,9 +194,10 @@ def _profile_output_with_plain_string_structured_values():
     }
 
 
-def test_stop_on_failure_halts_after_evidence_validation_failure():
-    """Regression for the demonstrated pilot: fit and pack must NOT run after the
-    profile suggestion set failed strict evidence/contract validation."""
+def test_schema_contract_violation_halts_eval_without_fallbacks():
+    """Regression for the demonstrated pilot: plain-string experience/education
+    is now a provider-boundary schema violation. Profile fails first with safe
+    diagnostics, and fit/pack must NOT run after it."""
     plan = evaluation.build_plan("groq", pilot=True)
     calls = []
 
@@ -218,10 +219,45 @@ def test_stop_on_failure_halts_after_evidence_validation_failure():
     assert len(calls) == 1  # Only the profile request; no fit/pack retries.
     assert report["attempted_requests"] == 1
     assert len(report["results"]) == 1
-    assert report["results"][0]["task"] == "profile"
-    assert report["results"][0]["status"] == "validation_failure"
-    assert report["results"][0]["provider_status"] == "completed"
-    assert report["results"][0]["failure_type"] == "ValueError"
+    row = report["results"][0]
+    assert row["task"] == "profile"
+    assert row["status"] == "provider_failure"
+    assert row["provider_status"] == "completed"
+    assert row["failure_type"] == "ValidationError"
+    assert row["usage"]["input_tokens"] == 508
+    assert report["stopped"] == \
+        "Provider failure; pilot stops without retry or fallback"
+
+
+def test_evidence_validation_failure_still_halts_eval_without_fallbacks():
+    """Typed structured output can still fail the production evidence/contract
+    validator (e.g. fabricated quotes); that must also stop the pilot run."""
+    plan = evaluation.build_plan("groq", pilot=True)
+    calls = []
+
+    def parse(**kwargs):
+        calls.append(kwargs["text_format"])
+        return SimpleNamespace(
+            status="completed",
+            output_parsed={"suggestions": [
+                {"id": "headline-1", "field": "headline", "value": "Backend engineer",
+                 "evidence": [{"quote": "never present in the CV"}]},
+            ], "partial": False, "message": None},
+            model="openai/gpt-oss-20b",
+            usage=SimpleNamespace(input_tokens=100, output_tokens=50,
+                                  output_tokens_details=SimpleNamespace(reasoning_tokens=10)),
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    checkpoints = []
+    report = evaluation.execute(client, plan,
+                                lambda r: checkpoints.append(json.dumps(r)),
+                                scheduler=None, stop_on_failure=True)
+    assert len(calls) == 1
+    row = report["results"][0]
+    assert row["task"] == "profile"
+    assert row["status"] == "validation_failure"
+    assert row["failure_type"] == "ValueError"
     assert report["stopped"] == \
         "Contract or evidence validation failure; pilot stops without retry or fallback"
 

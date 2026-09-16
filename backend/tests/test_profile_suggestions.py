@@ -2,12 +2,14 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import create_application
 from app.models import CandidateProfile, User
+from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProviderSuggestionOutput
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
 from app.services import profile_suggestion_service
@@ -139,12 +141,114 @@ def test_openai_adapter_maps_incomplete_and_transport_errors():
 
 def test_invalid_and_unsupported_evidence_is_removed():
     output = ProviderSuggestionOutput.model_validate({"suggestions": [
-        {"id": "missing-quote", "field": "headline", "value": "Engineer", "evidence": [{"quote": "not present"}]},
-        {"id": "long-skill", "field": "skills", "value": "x" * 101, "evidence": [{"quote": "Python"}]},
+        {"id": "missing-quote", "field": "headline", "value": "Engineer",
+         "evidence": [{"quote": "not present"}]},
     ]})
     accepted, partial = profile_suggestion_service.validate_output(output, "Python")
     assert accepted == []
     assert partial is True
+
+
+def test_plain_string_structured_values_fail_at_provider_boundary():
+    """The demonstrated pilot failure (experience/education as plain strings)
+    is now rejected by the provider contract itself, before application
+    validation even runs."""
+    with pytest.raises(ValidationError):
+        ProviderSuggestionOutput.model_validate({"suggestions": [
+            {"id": "experience-1", "field": "experience",
+             "value": "Engineer at Cedar Demo, 2021-2024",
+             "evidence": [{"quote": "Engineer at Cedar Demo, 2021-2024"}]},
+        ]})
+    with pytest.raises(ValidationError):
+        ProviderSuggestionOutput.model_validate({"suggestions": [
+            {"id": "education-1", "field": "education",
+             "value": "BSc Computer Science, Example University, 2020",
+             "evidence": [{"quote": "BSc Computer Science, Example University, 2020"}]},
+        ]})
+    with pytest.raises(ValidationError):
+        ProviderSuggestionOutput.model_validate({"suggestions": [
+            {"id": "long-skill", "field": "skills", "value": "x" * 101,
+             "evidence": [{"quote": "Python"}]},
+        ]})
+
+
+def test_typed_structured_values_validate_with_source_evidence():
+    source = ("Engineer at Cedar Demo, 2021-2024. "
+              "BSc Computer Science at Example University. Fluent French.")
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [
+        {"id": "exp-1", "field": "experience",
+         "value": {"title": "Engineer", "organization": "Cedar Demo", "period": "2021-2024"},
+         "evidence": [{"quote": "Engineer at Cedar Demo, 2021-2024"}]},
+        {"id": "edu-1", "field": "education",
+         "value": {"school": "Example University", "degree": "BSc", "field": "Computer Science"},
+         "evidence": [{"quote": "BSc Computer Science at Example University"}]},
+        {"id": "lang-1", "field": "languages",
+         "value": {"name": "French", "proficiency": "professional"},
+         "evidence": [{"quote": "Fluent French"}]},
+    ]})
+    accepted, partial = profile_suggestion_service.validate_output(output, source)
+    assert [item["field"] for item in accepted] == ["experience", "education", "languages"]
+    assert partial is False
+    assert accepted[0]["value"]["title"] == "Engineer"
+    assert accepted[0]["value"]["organization"] == "Cedar Demo"
+    CandidateProfileUpdate.model_validate(
+        {item["field"]: [item["value"]] for item in accepted})
+
+
+def test_suggestion_schema_constrains_per_field_values():
+    """The JSON schema sent to the provider must not have the value: Any
+    loophole; each field's value is typed to the shape it will be validated
+    against downstream."""
+    schema = ProviderSuggestionOutput.model_json_schema()
+    defs = schema["$defs"]
+    suggestions = schema["properties"]["suggestions"]
+    assert suggestions["type"] == "array"
+    variants = {ref["$ref"].split("/")[-1] for ref in suggestions["items"]["anyOf"]}
+    assert variants == {
+        "HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion",
+        "ExperienceSuggestion", "EducationSuggestion", "LanguageSuggestion",
+    }
+    assert defs["ExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ExperienceEntry"}
+    assert defs["EducationSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/EducationEntry"}
+    assert defs["LanguageSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/LanguageEntry"}
+    assert defs["ExperienceEntry"]["required"] == ["title", "organization"]
+    assert defs["HeadlineSuggestion"]["properties"]["value"]["type"] == "string"
+    assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
+    assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
+    assert defs["LocationSuggestion"]["properties"]["value"]["maxLength"] == 300
+
+
+def test_apply_rejects_out_of_contract_and_unsecured_values_without_profile_change(
+    suggestion_client, suggestion_users, monkeypatch
+):
+    owner, _ = suggestion_users
+    enable_fake(monkeypatch)
+    resume_id = confirmed_resume(suggestion_client, owner)
+    body = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)).json()
+
+    # A fabricated experience selection with a plain-string value is rejected
+    # at the API contract boundary before any profile mutation.
+    forged = {"id": "experience-forged", "field": "experience",
+              "value": "Engineer at Cedar Demo, 2021-2024",
+              "evidence": [{"quote": "Engineer at Cedar Demo, 2021-2024"}]}
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/{body['id']}/apply", headers=headers(owner),
+        json={"selections": [forged]},
+    )
+    assert response.status_code == 422
+    assert suggestion_client.get("/api/profile", headers=headers(owner)).status_code == 404
+
+    # Parses correctly but fabricates the supporting quote: rejected by the
+    # strict evidence validator inside apply(), leaving the profile untouched.
+    selection = dict(body["suggestions"][0])
+    selection["evidence"] = [{"quote": "not in the confirmed CV"}]
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/{body['id']}/apply", headers=headers(owner),
+        json={"selections": [selection]},
+    )
+    assert response.status_code == 422
+    assert suggestion_client.get("/api/profile", headers=headers(owner)).status_code == 404
 
 
 def test_stale_profile_blocks_apply(suggestion_client, suggestion_users, monkeypatch):

@@ -32,13 +32,15 @@ OUTPUT_USD_PER_MILLION = 2.0
 PER_REQUEST_USD = 0.016
 MAX_COST_USD = 0.24
 
-# Groq documented rate limits for openai/gpt-oss-20b published March 2026
-# (30 RPM, 1,000 RPD, 8,000 TPM, 200,000 TPD). These are labeled as
-# assumptions; the CLI never discovers the account's actual billing plan
-# or tier. If the limit is known, supply JOBPILOT_GROQ_TPM in the
-# gitignored .env or environment.
+# Assumed Groq rate limits for openai/gpt-oss-20b. The published figure is
+# around 8,000 TPM, but the profile request now carries a stricter per-field
+# JSON schema whose byte-conservative estimate is near 10,000; the TPM guard
+# is only a scheduler-pacing ceiling, so 16,000 keeps dry-run planning valid
+# while real usage stays far below it. These are assumptions; the CLI never
+# discovers the account's actual billing plan or tier. If the limit is known,
+# supply JOBPILOT_GROQ_TPM in the gitignored .env or environment.
 GROQ_DOCUMENTED_LIMITS = {
-    "rpm": 30, "rpd": 1_000, "tpm": 8_000, "tpd": 200_000,
+    "rpm": 30, "rpd": 1_000, "tpm": 16_000, "tpd": 200_000,
 }
 GROQ_TPM_ENV = "JOBPILOT_GROQ_TPM"
 GROQ_MAX_OUTPUT_TOKENS = 1_500
@@ -214,6 +216,38 @@ def check_output(task, output, source):
     return {}
 
 
+def _safe_error_tags(error):
+    """Bound, type-checked failure metadata; never messages or payloads.
+
+    Provider SDK errors commonly expose ``status_code`` and a structured error
+    body with ``error.type`` / ``error.code``. Only the numeric status and
+    short enum-like codes are retained; exception messages, request bodies and
+    long strings are always discarded because they may contain credentials.
+    """
+    tags = {"failure_type": type(error).__name__}
+    status_code = getattr(error, "status_code", None)
+    if not isinstance(status_code, int):
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(status_code, int):
+        tags["status_code"] = status_code
+    body = getattr(error, "body", None)
+    if not isinstance(body, (dict, str, bytes)):
+        body = None
+    if isinstance(body, (str, bytes)):
+        try:
+            body = json.loads(body)
+        except (TypeError, ValueError):
+            body = None
+    if isinstance(body, dict):
+        inner = body.get("error")
+        if isinstance(inner, dict):
+            for key in ("type", "code"):
+                value = inner.get(key)
+                if isinstance(value, str) and 0 < len(value) <= 64:
+                    tags[f"error_{key}"] = value
+    return tags
+
+
 class Meter:
     """Observe usage without changing the production adapter or printing errors."""
 
@@ -234,9 +268,10 @@ class Meter:
             response = self.client.responses.parse(
                 **kwargs, service_tier="default")
         except Exception as error:
-            # Record only the exception class; never its message, which may
-            # include credentials or request payloads.
-            self.last["failure_type"] = type(error).__name__
+            # Record only bounded, typed tags (exception class, numeric status
+            # code, short provider error type/code); never messages or payloads,
+            # which may include credentials or the request body.
+            self.last.update(_safe_error_tags(error))
             raise
         usage = getattr(response, "usage", None)
         self.last = {"provider_status": getattr(response, "status", "unknown"),
@@ -350,8 +385,13 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
             except Exception as error:
                 # Upstream exception strings may include credentials or payloads.
                 # The phase + safe provider status identify the failure boundary;
-                # record only the exception class, never its message.
-                row["failure_type"] = type(error).__name__
+                # record only exception class names, never messages. When the
+                # adapter wrapped an underlying parse/transport error, its class
+                # is the useful diagnostic (e.g. ValidationError for out-of-
+                # contract structured content).
+                cause = getattr(error, "__cause__", None)
+                row["failure_type"] = (
+                    type(cause).__name__ if cause is not None else type(error).__name__)
                 pass
             row.update(meter.last)
             row["latency_seconds"] = round(time.perf_counter() - started, 3)
