@@ -230,8 +230,14 @@ class Meter:
         self.calls += 1  # Failures consume the allowance too; never retry.
         self.last = {
             "provider_status": "transport_or_parse_failure", "usage": None}
-        response = self.client.responses.parse(
-            **kwargs, service_tier="default")
+        try:
+            response = self.client.responses.parse(
+                **kwargs, service_tier="default")
+        except Exception as error:
+            # Record only the exception class; never its message, which may
+            # include credentials or request payloads.
+            self.last["failure_type"] = type(error).__name__
+            raise
         usage = getattr(response, "usage", None)
         self.last = {"provider_status": getattr(response, "status", "unknown"),
                      "returned_model": getattr(response, "model", None), "usage": None}
@@ -341,9 +347,11 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
                 row["status"] = "validation_failure"
                 row["checks"] = check_output(task, output, case["source"])
                 row["status"] = "contract_pass"
-            except Exception:
+            except Exception as error:
                 # Upstream exception strings may include credentials or payloads.
-                # The phase + safe provider status identify the failure boundary.
+                # The phase + safe provider status identify the failure boundary;
+                # record only the exception class, never its message.
+                row["failure_type"] = type(error).__name__
                 pass
             row.update(meter.last)
             row["latency_seconds"] = round(time.perf_counter() - started, 3)
@@ -362,8 +370,11 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
             report["reserved_cost_usd"] = round(
                 meter.calls * per_request_usd, 6)
             save(report)
-            if stop_on_failure and row["status"] == "provider_failure":
-                report["stopped"] = "Provider failure; pilot stops without retry or fallback"
+            if stop_on_failure and row["status"] in {"provider_failure", "validation_failure"}:
+                if row["status"] == "provider_failure":
+                    report["stopped"] = "Provider failure; pilot stops without retry or fallback"
+                else:
+                    report["stopped"] = "Contract or evidence validation failure; pilot stops without retry or fallback"
                 save(report)
                 return report
             if usage and (usage["input_tokens"] > MAX_INPUT_TOKENS_ESTIMATE or usage["output_tokens"] > output_cap):

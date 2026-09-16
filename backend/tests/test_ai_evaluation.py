@@ -167,3 +167,85 @@ def test_live_client_is_bounded_and_report_written_with_mock_only(tmp_path, monk
     assert construction["base_url"] == "https://api.openai.com/v1"
     assert len(captured) == 15
     assert json.loads(path.read_text())["semantic_quality"] == "pending_human_review"
+
+
+def _profile_output_with_plain_string_structured_values():
+    """Mirror the demonstrated live profile failure: the provider returned the
+    experience/education suggestions as plain strings, which the strict
+    CandidateProfileUpdate contract (ExperienceEntry/EducationEntry) rejects.
+    Builder returns a ProviderSuggestionOutput through the provider boundary."""
+    return {
+        "suggestions": [
+            {"id": "headline-1", "field": "headline", "value": "Backend engineer",
+             "evidence": [{"quote": "Backend engineer"}]},
+            {"id": "location-1", "field": "location", "value": "Beirut",
+             "evidence": [{"quote": "Location: Beirut"}]},
+            {"id": "skills-1", "field": "skills", "value": "Python, PostgreSQL",
+             "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
+            {"id": "experience-1", "field": "experience",
+             "value": "Engineer at Cedar Demo, 2021-2024",
+             "evidence": [{"quote": "Engineer at Cedar Demo, 2021-2024"}]},
+            {"id": "education-1", "field": "education",
+             "value": "BSc Computer Science, Example University, 2020",
+             "evidence": [{"quote": "BSc Computer Science, Example University, 2020"}]},
+        ],
+        "partial": False,
+        "message": None,
+    }
+
+
+def test_stop_on_failure_halts_after_evidence_validation_failure():
+    """Regression for the demonstrated pilot: fit and pack must NOT run after the
+    profile suggestion set failed strict evidence/contract validation."""
+    plan = evaluation.build_plan("groq", pilot=True)
+    calls = []
+
+    def parse(**kwargs):
+        calls.append(kwargs["text_format"])
+        return SimpleNamespace(
+            status="completed",
+            output_parsed=_profile_output_with_plain_string_structured_values(),
+            model="openai/gpt-oss-20b",
+            usage=SimpleNamespace(input_tokens=508, output_tokens=1097,
+                                  output_tokens_details=SimpleNamespace(reasoning_tokens=897)),
+        )
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    checkpoints = []
+    report = evaluation.execute(client, plan,
+                                lambda r: checkpoints.append(json.dumps(r)),
+                                scheduler=None, stop_on_failure=True)
+    assert len(calls) == 1  # Only the profile request; no fit/pack retries.
+    assert report["attempted_requests"] == 1
+    assert len(report["results"]) == 1
+    assert report["results"][0]["task"] == "profile"
+    assert report["results"][0]["status"] == "validation_failure"
+    assert report["results"][0]["provider_status"] == "completed"
+    assert report["results"][0]["failure_type"] == "ValueError"
+    assert report["stopped"] == \
+        "Contract or evidence validation failure; pilot stops without retry or fallback"
+
+
+def test_stop_on_failure_records_only_exception_class_for_provider_failure():
+    """The transport failure's payload must be discarded; only the exception
+    class name is recorded, matching the pack failure's retained diagnostics."""
+    plan = evaluation.build_plan("groq", pilot=True)
+    payload = "synthetic-sensitive-error-0123456789"
+
+    def parse(**kwargs):
+        raise RuntimeError(payload)
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    checkpoints = []
+    report = evaluation.execute(client, plan,
+                                lambda r: checkpoints.append(json.dumps(r)),
+                                scheduler=None, stop_on_failure=True)
+    assert report["attempted_requests"] == 1
+    row = report["results"][0]
+    assert row["status"] == "provider_failure"
+    assert row["provider_status"] == "transport_or_parse_failure"
+    assert row["failure_type"] == "RuntimeError"
+    assert row["usage"] is None
+    assert report["stopped"] == \
+        "Provider failure; pilot stops without retry or fallback"
+    assert payload not in json.dumps(report)
