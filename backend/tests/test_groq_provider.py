@@ -1,5 +1,6 @@
 """Groq contracts use synthetic keys and blocked sockets; never contact Groq."""
 import json
+from decimal import Decimal, ROUND_CEILING
 import socket
 from types import SimpleNamespace
 
@@ -202,9 +203,9 @@ def test_groq_pilot_dry_run_and_zero_network(tmp_path, monkeypatch):
     assert plan["max_output_tokens_per_request"] == evaluation.GROQ_MAX_OUTPUT_TOKENS
     assert all(r["max_output_tokens"] == evaluation.GROQ_MAX_OUTPUT_TOKENS
                for r in plan["requests"])
-    expected_cost = round(sum(
-        (r["input_token_estimate"] * 0.075 + r["max_output_tokens"] * 0.30) / 1_000_000
-        for r in plan["requests"]), 6)
+    expected_cost = float(sum(
+        (Decimal(r["input_token_estimate"]) * Decimal("0.075") + Decimal(r["max_output_tokens"]) * Decimal("0.30")) / 1_000_000
+        for r in plan["requests"]).quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
     assert plan["max_estimated_cost_usd"] == expected_cost
     assert plan["rates_usd_per_million"] == {"input": 0.075, "output": 0.30}
     assert plan["tokens_per_minute"] == evaluation.GROQ_DOCUMENTED_LIMITS["tpm"]
@@ -538,7 +539,8 @@ def test_error_body_tags_cannot_leak_short_credentials():
     response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid"))
     error = BadRequestError("private-message", response=response,
                             body={"error": {"type": "private-key", "code": "private-key"}})
-    assert evaluation._safe_error_tags(error) == {"failure_type": "BadRequestError", "status_code": 400}
+    assert evaluation._safe_error_tags(error) == {"failure_type": "BadRequestError", "status_code": 400,
+        "failure_category": "http_rejection", "reason_category": "bad_request"}
 
 
 @pytest.mark.parametrize("pilot", [True, False])
@@ -559,9 +561,9 @@ def test_task_selection_precedes_estimation(pilot, task, monkeypatch):
     assert {r["task"] for r in plan["requests"]} == (set(evaluation.TASKS) if task is None else {task})
     if pilot:
         assert {r["case"] for r in plan["requests"]} == {"strong"}
-        assert plan["max_estimated_cost_usd"] == round(sum(
-            (r["input_token_estimate"] * 0.075 + r["max_output_tokens"] * 0.30) / 1_000_000
-            for r in plan["requests"]), 6)
+        assert plan["max_estimated_cost_usd"] == float(sum(
+            (Decimal(r["input_token_estimate"]) * Decimal("0.075") + Decimal(r["max_output_tokens"]) * Decimal("0.30")) / 1_000_000
+            for r in plan["requests"]).quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
 
 
 @pytest.mark.parametrize("mode", ["success", "failure"])
@@ -621,3 +623,33 @@ def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, 
     if mode == "failure":
         assert live["stopped"]
         assert live["results"][0]["validation"]["errors"][0]["type"] == "json_invalid"
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_http_rejection_retains_only_allowlisted_details(nested):
+    from openai import BadRequestError
+    detail = {"type": "invalid_request_error", "code": "json_validate_failed",
+              "message": "private-secret", "failed_generation": "private-body"}
+    error = BadRequestError("private-secret", response=httpx.Response(
+        400, request=httpx.Request("POST", "https://example.invalid")),
+        body={"error": detail} if nested else detail)
+    tags = evaluation._safe_error_tags(error)
+    assert tags == {"failure_type": "BadRequestError", "status_code": 400,
+                   "failure_category": "http_rejection", "reason_category": "bad_request",
+                   "provider_error_type": "invalid_request_error",
+                   "provider_error_code": "json_validate_failed"}
+    assert "private" not in json.dumps(tags)
+
+
+def test_profile_budget_rounds_0009195_upward(monkeypatch):
+    assert evaluation.maximum_budget(Decimal("0.0009195")) == 0.000920
+    assert evaluation.maximum_budget(Decimal("0.000920")) == 0.000920
+    monkeypatch.setattr(evaluation, "request_plan", lambda *args, **kwargs: {
+        "input_token_estimate": 6260, "max_output_tokens": 1500,
+        "complete_token_estimate": 7760, "sha256": "synthetic"})
+    plan = evaluation.build_plan("groq", pilot=True, task="profile")
+    reported = Decimal(str(plan["max_estimated_cost_usd"]))
+    calculated = (Decimal(6260) * Decimal("0.075") + Decimal(1500) * Decimal("0.30")) / Decimal(1000000)
+    assert calculated == Decimal("0.0009195")
+    assert reported == Decimal("0.000920")
+    assert reported >= calculated

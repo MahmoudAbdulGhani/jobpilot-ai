@@ -1,5 +1,6 @@
 """Run with --help. Default is an offline request plan, even with credentials set."""
 import argparse
+from decimal import Decimal, ROUND_CEILING
 import hashlib
 import json
 import logging
@@ -136,6 +137,11 @@ def request_plan(task, source, provider_name="openai", max_output_tokens=None,
             "complete_token_estimate": complete}
 
 
+def maximum_budget(amount: Decimal, precision: int = 6) -> float:
+    """Round a decimal estimate upward before exposing it as a JSON number."""
+    return float(amount.quantize(Decimal(1).scaleb(-precision), rounding=ROUND_CEILING))
+
+
 def build_plan(provider_name="openai", pilot=False, env=None, task=None):
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
@@ -170,16 +176,16 @@ def build_plan(provider_name="openai", pilot=False, env=None, task=None):
         rates = {"input": GROQ_INPUT_USD_PER_MILLION,
                  "output": GROQ_OUTPUT_USD_PER_MILLION} if pilot else None
         max_cost = (
-            round(sum(
-                (e["input_token_estimate"] * GROQ_INPUT_USD_PER_MILLION +
-                 e["max_output_tokens"] * GROQ_OUTPUT_USD_PER_MILLION) / 1_000_000
-                for e in entries), 6) if pilot else None
+            maximum_budget(sum(
+                (Decimal(e["input_token_estimate"]) * Decimal(str(GROQ_INPUT_USD_PER_MILLION)) +
+                 Decimal(e["max_output_tokens"]) * Decimal(str(GROQ_OUTPUT_USD_PER_MILLION))) / Decimal(1_000_000)
+                for e in entries)) if pilot else None
         )
     else:
         live_supported = True
         rates = {"input": INPUT_USD_PER_MILLION,
                  "output": OUTPUT_USD_PER_MILLION}
-        max_cost = round(len(entries) * PER_REQUEST_USD, 4)
+        max_cost = maximum_budget(Decimal(len(entries)) * Decimal(str(PER_REQUEST_USD)), 4)
 
     plan = {
         "provider": provider_name,
@@ -230,8 +236,8 @@ def check_output(task, output, source):
 def _safe_error_tags(error):
     """Bound, type-checked failure metadata; never messages or payloads.
 
-    Retain numeric status and allowlisted validation metadata. Provider body
-    type/code strings are untrusted too: even short strings can be credentials.
+    Retain numeric status, fixed provider code/type vocabulary, and allowlisted
+    validation metadata. Never retain arbitrary strings from provider bodies.
     """
     tags = {"failure_type": type(error).__name__}
     status_code = getattr(error, "status_code", None)
@@ -241,7 +247,27 @@ def _safe_error_tags(error):
         tags["status_code"] = status_code
     # Envelope validation errors expose the received body. Retain only known
     # status enums and checked token counts; never copy the body itself.
-    from openai import APIResponseValidationError
+    from openai import APIResponseValidationError, APIStatusError
+    if isinstance(error, APIStatusError) and isinstance(status_code, int) and status_code >= 400:
+        tags["failure_category"] = "http_rejection"
+        tags["reason_category"] = {
+            400: "bad_request", 401: "authentication", 403: "permission",
+            404: "not_found", 422: "unprocessable_request", 429: "rate_limit",
+        }.get(status_code, "server_error" if status_code >= 500 else "unknown")
+        # Exact vocabulary only; short arbitrary strings may still be secrets.
+        allowed = {
+            "invalid_request_error", "invalid_api_key", "rate_limit_exceeded",
+            "model_not_found", "invalid_json_schema", "json_validate_failed",
+            "schema_validation_failed", "unsupported_parameter", "invalid_value",
+        }
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            detail = body.get("error", body)
+            if isinstance(detail, dict):
+                for key in ("code", "type"):
+                    value = detail.get(key)
+                    if isinstance(value, str) and value in allowed:
+                        tags[f"provider_error_{key}"] = value
     if isinstance(error, APIResponseValidationError) and isinstance(error.body, dict):
         status = error.body.get("status")
         if isinstance(status, str) and status in {
@@ -450,7 +476,7 @@ def main(argv=None):
                         help="Select one task; defaults to all tasks")
     parser.add_argument("--provider", choices=["openai", "groq"],
                         default="openai", help="Evaluation provider (default: openai)")
-    parser.add_argument("--max-cost-usd", type=float,
+    parser.add_argument("--max-cost-usd", type=Decimal,
                         help="Required live cost acknowledgement")
     parser.add_argument("--output", type=Path, required=True,
                         help="New report file; never overwrite evidence")
@@ -475,7 +501,7 @@ def main(argv=None):
 
         expected_cost = plan.get("max_estimated_cost_usd")
 
-        if os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd is None or round(args.max_cost_usd, 6) != round(expected_cost, 6):
+        if os.environ.get("JOBPILOT_EVAL_ALLOW_LIVE") != "1" or args.max_cost_usd is None or args.max_cost_usd != Decimal(str(expected_cost)):
             parser.error(
                 f"Live requires JOBPILOT_EVAL_ALLOW_LIVE=1 and --max-cost-usd {expected_cost}")
         if not (os.environ.get(key_name) or dotenv.get(key_name)):
