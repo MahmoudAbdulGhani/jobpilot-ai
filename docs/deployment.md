@@ -64,7 +64,7 @@ Restore only into a **new isolated target**: restore the DB dump with `pg_restor
 
 Rollback means redeploying a schema-compatible prior image and routing traffic deliberately. Do not downgrade data-bearing migrations or switch back to local storage if post-cutover objects only exist remotely. Restoring an older DB can lose newer records and disconnect them from object versions: require an explicit maintenance/reconciliation plan.
 
-Account deletion currently needs a coordinated operator workflow, not just `DELETE users`: revoke mailboxes, stop sync, delete owned object bytes, remove database snapshots/records via the ownership cascades, and record the deletion for backup expiry/restoration suppression. Gmail copies/recipient mail and provider logs are outside DB cascades. Account tokens/invitations/throttle hashes need a bounded retention job; see `accounts-onboarding.md`. Establish final retention/legal-hold policy and a restore-time deletion ledger before general availability. Do not truncate tables to implement deletion.
+Account deletion and bounded retention now use the reauthenticated Settings flow and separately scheduled cleanup command in [Account data controls](account-data.md). Do not delete a user row directly: private files, provider revocation and backup suppression require coordinated cleanup. Configure the scheduler, final retention policy and an external restore-time deletion ledger before launch. No backup restoration or live provider deletion has been verified.
 
 ## Launch checklist
 

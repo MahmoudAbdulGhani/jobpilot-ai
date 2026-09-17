@@ -29,6 +29,7 @@ from app.core.config import get_settings
 
 
 def create_application() -> FastAPI:
+    from app.api.routes.account_data import router as account_data_router
     protect_access_logs()
     settings = get_settings()
     application = FastAPI(
@@ -58,6 +59,7 @@ def create_application() -> FastAPI:
     application.include_router(health_router, prefix=settings.API_PREFIX)
     application.include_router(auth_router, prefix=settings.API_PREFIX)
     application.include_router(accounts_router, prefix=settings.API_PREFIX)
+    application.include_router(account_data_router, prefix=settings.API_PREFIX)
     application.include_router(jobs_router, prefix=settings.API_PREFIX)
     application.include_router(discovery_router, prefix=settings.API_PREFIX)
     application.include_router(mailboxes_router, prefix=settings.API_PREFIX)

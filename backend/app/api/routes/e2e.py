@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
-from app.core.security import hash_password, verify_password
-from app.models import CandidateProfile, User
+from app.core.security import hash_password, hash_token, verify_password
+from app.models import AccountDeletion, AccountThrottle, CandidateProfile, User
 from app.services import resume_service
 
 router = APIRouter(prefix="/e2e", tags=["test support"])
@@ -106,6 +106,9 @@ def cleanup_user(
         return {"deleted": False}
     resume_service.delete_owned_resumes(db, owner_id=user.id)
     db.execute(delete(CandidateProfile).where(CandidateProfile.owner_id == user.id))
+    db.execute(delete(AccountDeletion).where(AccountDeletion.owner_id == user.id))
+    db.execute(delete(AccountThrottle).where(AccountThrottle.key.in_([
+        hash_token("account-data:" + str(user.id)), hash_token("email:" + user.email.lower())])))
     db.delete(user)
     db.commit()
     return {"deleted": True}

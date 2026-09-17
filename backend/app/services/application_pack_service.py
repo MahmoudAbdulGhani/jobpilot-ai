@@ -249,7 +249,7 @@ def generate(db, owner_id, job_id, body, settings):
                            model=provider.model, prompt_version=PROMPT_VERSION, deadline=now + timedelta(seconds=settings.JOBPILOT_PACK_TIMEOUT_SECONDS + 10))
     db.add(pack)
     db.commit()
-    # No refresh or attribute reads here: that would start a new transaction.
+    ai_usage.dispatch_guard(db, owner_id)
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)

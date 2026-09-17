@@ -272,6 +272,7 @@ def advance(db, owner, id, body, settings):
     row.revision += 1
     op_id, timeout = operation.id, row.configuration["timeout"]
     db.commit()  # Saved answers and dispatch claim precede network I/O.
+    ai_usage.dispatch_guard(db, owner)
     result, output, failure = None, None, None
     try:
         result = ai_usage.bounded_call(lambda: provider.practice(payload), timeout)

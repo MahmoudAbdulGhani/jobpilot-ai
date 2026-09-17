@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     )
 
     APP_NAME: str = "JobPilot AI"
+    ACCOUNT_EXPORT_MAX_MIB: int = Field(default=25, ge=1, le=100)
+    ACCOUNT_EXPORT_MAX_ROWS: int = Field(default=10000, ge=1, le=50000)
+    ACCOUNT_EXPORT_MINUTES: int = Field(default=10, ge=1, le=10)
+    ACCOUNT_TOKEN_RETENTION_DAYS: int = Field(default=1, ge=0, le=30)
+    ACCOUNT_OPERATION_RETENTION_DAYS: int = Field(default=30, ge=1, le=365)
+    ACCOUNT_EMAIL_PREVIEW_DAYS: int = Field(default=90, ge=1, le=3650)
     ENVIRONMENT: Literal["local", "test", "production"] = "local"
     # Use a project-specific environment name because DEBUG is commonly set by
     # shells and developer tools to non-Boolean values.

@@ -1,3 +1,4 @@
+from app.models.account_data import AccountExport, AccountDeletion
 from app.models.interview import InterviewSession, InterviewOperation
 from app.models.account_token import AccountToken, AccountThrottle
 from app.models.base import Base
@@ -22,7 +23,7 @@ __all__ = [
     "MailboxConnection", "MailboxOAuthState",
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",
     "ApplicationRecord", "ApplicationStatusEvent",
-    "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",
+    "AccountExport", "AccountDeletion", "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",
     "ResumeExtraction",
     "ProfileSuggestionSet",
     "JobFitAnalysis",

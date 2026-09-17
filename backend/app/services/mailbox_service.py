@@ -21,8 +21,9 @@ def owned(db, owner, connection_id):
 
 
 def owner_lock(db, owner):
-    user = db.scalar(select(User).where(User.id == owner).with_for_update())
+    user = db.scalar(select(User).where(User.id == owner).with_for_update().execution_options(populate_existing=True))
     if not user or not user.is_active: raise MailboxError("not_found", 404)
+    return user
 
 
 def public(row):

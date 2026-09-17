@@ -18,7 +18,7 @@ class AIUsageError(Exception):
 def reserve(session, owner_id, settings):
     # Serialize quota allocation across all AI tasks/processes, but release the
     # lock with the caller's pre-provider commit. Never lock during network I/O.
-    if session.scalar(select(User.id).where(User.id == owner_id).with_for_update()) is None:
+    if session.scalar(select(User.id).where(User.id == owner_id, User.is_active.is_(True)).with_for_update()) is None:
         raise AIUsageError(404, "User not found")
     usage = session.get(AIUsage, owner_id, populate_existing=True)
     if usage is None:
@@ -39,6 +39,17 @@ def reserve(session, owner_id, settings):
 
 def release(session, owner_id, token):
     session.execute(update(AIUsage).where(AIUsage.owner_id == owner_id, AIUsage.active_token == token).values(active_token=None, active_until=None))
+
+
+def dispatch_guard(session, owner_id):
+    """Recheck the active account after the durable dispatch claim.
+
+    A provider request already dispatched cannot be recalled. A timed-out worker
+    returns data only; database triggers reject any later inactive-owner writes.
+    """
+    from fastapi import HTTPException
+    if session.scalar(select(User.id).where(User.id == owner_id, User.is_active.is_(True))) is None:
+        raise HTTPException(410, "Account unavailable")
 
 
 def bounded_call(operation, timeout):

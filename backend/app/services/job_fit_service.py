@@ -134,6 +134,8 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
     except IntegrityError as error:
         session.rollback()
         raise JobFitError(409, "A fit analysis request with this key already exists.") from error
+    from app.services.ai_usage import dispatch_guard
+    dispatch_guard(session, owner_id)
     try:
         output = provider.analyze(snapshot["description"], facts)
         result = validate_output(output, snapshot["description"], facts)

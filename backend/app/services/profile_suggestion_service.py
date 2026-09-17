@@ -114,6 +114,8 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     session.add(record)
     session.commit()
     session.refresh(record)
+    from app.services.ai_usage import dispatch_guard
+    dispatch_guard(session, owner_id)
     try:
         output = provider.suggest(source)
         suggestions, partial = validate_output(output, source)

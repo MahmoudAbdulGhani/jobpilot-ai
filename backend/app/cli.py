@@ -35,11 +35,28 @@ def main(argv: list[str] | None = None) -> int:
         "setup-owner",
         help="Create the single owner account (interactive, never echoed)",
     )
+    recovery = subparsers.add_parser("create-recovery-account", help="Local operator: establish a verified recovery login before deleting the last account")
+    recovery.add_argument("--confirm-local-recovery", action="store_true", required=True)
     invite = subparsers.add_parser("invite", help="Create one email-bound invitation; local operator only")
     invite.add_argument("--email", required=True)
     invite.add_argument("--hours", type=int, default=24)
     invite.add_argument("--output", required=True, help="New private file for the invitation (never stdout)")
     args = parser.parse_args(argv)
+
+    if args.command == "create-recovery-account":
+        from sqlalchemy import select, text
+        from app.models import User
+        from app.core.security import hash_password
+        email, password = prompt_credentials()
+        with SessionLocal() as session:
+            session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key":auth_service.OWNER_BOOTSTRAP_LOCK_ID})
+            if session.scalar(select(User.id).where(User.email == email)):
+                print("Refused: use a new recovery-account email.")
+                return 1
+            session.add(User(email=email, password_hash=hash_password(password), email_verified=True))
+            session.commit()
+        print("Recovery login created. Verify sign-in before requesting deletion. Web administrator privileges do not exist; local operator access remains required.")
+        return 0
 
     if args.command == "invite":
         import os

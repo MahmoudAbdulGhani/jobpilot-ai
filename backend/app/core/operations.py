@@ -17,9 +17,11 @@ class RequestSafety:
             nonlocal status, sent
             if message['type'] == 'http.response.start':
                 status, sent = message['status'], True
-                message['headers'] = list(message.get('headers', [])) + [
+                enforced = {b'x-request-id', b'x-content-type-options', b'referrer-policy', b'cache-control'}
+                private = any(key.lower() == b'cache-control' and b'private' in value.lower() for key,value in message.get('headers', []))
+                message['headers'] = [(key,value) for key,value in message.get('headers', []) if key.lower() not in enforced] + [
                     (b'x-request-id', request_id.encode()), (b'x-content-type-options', b'nosniff'),
-                    (b'referrer-policy', b'no-referrer'), (b'cache-control', b'no-store')]
+                    (b'referrer-policy', b'no-referrer'), (b'cache-control', b'private, no-store' if private else b'no-store')]
             await send(message)
         try:
             await self.app(scope, receive, safe_send)
