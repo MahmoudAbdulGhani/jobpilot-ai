@@ -36,6 +36,9 @@ EXPORT_COLUMNS = {
     "mailbox_replies": "id mailbox_id attempt_id suggested_job_id job_id message_id thread_id rfc_message_id match_kind sender subject preview received_at corrected_at created_at updated_at",
     "reply_syncs": "attempt_id mailbox_id status last_sync_at retry_after created_at updated_at",
     "ai_usage": "requests",
+    "account_plans": "base_plan beta_expires_at beta_revoked_at created_at updated_at",
+    "usage_reservations": "id feature period_start created_at released_at",
+    "plan_audits": "id action reason expires_at created_at",
 }
 PARENTS = {"resume_extractions": ("resume_id", "resumes"),
     "application_pack_versions": ("pack_id", "application_packs"),
@@ -210,7 +213,8 @@ def cleanup_deletion(db, deletion_id, settings, *, batch_size=20):
             if user:
                 db.execute(delete(AccountToken).where(AccountToken.email == user.email))
                 db.execute(delete(AccountThrottle).where(AccountThrottle.key.in_([
-                    hash_token("account-data:" + str(user.id)), hash_token("email:" + user.email.lower())])))
+                    hash_token("account-data:" + str(user.id)), hash_token("email:" + user.email.lower()),
+                    hash_token("plan-admin:" + user.email.lower())])))
                 db.execute(delete(User).where(User.id == row.owner_id))
             row.status, row.failure, row.completed_at = "complete", None, now()
         row.lease_until = None

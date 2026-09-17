@@ -1,4 +1,5 @@
 'use client';
+import {MeteredButton} from './MeteredButton';
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -234,7 +235,7 @@ export function ApplicationPacks({ job }: { job: Job }) {
         {(!options.has_profile || !options.has_description || !options.resumes.length || !options.available) && <div className="pack-prerequisites"><WarningCircle size={21} aria-hidden="true" /><div>{!options.has_description && <p>Save a job description first.</p>}{!options.has_profile && <p><Link href="/profile">Save your candidate profile</Link> before generating.</p>}{!options.resumes.length && <p><Link href="/resumes">Upload a CV and confirm its extracted text</Link> to use it here.</p>}{!options.available && <p>{options.reason || 'AI generation is unavailable in this environment.'}</p>}</div></div>}
         <label className="pack-field" htmlFor="pack-resume">Confirmed CV<select id="pack-resume" value={resumeId} disabled={!!busy || !options.resumes.length} onChange={event => { setResumeId(event.target.value); generationKey.current = null; }}><option value="">Choose a confirmed CV</option>{options.resumes.map(resume => <option key={resume.id} value={resume.id}>{resume.display_name}</option>)}</select></label>
       </>}
-      <div className="pack-actions"><button className="primary-button" disabled={!canGenerate || !!busy || pack?.status === 'generating'} onClick={() => withSavedDraft(() => void generate())}>{busy === 'generate' ? <ArrowClockwise className="spin" size={19} /> : <Sparkle size={19} />}{busy === 'generate' ? 'Generating both drafts…' : pack?.status === 'failed' ? 'Retry generation' : 'Generate application pack'}</button><button className="text-button" disabled={!!busy} onClick={() => withSavedDraft(() => void refreshActive())}>Refresh saved state</button></div>
+      <div className="pack-actions"><MeteredButton feature="pack" className="primary-button" disabled={!canGenerate || !!busy || pack?.status === 'generating'} onClick={() => withSavedDraft(() => void generate())}>{busy === 'generate' ? <ArrowClockwise className="spin" size={19} /> : <Sparkle size={19} />}{busy === 'generate' ? 'Generating both drafts…' : pack?.status === 'failed' ? 'Retry generation' : 'Generate application pack'}</MeteredButton><button className="text-button" disabled={!!busy} onClick={() => withSavedDraft(() => void refreshActive())}>Refresh saved state</button></div>
     </div>
     {error && !deleting && !approving && <div className="form-error" role="alert">{error}<p>Refresh saved state after a conflict. Your unsaved text stays here until you choose to replace it.</p></div>}
     {notice && <p className="pack-notice" role="status" aria-live="polite">{notice}</p>}

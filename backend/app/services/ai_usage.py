@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 
-from app.models import AIUsage, JobFitAnalysis, ProfileSuggestionSet, User
+from app.models import AIUsage, JobFitAnalysis, ProfileSuggestionSet, User, UsageReservation
 from app.services.ai_provider import ProviderFailure
 
 
@@ -15,7 +15,7 @@ class AIUsageError(Exception):
         super().__init__(message)
 
 
-def reserve(session, owner_id, settings):
+def reserve(session, owner_id, settings, feature=None):
     # Serialize quota allocation across all AI tasks/processes, but release the
     # lock with the caller's pre-provider commit. Never lock during network I/O.
     if session.scalar(select(User.id).where(User.id == owner_id, User.is_active.is_(True)).with_for_update()) is None:
@@ -28,9 +28,12 @@ def reserve(session, owner_id, settings):
     now = datetime.now(timezone.utc)
     if usage.active_until and usage.active_until > now:
         raise AIUsageError(409, "An AI request is already in progress. Wait for it to finish.")
-    if usage.requests >= settings.JOBPILOT_AI_MAX_REQUESTS_PER_USER:
-        raise AIUsageError(429, "AI request limit reached for this account.")
     token = uuid.uuid4()
+    from app.services.entitlements import reserve as reserve_entitlement, EntitlementError
+    try:
+        reserve_entitlement(session, owner_id, token, feature, settings)
+    except EntitlementError as error:
+        raise AIUsageError(error.status_code, error.message) from None
     usage.requests += 1
     usage.active_token = token
     usage.active_until = now + timedelta(seconds=settings.JOBPILOT_AI_TIMEOUT_SECONDS + 10)
@@ -39,6 +42,7 @@ def reserve(session, owner_id, settings):
 
 def release(session, owner_id, token):
     session.execute(update(AIUsage).where(AIUsage.owner_id == owner_id, AIUsage.active_token == token).values(active_token=None, active_until=None))
+    session.execute(update(UsageReservation).where(UsageReservation.owner_id == owner_id, UsageReservation.id == token).values(released_at=datetime.now(timezone.utc)))
 
 
 def dispatch_guard(session, owner_id):

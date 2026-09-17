@@ -65,8 +65,8 @@ operation. Silence or noise may produce inaccurate text; nothing is auto-submitt
 
 ## Quotas, failures and privacy
 
-Every dispatched speech request consumes the existing per-account AI request
-budget, including failures; the shared in-flight gate prevents overlapping paid
+Every dispatched speech request consumes the shared per-account UTC monthly
+[plan allowance](plans-and-entitlements.md), including failures; the shared in-flight gate prevents overlapping paid
 work. Additionally, default 18 requests per session (hard configuration maximum
 30). Account quota is not refunded by deleting sessions. No retry or provider
 fallback occurs. UI click guards plus owner/request-key uniqueness and a durable

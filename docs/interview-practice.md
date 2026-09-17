@@ -73,9 +73,11 @@ no tools/fallback. Every response must be completed and locally validated.
 | `JOBPILOT_INTERVIEW_MAX_SESSIONS_PER_USER` | `20` |
 
 The existing `JOBPILOT_AI_ENABLED`, server-side `JOBPILOT_OPENAI_API_KEY`, and
-`JOBPILOT_AI_MAX_REQUESTS_PER_USER` apply. The default shared lifetime allowance is
-20 requests, shared with other AI capabilities, with one active allocation per
-user. Failed dispatches consume quota; deleting sessions does not refund it.
+`JOBPILOT_AI_MAX_REQUESTS_PER_USER` apply. The free default is 20 shared requests
+per UTC calendar month, with one active allocation per user. Existing accounts
+retain continuity access. See [plans and entitlements](plans-and-entitlements.md)
+for feature ceilings and beta policy. Failed dispatches consume quota; deleting
+sessions does not refund it.
 A successful N-question session uses N+1 calls (3–7), not one call per session.
 There are at most two explicit dispatches per step, also bounded by the session
 and account allowances. No automatic retries occur, including on reload.

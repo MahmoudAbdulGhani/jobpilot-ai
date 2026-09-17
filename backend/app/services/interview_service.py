@@ -262,7 +262,7 @@ def advance(db, owner, id, body, settings):
         raise PackError(413, "Interview request exceeds the input limit. Your saved answer is retained.")
     provider = provider_for(settings, row.configuration)
     try:
-        token = ai_usage.reserve(db, owner, settings.model_copy(update={"JOBPILOT_AI_TIMEOUT_SECONDS": row.configuration["timeout"]}))
+        token = ai_usage.reserve(db, owner, settings.model_copy(update={"JOBPILOT_AI_TIMEOUT_SECONDS": row.configuration["timeout"]}), feature="interview")
     except ai_usage.AIUsageError as error:
         raise PackError(error.status_code, error.message) from None
     operation = InterviewOperation(id=uuid.uuid4(), session_id=id, request_key=body.request_key, request_hash=hashed,

@@ -490,3 +490,5 @@ speech is disabled by default and the full text workflow remains available.
 4. AI job analysis (provider-independent, Ollama first)
 5. Cover letter generation
 6. Controlled JobPilot agent with approvals and audit logging
+Plan configuration, authenticated beta administration, monthly usage and the
+inactive billing boundary are documented in [plans and entitlements](docs/plans-and-entitlements.md).

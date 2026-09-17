@@ -110,9 +110,6 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
         return existing
     if session.scalar(select(JobFitAnalysis).where(JobFitAnalysis.owner_id == owner_id, JobFitAnalysis.job_id == job.id, JobFitAnalysis.status == "generating")):
         raise JobFitError(409, "A fit analysis is already being generated for this job.")
-    used = session.scalar(select(func.count()).select_from(JobFitAnalysis).where(JobFitAnalysis.owner_id == owner_id)) or 0
-    if used >= settings.JOBPILOT_AI_MAX_REQUESTS_PER_USER:
-        raise JobFitError(429, "AI usage limit reached.")
     request_size = len(snapshot["description"]) + sum(len(fact.value) for fact in facts)
     if request_size > settings.JOBPILOT_AI_MAX_INPUT_CHARS:
         raise JobFitError(413, "The job and profile exceed the AI input limit.")
@@ -120,6 +117,11 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
         provider = provider_for(settings)
     except SuggestionError as error:
         raise JobFitError(error.status_code, error.message) from error
+    from app.services import ai_usage
+    try:
+        token = ai_usage.reserve(session, owner_id, settings, feature="fit")
+    except ai_usage.AIUsageError as error:
+        raise JobFitError(error.status_code, error.message) from None
     record = JobFitAnalysis(
         owner_id=owner_id, job_id=job.id, profile_id=profile.id,
         idempotency_key=key, payload_hash=payload_hash, job_hash=job_hash,
@@ -137,13 +139,15 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
     from app.services.ai_usage import dispatch_guard
     dispatch_guard(session, owner_id)
     try:
-        output = provider.analyze(snapshot["description"], facts)
+        output = ai_usage.bounded_call(lambda: provider.analyze(snapshot["description"], facts), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         result = validate_output(output, snapshot["description"], facts)
         status, message = "ready", None
     except ProviderFailure as error:
         result, status, message = None, "failed", str(error)
     except JobFitError as error:
         result, status, message = None, "failed", error.message
+    except Exception:
+        result, status, message = None, "failed", "Provider request failed; no automatic retry."
     session.expire_all()
     current = session.get(JobFitAnalysis, record.id)
     if current is None:
@@ -152,6 +156,7 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
     current.counts = counts(result)
     current.status = status
     current.outcome_message = message
+    ai_usage.release(session, owner_id, token)
     session.commit()
     session.refresh(current)
     return current

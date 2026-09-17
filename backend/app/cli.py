@@ -41,7 +41,32 @@ def main(argv: list[str] | None = None) -> int:
     invite.add_argument("--email", required=True)
     invite.add_argument("--hours", type=int, default=24)
     invite.add_argument("--output", required=True, help="New private file for the invitation (never stdout)")
+    for name in ("beta-grant", "beta-revoke"):
+        beta = subparsers.add_parser(name, help="Authenticated local plan administrator; never enables paid access")
+        beta.add_argument("--admin-email", required=True)
+        beta.add_argument("--user-id", required=True)
+        beta.add_argument("--request-key", required=True, help="UUID for idempotent administration")
+        beta.add_argument("--reason", choices=["invited_beta", "evaluation", "support"], required=True)
+        if name == "beta-grant": beta.add_argument("--hours", type=int, required=True)
     args = parser.parse_args(argv)
+
+    if args.command in {"beta-grant", "beta-revoke"}:
+        import uuid
+        from app.core.config import get_settings
+        from app.services.entitlements import administer, EntitlementError
+        try:
+            owner, key = uuid.UUID(args.user_id), uuid.UUID(args.request_key)
+            password = getpass.getpass("Administrator password (never echoed): ")
+            with SessionLocal() as session:
+                result = administer(session, get_settings(), email=args.admin_email, password=password,
+                    owner=owner, request_key=key, action="grant" if args.command == "beta-grant" else "revoke",
+                    hours=getattr(args, "hours", 0), reason=args.reason)
+                print(f"Recorded beta {result.action}; audit {result.id}; grant expiry {result.expires_at}. No payment or paid subscription was created.")
+            return 0
+        except EntitlementError as error:
+            print(error.message); return 1
+        except Exception:
+            print("Administrative action unavailable; check authentication, bounds and configuration."); return 1
 
     if args.command == "create-recovery-account":
         from sqlalchemy import select, text

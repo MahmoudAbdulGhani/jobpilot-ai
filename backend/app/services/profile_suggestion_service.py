@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -100,10 +100,12 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     ))
     if existing:
         raise SuggestionError(409, "Suggestions are already being generated for this resume.")
-    count = session.scalar(select(func.count()).select_from(ProfileSuggestionSet).where(ProfileSuggestionSet.owner_id == owner_id)) or 0
-    if count >= settings.JOBPILOT_AI_MAX_REQUESTS_PER_USER:
-        raise SuggestionError(429, "AI suggestion usage limit reached.")
     provider = provider_for(settings)
+    from app.services import ai_usage
+    try:
+        token = ai_usage.reserve(session, owner_id, settings, feature="profile")
+    except ai_usage.AIUsageError as error:
+        raise SuggestionError(error.status_code, error.message) from None
     profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id))
     record = ProfileSuggestionSet(
         owner_id=owner_id, resume_id=resume.id, extraction_id=extraction.id,
@@ -117,7 +119,7 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     from app.services.ai_usage import dispatch_guard
     dispatch_guard(session, owner_id)
     try:
-        output = provider.suggest(source)
+        output = ai_usage.bounded_call(lambda: provider.suggest(source), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         suggestions, partial = validate_output(output, source)
         record.status = "ready"
         record.suggestions = suggestions
@@ -125,6 +127,10 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     except ProviderFailure as error:
         record.status = "failed"
         record.outcome_message = str(error)
+    except Exception:
+        record.status = "failed"
+        record.outcome_message = "Provider request failed; no automatic retry."
+    ai_usage.release(session, owner_id, token)
     session.commit()
     session.refresh(record)
     return record

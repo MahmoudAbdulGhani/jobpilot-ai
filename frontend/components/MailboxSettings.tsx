@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Shell } from './Shell';
 import { api } from '../lib/api';
@@ -75,7 +76,7 @@ export function MailboxSettings() {
     try {const result=await api<{authorization_url:string}>('/mailboxes/oauth/start',{method:'POST',body:JSON.stringify({capabilities})});window.location.assign(result.authorization_url);}
     catch(e) {setError(explain(e));setBusy(false);}
   }
-  return <Shell><div className="collection-page mailbox-settings"><p className="eyebrow">Account settings</p><h1>Mailboxes</h1>
+  return <Shell><div className="collection-page mailbox-settings"><p className="eyebrow">Account settings</p><h1>Mailboxes</h1><p><Link href="/settings/usage">Plan and usage</Link></p>
     <p>Connect Gmail for user-approved email applications from saved jobs. Connecting never sends messages or scans your inbox. Every application requires a separate message and attachment review followed by explicit Send confirmation. Reply tracking is optional and requires separate reading consent plus an explicit synchronization action.</p>
     <p>Start with identity only, or select a capability before granting permission. Your Google tokens stay encrypted on the server. You can disconnect and revoke access at any time.</p>
     <p>You can also remove grants directly in <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">Google account connections</a>. Unchecking a capability disables it in JobPilot after consent; removing the Google grant requires disconnect and revoke.</p>

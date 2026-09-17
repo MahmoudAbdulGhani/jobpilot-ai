@@ -234,7 +234,7 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         token = ai_usage.reserve(db, owner_id, settings.model_copy(update={
             "JOBPILOT_AI_TIMEOUT_SECONDS": settings.JOBPILOT_PACK_TIMEOUT_SECONDS,
-        }))
+        }), feature="pack")
     except ai_usage.AIUsageError as error:
         raise PackError(error.status_code, error.message) from None
     now = datetime.now(timezone.utc)

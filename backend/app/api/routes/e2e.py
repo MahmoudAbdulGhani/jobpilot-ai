@@ -16,12 +16,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.api.routes.auth import _require_bearer_user
 from app.core.security import hash_password, hash_token, verify_password
 from app.models import AccountDeletion, AccountThrottle, CandidateProfile, User
 from app.services import resume_service
 
 router = APIRouter(prefix="/e2e", tags=["test support"])
 _account_tickets = {}
+_usage_fixture_users: set[uuid.UUID] = set()
 
 
 @router.post("/account-fixture")
@@ -51,6 +53,27 @@ def account_message(body: AccountTestTicket):
     return {"text": test_messages.get(email, "")}
 
 GENERIC_NOT_FOUND = "Not found"
+
+
+@router.post("/exhaust-usage")
+def exhaust_usage(user: User = Depends(_require_bearer_user), db: Session = Depends(get_db)):
+    """Synthetic browser fixtures only; never dispatch a provider request."""
+    settings = get_settings()
+    _require_e2e_test_mode(settings)
+    if not settings.JOBPILOT_AI_TEST_PROVIDER or user.id not in _usage_fixture_users or not user.email.startswith("e2e-") or not user.email.endswith("@jobpilot-test.com"):
+        raise HTTPException(404, "Not found")
+    from app.services import ai_usage, entitlements
+    state = entitlements.snapshot(db, user.id, settings)
+    if state["total"]["remaining"] > 100: raise HTTPException(409, "Synthetic fixture limit exceeded")
+    for _ in range(state["total"]["remaining"]):
+        state = entitlements.snapshot(db, user.id, settings)
+        feature = next((name for name, row in state["features"].items() if row["remaining"] > 0), None)
+        if feature is None: break
+        token = ai_usage.reserve(db, user.id, settings, feature=feature)
+        db.commit()  # Match the real durable pre-dispatch claim (autoflush=False).
+        ai_usage.release(db, user.id, token)
+        db.commit()
+    return {"synthetic": True, "provider_requests_sent": 0}
 
 
 class BootstrapRequest(BaseModel):
@@ -93,6 +116,7 @@ def bootstrap_user(
         db.add(user)
         db.commit()
         db.refresh(user)
+        _usage_fixture_users.add(user.id)
     return BootstrapResponse(user_id=user.id, email=user.email)
 
 

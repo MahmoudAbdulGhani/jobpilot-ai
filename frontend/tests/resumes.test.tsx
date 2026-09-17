@@ -1,3 +1,5 @@
+// Isolate the feature widget; entitlement enforcement has dedicated connected tests.
+vi.mock('../components/MeteredButton',()=>({MeteredButton:'button'}));
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResumesView } from '../components/Resumes';

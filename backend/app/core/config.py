@@ -1,4 +1,6 @@
 from functools import lru_cache
+from decimal import Decimal
+from app.schemas.plans import PlanLimits
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote_plus, urlsplit
@@ -112,6 +114,25 @@ class Settings(BaseSettings):
     JOBPILOT_AI_MAX_OUTPUT_TOKENS: int = 4_000
     JOBPILOT_AI_MAX_REQUESTS_PER_USER: int = 20
     JOBPILOT_AI_TEST_PROVIDER: bool = False
+
+    JOBPILOT_PLAN_LIMITS: dict[str, PlanLimits] = {
+        "free": PlanLimits(), "legacy": PlanLimits(),
+        "invited_beta": PlanLimits(total=100), "paid": PlanLimits(total=200)}
+    JOBPILOT_PLAN_ADMIN_EMAILS: Annotated[list[str], NoDecode] = []
+    JOBPILOT_PROPOSED_MONTHLY_PRICE_USD: Decimal = Field(default=Decimal("8.00"), ge=0, le=10000)
+
+    @field_validator("JOBPILOT_PLAN_LIMITS")
+    @classmethod
+    def plan_catalog(cls, value):
+        if set(value) != {"free", "legacy", "invited_beta", "paid"}:
+            raise ValueError("Configure exactly free, legacy, invited_beta and paid plan limits")
+        return value
+
+    @field_validator("JOBPILOT_PLAN_ADMIN_EMAILS", mode="before")
+    @classmethod
+    def plan_admins(cls, value):
+        values = value.split(",") if isinstance(value, str) else value
+        return [email.strip().lower() for email in values if email.strip()]
 
     # Packs have an independent, validated provider configuration.
     JOBPILOT_PACK_PROVIDER: Literal["openai"] = "openai"

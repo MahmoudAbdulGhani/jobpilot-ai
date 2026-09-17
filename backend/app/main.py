@@ -20,6 +20,7 @@ from app.api.routes.mailboxes import router as mailboxes_router, ScrubMailboxCal
 from app.api.routes.email_applications import router as email_applications_router
 from app.api.routes.interviews import router as interviews_router
 from app.api.routes.interview_voice import router as interview_voice_router
+from app.api.routes.usage import router as usage_router
 from app.api.routes.reminders import router as reminders_router
 from app.api.routes.replies import router as replies_router
 from app.api.routes.job_fit import router as job_fit_router
@@ -69,6 +70,7 @@ def create_application() -> FastAPI:
     application.include_router(reminders_router, prefix=settings.API_PREFIX)
     application.include_router(interviews_router, prefix=settings.API_PREFIX)
     application.include_router(interview_voice_router, prefix=settings.API_PREFIX)
+    application.include_router(usage_router, prefix=settings.API_PREFIX)
     application.add_middleware(ScrubMailboxCallback)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)

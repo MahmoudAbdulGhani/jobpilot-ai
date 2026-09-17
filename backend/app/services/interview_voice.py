@@ -77,7 +77,7 @@ def run(db, owner, session_id, request_key, question_number, consent, kind, sett
         raise PackError(429, "Speech request limit reached for this session. Use text practice.")
     timeout = settings.JOBPILOT_VOICE_TIMEOUT_SECONDS
     try:
-        token = ai_usage.reserve(db, owner, settings.model_copy(update={"JOBPILOT_AI_TIMEOUT_SECONDS": timeout}))
+        token = ai_usage.reserve(db, owner, settings.model_copy(update={"JOBPILOT_AI_TIMEOUT_SECONDS": timeout}), feature="transcription" if kind == "transcribe" else "speech")
     except ai_usage.AIUsageError as error:
         raise PackError(error.status_code, error.message) from None
     row = InterviewVoiceOperation(id=uuid.uuid4(), owner_id=owner, session_id=session_id,

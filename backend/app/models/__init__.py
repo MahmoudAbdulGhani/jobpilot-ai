@@ -18,6 +18,7 @@ from app.models.email_application import EmailApplication
 from app.models.mailbox_reply import ReplySync, MailboxReply
 
 __all__ = [
+    "AccountPlan", "UsageReservation", "PlanAudit",
     "InterviewVoiceOperation",
     "InterviewSession", "InterviewOperation",
     "ReplySync", "MailboxReply",
@@ -31,3 +32,4 @@ __all__ = [
     "JobFitAnalysis",
 ]
 from app.models.interview_voice import InterviewVoiceOperation
+from app.models.entitlements import AccountPlan, UsageReservation, PlanAudit

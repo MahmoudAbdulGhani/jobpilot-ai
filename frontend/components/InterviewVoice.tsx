@@ -1,4 +1,5 @@
 'use client';
+import {MeteredButton} from './MeteredButton';
 import {useEffect,useRef,useState} from 'react';
 import {api} from '../lib/api';
 import {startRecording,type Recording} from '../lib/voice-recorder';
@@ -64,11 +65,11 @@ function VoiceControls({id,question,disabled,onTranscript,onBusy}:Props){
       <button type="button" disabled={pending&&!acquiring} onClick={clear}>Cancel recording / clear draft</button></div>
       {recording&&<p role="status">● Recording microphone — stops at {options.max_seconds} seconds. Stop or cancel at any time.</p>}
       {clipUrl&&<audio aria-label="Recorded answer playback" ref={recordedAudio} src={clipUrl} controls onError={()=>setError('Recording playback failed. Cancel and use text, or explicitly record again.')}/>}
-      {clip&&<button type="button" disabled={!consent||pending||disabled} onClick={()=>void transcribe()}>Send recording for transcription</button>}
+      {clip&&<MeteredButton feature="transcription" type="button" disabled={!consent||pending||disabled} onClick={()=>void transcribe()}>Send recording for transcription</MeteredButton>}
       {hasTranscript&&<><label>Review transcript<textarea value={transcript} maxLength={3000} rows={5} onChange={e=>setTranscript(e.target.value)}/></label>
         <button type="button" disabled={disabled||pending||!transcript.trim()} onClick={()=>{onTranscript(transcript);setNotice('Reviewed transcript copied to your answer. Save or submit it using the text controls.');}}>Use reviewed transcript as answer draft</button></>}
       <p>Optional AI-generated speech. Visible question text remains available.</p>
-      {!speechUrl&&<button type="button" disabled={!consent||disabled||pending||recording} onClick={()=>void speak()}>Generate spoken question</button>}
+      {!speechUrl&&<MeteredButton feature="speech" type="button" disabled={!consent||disabled||pending||recording} onClick={()=>void speak()}>Generate spoken question</MeteredButton>}
       {speechUrl&&<><audio aria-label="AI-generated question playback" ref={spokenAudio} src={speechUrl} controls muted={muted} onError={()=>setError('Speech playback failed. Read the visible question; no new request was sent.')}/>
       <button type="button" onClick={()=>{if(spokenAudio.current){spokenAudio.current.pause();spokenAudio.current.currentTime=0;}}}>Stop spoken question</button>
       <label><input type="checkbox" checked={muted} onChange={e=>setMuted(e.target.checked)}/>Mute generated speech</label></>}

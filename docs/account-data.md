@@ -75,3 +75,11 @@ Migration `b9c0d1e2f3a4` adds export/receipt tables and ownership triggers witho
 13 frontend checks passed; TypeScript and targeted ESLint checks passed. The connected guarded browser scenario passed export download → explicit deletion → denied login → pending receipt. Completed/failed cleanup is verified through backend tests; the browser does not execute the destructive cleanup scheduler or live provider revocation. The development cleanup command was exercised only in dry-run mode, reporting zero eligible records. Migration downgrade/reset coverage was deliberately not run.
 
 Before/after read-only counts and full-row fingerprints cover the 24 preexisting tables in development and persistent test databases. Preexisting rows were unchanged; the Alembic revision advanced and two empty tables were added. The test throttle table gained one transient record from the first browser run; excluding that one row reproduces the exact original count/fingerprint of its four preexisting records. No preexisting throttle was removed. Browser-fixture cleanup now removes its own account-specific throttle keys. This residual operational hash follows the configured retention policy; it is not an existing account/file loss. Actual backup restoration, large-account load tests, production scheduler operation and live Google/private-storage deletion remain unverified.
+# Plan records
+
+Account exports include owner-scoped plan assignments, usage reservations and
+beta-grant decisions, excluding administrator identity and internal request keys
+and hashes. Account cleanup cascades these records and removes the account's
+administrative-authentication throttle. Another user's audit remains with its
+deleted administrator reference nulled. See [plans and entitlements](plans-and-entitlements.md)
+for metering retention; exhaustion does not prevent export or deletion.
