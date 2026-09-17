@@ -220,7 +220,7 @@ def test_nested_required_wire_fields_cannot_be_defaulted():
     assert GroqProfileOutput.model_validate(payload).to_domain().suggestions[0].value.title == "Engineer"
 
 
-@pytest.mark.parametrize("provider_name,task", [("openai", "profile"), ("groq", "fit"), ("groq", "pack")])
+@pytest.mark.parametrize("provider_name,task", [("openai", "profile"), ("groq", "fit"), ("openai", "pack")])
 def test_other_ai_capabilities_do_not_get_profile_reasoning_or_schema(provider_name, task):
     from app.services.ai_provider import OpenAIResponsesProvider, GroqResponsesProvider, ProviderFailure
     from openai import OpenAI
@@ -237,7 +237,7 @@ def test_other_ai_capabilities_do_not_get_profile_reasoning_or_schema(provider_n
     assert len(calls) == 1 and "reasoning" not in calls[0]
     assert calls[0]["max_output_tokens"] == 1500
     assert calls[0]["text"]["format"]["name"] != "GroqProfileOutput"
-    if provider_name == "openai":
+    if provider_name == "openai" and task == "profile":
         from pathlib import Path
         previous = json.loads((Path(__file__).resolve().parents[2] /
             "evidence/groq-profile-evidence-bounds-request.json").read_bytes())

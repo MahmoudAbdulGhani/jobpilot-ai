@@ -79,6 +79,22 @@ class PackProviderOutput(StrictModel):
         return values
 
 
+class GroqPackOutput(PackProviderOutput):
+    # Same pack contract, omitting only display-title schema annotations.
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs):
+        def visit(node):
+            if isinstance(node, dict):
+                # Property/definition names are data, not schema keywords.
+                return {key: ({name: visit(spec) for name, spec in value.items()}
+                              if key in ("properties", "$defs") else visit(value))
+                        for key, value in node.items() if key != "title"}
+            if isinstance(node, list):
+                return [visit(item) for item in node]
+            return node
+        return visit(super().model_json_schema(*args, **kwargs))
+
+
 class PackGenerate(StrictModel):
     resume_id: uuid.UUID
     idempotency_key: str = Field(

@@ -184,7 +184,7 @@ def prepared_request(task="profile"):
                 http_client=httpx.Client(transport=httpx.MockTransport(capture))) as client:
         try:
             provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL, timeout=60,
-                max_output_tokens=(evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS if task == "profile" else evaluation.GROQ_MAX_OUTPUT_TOKENS), client=evaluation.Meter(client))
+                max_output_tokens=(evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS if task == "profile" else evaluation.GROQ_PACK_MAX_OUTPUT_TOKENS), client=evaluation.Meter(client))
             evaluation.dispatch(provider, task, cases()[0]["source"])
         except ProviderFailure:
             pass
