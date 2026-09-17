@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -24,6 +25,10 @@ export default defineConfig({
         JOBPILOT_AI_ENABLED: 'true',
         JOBPILOT_AI_TEST_PROVIDER: 'true',
         JOBPILOT_DISCOVERY_TEST_PROVIDER: 'true',
+        JOBPILOT_MAILBOX_TEST_PROVIDER: 'true',
+        JOBPILOT_MAILBOX_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+        JOBPILOT_GOOGLE_REDIRECT_URI: 'http://localhost:8010/api/mailboxes/oauth/callback',
+        JOBPILOT_MAILBOX_SETTINGS_URL: 'http://localhost:3010/settings',
         CORS_ORIGINS: 'http://localhost:3010',
       },
       timeout: 120_000,

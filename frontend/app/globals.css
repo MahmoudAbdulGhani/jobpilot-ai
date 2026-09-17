@@ -65,4 +65,11 @@
 .primary-nav { overflow-x: auto; max-width: 100%; gap: 24px; }
 .primary-nav a { white-space: nowrap; }
 .account-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailbox-settings h1 { font-size: 3rem; }
+.mailbox-settings p { margin: 1rem 0; max-width: 80ch; }
+.mailbox-card { border: 1px solid var(--line); border-radius: 10px; padding: 1.5rem; margin: 1.5rem 0; background: #fffdf8; overflow-wrap: anywhere; }
+.mailbox-permissions { border: 1px solid var(--line); margin: 1rem 0; padding: 1rem; }
+.mailbox-permissions label { display: flex; gap: .75rem; margin: .75rem 0; align-items: center; }
+.mailbox-actions { display: flex; flex-wrap: wrap; gap: 1rem; }
+.mailbox-settings a { text-decoration: underline; }
 @media(min-width:881px) { .app-header { gap: 32px; } .primary-nav { min-width: 0; } }

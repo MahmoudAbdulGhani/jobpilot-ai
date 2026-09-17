@@ -462,6 +462,11 @@ Supported fields: `headline` (≤200), `target_roles` (≤10), `location` (≤30
 
 ## Roadmap
 
+Gmail connection and permission management are available under **Settings**.
+See [mailbox setup and security notes](docs/mailbox-connections.md) for Google
+configuration, consent/verification requirements and mocked verification.
+This foundation does not send messages or read inboxes.
+
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking
 3. CV integration with the portfolio

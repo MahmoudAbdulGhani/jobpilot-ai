@@ -1,0 +1,27 @@
+import {test,expect} from '@playwright/test';
+import {API,accessToken,bootstrapUser,cleanupUser,createdUsers,login} from './helpers';
+test.afterEach(async({request})=>{for(const email of createdUsers) await cleanupUser(request,email);createdUsers.length=0;});
+test('guarded mailbox connection, incremental permission and explicit revoke',async({page,request})=>{
+  const user=await bootstrapUser(request,'mailboxes');await login(page,user);
+  await page.getByRole('link',{name:'Settings',exact:true}).click();
+  await expect(page.getByText('Synthetic test provider — no live Google authorization.')).toBeVisible();
+  await page.getByRole('button',{name:'Connect Gmail',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'mailbox@example.com',exact:true})).toBeVisible();
+  await expect(page.getByText('Enabled capabilities: Identity only')).toBeVisible();
+  const card=page.getByRole('article',{name:'Mailbox mailbox@example.com'});
+  await card.getByLabel('Allow sending applications').check();
+  await card.getByRole('button',{name:'Update permissions / reconnect'}).click();
+  await expect(page.getByText('Enabled capabilities: Sending applications')).toBeVisible();
+  await page.getByRole('button',{name:'Check connection',exact:true}).click();
+  await expect(page.getByText('Status: connected')).toBeVisible();
+  const headers={Authorization:`Bearer ${await accessToken(request,user)}`};
+  const listing=await (await request.get(`${API}/mailboxes`,{headers})).json();
+  expect(listing.items).toHaveLength(1);expect(listing.items[0].capabilities).toEqual(['send']);
+  expect(JSON.stringify(listing)).not.toContain('synthetic-access');expect(JSON.stringify(listing)).not.toContain('credentials');
+  const browserStorage=await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage}}));
+  expect(JSON.stringify(browserStorage)).not.toContain('synthetic');
+  await card.getByRole('button',{name:'Disconnect',exact:true}).click();
+  await card.getByRole('button',{name:'Confirm disconnect and revoke'}).click();
+  await expect(page.getByText('Status: disconnected')).toBeVisible();
+  await page.reload();await expect(page.getByText('Status: disconnected')).toBeVisible();
+});

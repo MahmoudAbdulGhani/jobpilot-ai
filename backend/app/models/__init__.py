@@ -9,8 +9,10 @@ from app.models.resume import Resume
 from app.models.resume_extraction import ResumeExtraction
 from app.models.saved_job import SavedJob
 from app.models.user import User
+from app.models.mailbox import MailboxConnection, MailboxOAuthState
 
 __all__ = [
+    "MailboxConnection", "MailboxOAuthState",
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",
     "ApplicationRecord", "ApplicationStatusEvent",
     "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",

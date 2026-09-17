@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_GOOGLE_CLIENT_ID: str = Field(default="", repr=False, exclude=True)
+    JOBPILOT_GOOGLE_CLIENT_SECRET: str = Field(default="", repr=False, exclude=True)
+    JOBPILOT_GOOGLE_REDIRECT_URI: str = ""
+    JOBPILOT_MAILBOX_SETTINGS_URL: str = ""
+    JOBPILOT_MAILBOX_ENCRYPTION_KEY: str = Field(default="", repr=False, exclude=True)
+    JOBPILOT_MAILBOX_TEST_PROVIDER: bool = False
     JOBPILOT_DISCOVERY_ENABLED: bool = True
     JOBPILOT_DISCOVERY_TEST_PROVIDER: bool = False
     JOBPILOT_AI_PROVIDER: Literal["openai", "groq"] = "openai"
