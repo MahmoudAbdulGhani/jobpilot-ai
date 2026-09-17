@@ -7,7 +7,7 @@ from pydantic_core import ErrorType
 
 from app.schemas.application_packs import PackProviderOutput
 from app.schemas.job_fit import ProviderJobFitOutput
-from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput
+from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput, GroqProfileOutput
 
 
 def _schema_names():
@@ -23,7 +23,7 @@ def _schema_names():
             for value in node:
                 visit(value)
 
-    for model in (Response, ProviderSuggestionOutput, ProviderWireSuggestionOutput, ProviderJobFitOutput, PackProviderOutput):
+    for model in (Response, ProviderSuggestionOutput, ProviderWireSuggestionOutput, GroqProfileOutput, ProviderJobFitOutput, PackProviderOutput):
         models.add(model.__name__)
         visit(BaseModel.model_json_schema.__func__(model))
     return fields, models

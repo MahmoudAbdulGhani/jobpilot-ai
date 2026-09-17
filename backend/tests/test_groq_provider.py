@@ -513,7 +513,7 @@ def test_sdk_validation_report_is_safe_and_stops(tmp_path, mode, kind, path):
     else:
         assert row["usage"] is None  # Content parse errors hide response/usage.
     assert row["status_code"] == (200 if mode == "envelope" else None)
-    assert row["validation"]["model"] == ("Response" if mode == "envelope" else "ProviderWireSuggestionOutput")
+    assert row["validation"]["model"] == ("Response" if mode == "envelope" else "GroqProfileOutput")
     assert any(e["type"] == kind and e["location"] == path for e in row["validation"]["errors"])
     assert secret not in report_path.read_text()
     assert all(set(e) == {"type", "location", "location_truncated"} for e in row["validation"]["errors"])
@@ -579,7 +579,7 @@ def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, 
     assert dry["plan"]["max_requests"] == len(dry["plan"]["requests"]) == 1
     assert [c["id"] for c in dry["cases"]] == ["strong"]
     assert dry["plan"]["tokens_per_minute"] == 8000
-    assert dry["plan"]["max_output_tokens_per_request"] == 1500
+    assert dry["plan"]["max_output_tokens_per_request"] == evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS
     assert dry["plan"]["retries"] == 0
     calls, reservations = [], []
     reserve = evaluation.TokenScheduler.reserve
@@ -593,8 +593,8 @@ def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, 
 
     def parse(**kwargs):
         calls.append(kwargs)
-        assert kwargs["max_output_tokens"] == 1500
-        assert kwargs["text_format"].__name__ == "ProviderWireSuggestionOutput"
+        assert kwargs["max_output_tokens"] == evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS
+        assert kwargs["text_format"].__name__ == "GroqProfileOutput"
         if mode == "failure":
             kwargs["text_format"].model_validate_json('{')
         return SimpleNamespace(status="completed", usage=None, model="synthetic",

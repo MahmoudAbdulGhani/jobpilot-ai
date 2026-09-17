@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.evaluation.validation_diagnostics import validation_diagnostics
 from app.schemas.profile import CandidateProfileUpdate, CandidateProfileResponse
 from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput, _compact_wire_schema
-from app.services.ai_provider import GroqResponsesProvider
+from app.services.ai_provider import GroqResponsesProvider, OpenAIResponsesProvider
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +42,7 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
 
     with OpenAI(api_key="synthetic", max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
-        output = GroqResponsesProvider(api_key="unused", model="synthetic", timeout=3,
+        output = OpenAIResponsesProvider(api_key="unused", model="synthetic", timeout=3,
                               max_output_tokens=1500, client=client).suggest("Synthetic evidence")
     assert output.suggestions[0].value.title == "Engineer"
     assert "job_title" not in output.model_dump()["suggestions"][0]["value"]
@@ -295,21 +295,21 @@ def test_canonical_sdk_request_meets_documented_structural_requirements():
     with OpenAI(api_key="synthetic", base_url="https://api.groq.com/openai/v1", max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
         provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL,
-            timeout=60, max_output_tokens=1500, client=evaluation.Meter(client))
+            timeout=60, max_output_tokens=evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS, client=evaluation.Meter(client))
         with pytest.raises(ProviderFailure):
             provider.suggest(cases()[0]["source"]["cv_text"])
     assert len(captured) == 1  # HTTP 400 is never retried or sent to another provider.
     request = captured[0]
     assert str(request.url) == "https://api.groq.com/openai/v1/responses"
-    retained = Path(__file__).resolve().parents[2] / "evidence/groq-profile-request-offline-20260917.json"
-    assert request.content == retained.read_bytes()
+    retained = Path(__file__).resolve().parents[2] / "evidence/groq-profile-evidence-bounds-request.json"
+    assert json.loads(request.content)["input"] == json.loads(retained.read_bytes())["input"]
     plan = evaluation.build_plan("groq", pilot=True, task="profile")
     assert hashlib.sha256(request.content).hexdigest() == plan["requests"][0]["sha256"]
     payload = json.loads(request.content)
     assert payload["model"] == "openai/gpt-oss-20b"
     assert payload["store"] is False and "tools" not in payload and not payload.get("stream")
     assert payload["service_tier"] == "default"
-    assert payload["max_output_tokens"] == 1500
+    assert payload["max_output_tokens"] == evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS
     assert payload["text"]["format"]["strict"] is True
     schema = payload["text"]["format"]["schema"]
     objects, refs = [], []
@@ -331,4 +331,44 @@ def test_canonical_sdk_request_meets_documented_structural_requirements():
             for value in node:
                 visit(value)
     visit(schema)
-    assert len(objects) == 11 and len(refs) == 15
+    assert len(objects) == 11 and len(refs) == 16
+
+
+@pytest.mark.parametrize("evidence,outcome", [
+    ([{"quote": "Backend engineer"}], "accepted"),
+    ([], "parse_failure"),
+    ([{"quote": ""}], "parse_failure"),
+    ([{"quote": "Unsupported passage"}], "evidence_failure"),
+])
+def test_supported_headline_requires_nonempty_exact_source_quote(evidence, outcome):
+    from app.services.profile_suggestion_service import validate_output
+    source = "Backend engineer"
+    item = suggestion("headline", source)
+    item["evidence"] = evidence
+    payload = {"suggestions": [item]}
+    if outcome == "parse_failure":
+        with pytest.raises(ValidationError):
+            ProviderWireSuggestionOutput.model_validate(payload)
+        return
+    output = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
+    accepted, partial = validate_output(output, source)
+    if outcome == "accepted":
+        assert not partial and len(accepted) == 1
+        assert accepted[0]["value"] == source
+        assert accepted[0]["evidence"] == [{"quote": source}]
+    else:
+        assert accepted == [] and partial
+
+
+def test_next_diagnostic_only_closes_empty_string_schema_gap():
+    from pathlib import Path
+    evidence_dir = Path(__file__).resolve().parents[2] / "evidence"
+    original = json.loads((evidence_dir / "groq-profile-minimal-probe-request.json").read_bytes())
+    prepared = json.loads((evidence_dir / "groq-profile-nonempty-evidence-probe-request.json").read_bytes())
+    assert original["input"] == "Backend engineer"
+    assert "quote its exact supporting evidence" in original["instructions"]
+    old_evidence = original["text"]["format"]["schema"]["properties"]["evidence"]
+    assert old_evidence == {"type": "string"}  # No evidence list in the diagnostic.
+    new_evidence = prepared["text"]["format"]["schema"]["properties"]["evidence"]
+    assert new_evidence.pop("minLength") == 1
+    assert prepared == original  # No prompt/source/model change or injected evidence.

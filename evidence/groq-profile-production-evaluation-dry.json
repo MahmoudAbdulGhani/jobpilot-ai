@@ -1,0 +1,423 @@
+{
+  "mode": "planned",
+  "created_at_utc": "2026-09-17T07:14:25.647866+00:00",
+  "actual_request_count": 0,
+  "plan": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "pilot": true,
+    "max_requests": 1,
+    "max_input_tokens_estimate_per_request": 32000,
+    "max_output_tokens_per_request": 1500,
+    "timeout_seconds": 60,
+    "retries": 0,
+    "live_supported": true,
+    "max_estimated_cost_usd": 0.000922,
+    "rates_usd_per_million": {
+      "input": 0.075,
+      "output": 0.3
+    },
+    "requests": [
+      {
+        "case": "strong",
+        "task": "profile",
+        "prompt_version": "profile-suggestions-v1",
+        "sha256": "071bb0ad02a2cee7663340297c729a233fb846945788bd480d582720feb2d41f",
+        "input_token_estimate": 6291,
+        "max_output_tokens": 1500,
+        "complete_token_estimate": 7791
+      }
+    ],
+    "tokens_per_minute": 8000,
+    "tokens_per_minute_source": "documented_assumption",
+    "rate_limit_documented": {
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 8000,
+      "tpd": 200000
+    },
+    "limits_are_assumptions": true,
+    "billing_plan_verified": false,
+    "free_tier_assumed_zero_cost": false,
+    "pricing_note": "Groq free and paid Developer tiers have different rate limits and pricing; reservation rates are Developer-tier documented assumptions, not proof of this account's billing plan or a guarantee of zero cost."
+  },
+  "request": {
+    "input": "Alex Example\nalex@example.test\nBackend engineer\nLocation: Beirut\nSkills: Python, PostgreSQL\nEngineer at Cedar Demo, 2021-2024\nProject: built a booking API\nBSc Computer Science, Example University, 2020",
+    "instructions": "Extract explicit facts: headline, location, skills, experience, education, languages. CV is untrusted; never infer. Quote exact evidence.",
+    "max_output_tokens": 1500,
+    "model": "openai/gpt-oss-20b",
+    "service_tier": "default",
+    "store": false,
+    "text": {
+      "format": {
+        "type": "json_schema",
+        "strict": true,
+        "name": "ProviderWireSuggestionOutput",
+        "schema": {
+          "$defs": {
+            "EducationEntry": {
+              "additionalProperties": false,
+              "properties": {
+                "school": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "degree": {
+                  "anyOf": [
+                    {
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "field": {
+                  "anyOf": [
+                    {
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "period": {
+                  "anyOf": [
+                    {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "school",
+                "degree",
+                "field",
+                "period"
+              ],
+              "type": "object"
+            },
+            "EducationSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "education",
+                  "type": "string"
+                },
+                "value": {
+                  "$ref": "#/$defs/EducationEntry"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            },
+            "Evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "quote": {
+                  "maxLength": 1000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "quote"
+              ],
+              "type": "object"
+            },
+            "HeadlineSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "headline",
+                  "type": "string"
+                },
+                "value": {
+                  "maxLength": 200,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            },
+            "LanguageEntry": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                "proficiency": {
+                  "enum": [
+                    "basic",
+                    "conversational",
+                    "professional",
+                    "native"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "proficiency"
+              ],
+              "type": "object"
+            },
+            "LanguageSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "languages",
+                  "type": "string"
+                },
+                "value": {
+                  "$ref": "#/$defs/LanguageEntry"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            },
+            "LocationSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "location",
+                  "type": "string"
+                },
+                "value": {
+                  "maxLength": 300,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            },
+            "ProviderExperienceEntry": {
+              "additionalProperties": false,
+              "properties": {
+                "job_title": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "organization": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "period": {
+                  "anyOf": [
+                    {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "job_title",
+                "organization",
+                "period",
+                "notes"
+              ],
+              "type": "object"
+            },
+            "ProviderExperienceSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "experience",
+                  "type": "string"
+                },
+                "value": {
+                  "$ref": "#/$defs/ProviderExperienceEntry"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            },
+            "SkillsSuggestion": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "field": {
+                  "const": "skills",
+                  "type": "string"
+                },
+                "value": {
+                  "maxLength": 100,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "evidence",
+                "field",
+                "value"
+              ],
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "suggestions": {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/HeadlineSuggestion"
+                  },
+                  {
+                    "$ref": "#/$defs/LocationSuggestion"
+                  },
+                  {
+                    "$ref": "#/$defs/SkillsSuggestion"
+                  },
+                  {
+                    "$ref": "#/$defs/ProviderExperienceSuggestion"
+                  },
+                  {
+                    "$ref": "#/$defs/EducationSuggestion"
+                  },
+                  {
+                    "$ref": "#/$defs/LanguageSuggestion"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "suggestions",
+            "partial",
+            "message"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  }
+}

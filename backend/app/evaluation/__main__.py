@@ -48,6 +48,8 @@ GROQ_DOCUMENTED_LIMITS = {
 }
 GROQ_TPM_ENV = "JOBPILOT_GROQ_TPM"
 GROQ_MAX_OUTPUT_TOKENS = 1_500
+# Profile-only extraction evaluation; other capabilities retain their existing cap.
+GROQ_PROFILE_MAX_OUTPUT_TOKENS = 2_250
 # Reservation rates are Developer-tier documented pricing assumptions used
 # only to bound the pilot cost acknowledgment. The free tier does not imply
 # a zero-cost guarantee; the account's billing plan is not verified.
@@ -155,7 +157,8 @@ def build_plan(provider_name="openai", pilot=False, env=None, task=None):
     expected_requests = ((PILOT_REQUESTS if pilot else MAX_REQUESTS)
                          // len(TASKS) * len(selected_tasks))
     groq = provider_name == "groq"
-    output_cap = GROQ_MAX_OUTPUT_TOKENS if groq else MAX_OUTPUT_TOKENS
+    output_cap = (GROQ_PROFILE_MAX_OUTPUT_TOKENS if groq and pilot and task == "profile"
+                  else GROQ_MAX_OUTPUT_TOKENS if groq else MAX_OUTPUT_TOKENS)
     tokens_per_minute = None
     rate_limit_source = None
     if groq:

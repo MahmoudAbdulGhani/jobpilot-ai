@@ -1,0 +1,286 @@
+{
+  "mode": "live",
+  "plan": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "pilot": true,
+    "max_requests": 1,
+    "max_input_tokens_estimate_per_request": 32000,
+    "max_output_tokens_per_request": 2250,
+    "timeout_seconds": 60,
+    "retries": 0,
+    "live_supported": true,
+    "max_estimated_cost_usd": 0.001106,
+    "rates_usd_per_million": {
+      "input": 0.075,
+      "output": 0.3
+    },
+    "requests": [
+      {
+        "case": "strong",
+        "task": "profile",
+        "prompt_version": "profile-suggestions-v1",
+        "sha256": "05544f6228fa6f619a53e2d0ef882507b209bd554b42a67e33dbe557df33534f",
+        "input_token_estimate": 5743,
+        "max_output_tokens": 2250,
+        "complete_token_estimate": 7993
+      }
+    ],
+    "tokens_per_minute": 8000,
+    "tokens_per_minute_source": "documented_assumption",
+    "rate_limit_documented": {
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 8000,
+      "tpd": 200000
+    },
+    "limits_are_assumptions": true,
+    "billing_plan_verified": false,
+    "free_tier_assumed_zero_cost": false,
+    "pricing_note": "Groq free and paid Developer tiers have different rate limits and pricing; reservation rates are Developer-tier documented assumptions, not proof of this account's billing plan or a guarantee of zero cost."
+  },
+  "cases": [
+    {
+      "id": "strong",
+      "source": {
+        "cv_text": "Alex Example\nalex@example.test\nBackend engineer\nLocation: Beirut\nSkills: Python, PostgreSQL\nEngineer at Cedar Demo, 2021-2024\nProject: built a booking API\nBSc Computer Science, Example University, 2020",
+        "reviewed_at": "2026-09-15T00:00:00Z",
+        "profile_facts": [
+          {
+            "id": "fact-1",
+            "path": "headline",
+            "value": "Backend engineer"
+          },
+          {
+            "id": "fact-2",
+            "path": "skills[0]",
+            "value": "Python"
+          },
+          {
+            "id": "fact-3",
+            "path": "skills[1]",
+            "value": "PostgreSQL"
+          },
+          {
+            "id": "fact-4",
+            "path": "experience[0]",
+            "value": "Engineer at Cedar Demo, 2021-2024; built a booking API"
+          },
+          {
+            "id": "fact-5",
+            "path": "education[0]",
+            "value": "BSc Computer Science, Example University, 2020"
+          }
+        ],
+        "job": {
+          "title": "Backend Engineer",
+          "company": "Harbor Demo",
+          "location": "Remote",
+          "description": "Python and PostgreSQL required. Build booking APIs."
+        }
+      },
+      "expectation": "Support Python/PostgreSQL with saved skills. Emphasize booking API work; invent no metrics."
+    }
+  ],
+  "results": [
+    {
+      "case": "strong",
+      "task": "profile",
+      "status": "contract_pass",
+      "human_review": {
+        "reviewer": null,
+        "scores": null,
+        "notes": null
+      },
+      "checks": {
+        "partial": false,
+        "empty": false
+      },
+      "provider_status": "completed",
+      "status_code": null,
+      "returned_model": "openai/gpt-oss-20b",
+      "usage": {
+        "input_tokens": 1072,
+        "output_tokens": 232,
+        "reasoning_tokens": 14
+      },
+      "latency_seconds": 0.922,
+      "estimated_cost_usd": 0.00015,
+      "reserved_cost_usd": 0.001106,
+      "output_redacted": {
+        "supplied": true,
+        "text": "{\"suggestions\": [{\"id\": \"[redacted]\", \"evidence\": [{\"quote\": \"Backend engineer\"}], \"field\": \"headline\", \"value\": \"Backend engineer\"}, {\"id\": \"[redacted]\", \"evidence\": [{\"quote\": \"Location: Beirut\"}], \"field\": \"location\", \"value\": \"Beirut\"}, {\"id\": \"[redacted]\", \"evidence\": [{\"quote\": \"Skills: Python, PostgreSQL\"}], \"field\": \"skills\", \"value\": \"Python, PostgreSQL\"}, {\"id\": \"[redacted]\", \"evidence\": [{\"quote\": \"Engineer at Cedar Demo, [redacted]\"}], \"field\": \"experience\", \"value\": {\"[redacted]\": \"Engineer\", \"organization\": \"Cedar Demo\", \"period\": \"[redacted]\", \"notes\": \"Project: built a booking API\"}}, {\"id\": \"[redacted]\", \"evidence\": [{\"quote\": \"BSc Computer Science, [redacted] University, [redacted]\"}], \"field\": \"education\", \"value\": {\"school\": \"[redacted] University\", \"degree\": \"BSc Computer Science\", \"field\": null, \"period\": \"[redacted]\"}}], \"partial\": false, \"message\": null}",
+        "truncated": false
+      }
+    }
+  ],
+  "semantic_quality": "pending_human_review",
+  "attempted_requests": 1,
+  "known_usage_cost_usd": 0.00015,
+  "unknown_usage_requests": 0,
+  "reserved_cost_usd": 0.001106,
+  "created_at_utc": "2026-09-17T07:30:08.416058+00:00",
+  "updated_at_utc": "2026-09-17T07:30:09.397303+00:00",
+  "actual_request_count": 1,
+  "synthetic_diagnostic": {
+    "http_status": 200,
+    "usage": {
+      "input_tokens": 1072,
+      "output_tokens": 232,
+      "total_tokens": 1304,
+      "reasoning_tokens": 14
+    },
+    "provider_status": "completed",
+    "provider_explanation": {
+      "supplied": false,
+      "text": null,
+      "truncated": false
+    },
+    "failed_generation": {
+      "supplied": false,
+      "text": null,
+      "truncated": false
+    },
+    "returned_text": {
+      "supplied": true,
+      "text": "{\"partial\":false,\"message\":null,\"suggestions\":[{\"id\":\"[redacted]\",\"field\":\"headline\",\"value\":\"Backend engineer\",\"evidence\":[{\"quote\":\"Backend engineer\"}]},{\"id\":\"[redacted]\",\"field\":\"location\",\"value\":\"Beirut\",\"evidence\":[{\"quote\":\"Location: Beirut\"}]},{\"id\":\"[redacted]\",\"field\":\"skills\",\"value\":\"Python, PostgreSQL\",\"evidence\":[{\"quote\":\"Skills: Python, PostgreSQL\"}]},{\"id\":\"[redacted]\",\"field\":\"experience\",\"value\":{\"job_title\":\"Engineer\",\"organization\":\"Cedar Demo\",\"period\":\"[redacted]\",\"notes\":\"Project: built a booking API\"},\"evidence\":[{\"quote\":\"Engineer at Cedar Demo, [redacted]\"}]},{\"id\":\"[redacted]\",\"field\":\"education\",\"value\":{\"degree\":\"BSc Computer Science\",\"field\":null,\"period\":\"[redacted]\",\"school\":\"[redacted] University\"},\"evidence\":[{\"quote\":\"BSc Computer Science, [redacted] University, [redacted]\"}]}]}",
+      "truncated": false
+    }
+  },
+  "live_gate_restored_to_prior_state": true,
+  "command_exit_code": 0,
+  "actual_billed_cost_usd": null,
+  "offline_review": {
+    "wire_required_fields": "passed strict provider parsing",
+    "parsed_suggestions": 5,
+    "accepted_suggestions": 5,
+    "partial": false,
+    "accepted_source_checked_values": [
+      {
+        "field": "headline",
+        "value": {
+          "text": "Backend engineer",
+          "exact_source_substring": true
+        },
+        "evidence": [
+          {
+            "quote": {
+              "text": "Backend engineer",
+              "exact_source_substring": true
+            }
+          }
+        ]
+      },
+      {
+        "field": "location",
+        "value": {
+          "text": "Beirut",
+          "exact_source_substring": true
+        },
+        "evidence": [
+          {
+            "quote": {
+              "text": "Location: Beirut",
+              "exact_source_substring": true
+            }
+          }
+        ]
+      },
+      {
+        "field": "skills",
+        "value": {
+          "text": "Python, PostgreSQL",
+          "exact_source_substring": true
+        },
+        "evidence": [
+          {
+            "quote": {
+              "text": "Skills: Python, PostgreSQL",
+              "exact_source_substring": true
+            }
+          }
+        ]
+      },
+      {
+        "field": "experience",
+        "value": {
+          "title": {
+            "text": "Engineer",
+            "exact_source_substring": true
+          },
+          "organization": {
+            "text": "Cedar Demo",
+            "exact_source_substring": true
+          },
+          "period": {
+            "text": "2021-2024",
+            "exact_source_substring": true
+          },
+          "notes": {
+            "text": "Project: built a booking API",
+            "exact_source_substring": true
+          }
+        },
+        "evidence": [
+          {
+            "quote": {
+              "text": "Engineer at Cedar Demo, 2021-2024",
+              "exact_source_substring": true
+            }
+          }
+        ]
+      },
+      {
+        "field": "education",
+        "value": {
+          "school": {
+            "text": "Example University",
+            "exact_source_substring": true
+          },
+          "degree": {
+            "text": "BSc Computer Science",
+            "exact_source_substring": true
+          },
+          "field": null,
+          "period": {
+            "text": "2020",
+            "exact_source_substring": true
+          }
+        },
+        "evidence": [
+          {
+            "quote": {
+              "text": "BSc Computer Science, Example University, 2020",
+              "exact_source_substring": true
+            }
+          }
+        ]
+      }
+    ],
+    "applied_to_profile": false,
+    "assessment_at_utc": "2026-09-17T07:30:38.421258+00:00",
+    "factual_accuracy": "All non-null suggested values occur verbatim in the synthetic source. No invented value observed. Associating the adjacent project line with the employer is not explicitly established by the source.",
+    "evidence_validation": "All five suggestions have nonempty evidence with nonempty exact source quotes and passed the unchanged production validator.",
+    "evidence_support_limitation": "The experience quote supports role, employer and dates, but does not include the project note. The note appears separately in the source; quote matching alone does not prove full semantic support.",
+    "completeness": "All target source facts are represented: headline, location, Python, PostgreSQL, role, employer, dates, booking API project, degree, university and graduation year. No language fact is supplied, and no language suggestion was returned.",
+    "omitted_target_facts": [],
+    "representation_limitations": [
+      "Python and PostgreSQL are combined into one skills entry.",
+      "Education field is null; Computer Science is retained in the degree string."
+    ],
+    "out_of_scope_source_fields": [
+      "Synthetic name and email are outside this extraction contract."
+    ],
+    "integration_conclusion": "This single synthetic request passed the wire and local evidence contracts; it does not establish general profile integration correctness. Suggestions remain subject to explicit user review."
+  },
+  "cost_assessment": {
+    "input_reservation": 5743,
+    "completion_reservation": 2250,
+    "total_reservation": 7993,
+    "calculated_maximum_usd": "0.001105725",
+    "upward_rounded_maximum_usd": "0.001106",
+    "usage_based_estimate_usd": "0.000150",
+    "actual_billed_cost_usd": null,
+    "pricing_basis": "Configured assumed Developer-tier rates; account billing not verified."
+  }
+}

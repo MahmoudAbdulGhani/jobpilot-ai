@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.schemas.profile import (
     ENTRY_TITLE_MAX_LENGTH,
@@ -77,7 +77,10 @@ ProfileSuggestion = Union[
 
 
 def _compact_wire_schema(schema):
-    """Trim the provider-facing JSON schema to fit the documented token budget.
+    """Compact schema metadata with the existing local-only constraints below.
+
+    Evidence list and quote bounds must remain on the wire; do not remove them
+    to meet a budget. Local validation always rechecks returned evidence.
 
     Keeps the typed structure (value ``$ref``s, field enums, ``required``
     keys, ``additionalProperties``, evidence shape, max-length bounds on the
@@ -88,8 +91,7 @@ def _compact_wire_schema(schema):
       enforces them through the ``_SuggestionShape`` Field constraints),
     - ``suggestions.maxItems`` (the token cap does not guarantee this bound;
       enforced at application parse),
-    - ``Evidence.quote`` min/max-length keys and string-value ``minLength``
-      bounds (local parse re-validates the returned content against those same
+    - string-value ``minLength`` bounds (local parse re-validates the returned content against those same
       Field constraints; the wire schema keeps ``maxLength`` on values and
       ``type: string`` everywhere so the provider still sees a typed contract).
     """
@@ -115,11 +117,6 @@ def _compact_wire_schema(schema):
     sug = compacted.get("properties", {}).get("suggestions")
     if isinstance(sug, dict):
         sug.pop("maxItems", None)
-    ev_quote = (compacted.get("$defs", {}).get("Evidence", {})
-                .get("properties", {}).get("quote"))
-    if isinstance(ev_quote, dict):
-        ev_quote.pop("minLength", None)
-        ev_quote.pop("maxLength", None)
     # String value fields retain maxLength (provider guidance for bounded
     # content); minLength is local-parse only (keeps the wire schema smaller
     # while never weakening the application contract).
@@ -197,6 +194,68 @@ class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
         # the same call) is the compact form below; parsing of the returned
         # content always goes through this class's own pydantic validation.
         return _compact_wire_schema(super().model_json_schema(*args, **kwargs))
+
+
+def _groq_profile_schema(schema):
+    """Shorten reference labels and share identical evidence arrays, losing no constraints."""
+    from copy import deepcopy
+    schema = deepcopy(schema)
+    definitions = schema.get("$defs", {})
+    evidence_arrays = [node["properties"]["evidence"] for node in definitions.values()
+                       if "evidence" in node.get("properties", {})]
+    if evidence_arrays:
+        if any(value != evidence_arrays[0] for value in evidence_arrays):
+            raise ValueError("Cannot share evidence arrays with different constraints")
+        for node in definitions.values():
+            if "evidence" in node.get("properties", {}):
+                node["properties"]["evidence"] = {"$ref": "#/$defs/EvidenceList"}
+        definitions["EvidenceList"] = evidence_arrays[0]
+    names = {name: f"d{index}" for index, name in enumerate(definitions)}
+
+    def visit(node):
+        if isinstance(node, dict):
+            result = {}
+            for key, value in node.items():
+                if key == "$ref" and value.startswith("#/$defs/"):
+                    result[key] = "#/$defs/" + names[value.removeprefix("#/$defs/")]
+                elif key == "$defs":
+                    result[key] = {names[name]: visit(spec) for name, spec in value.items()}
+                else:
+                    result[key] = visit(value)
+            return result
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        return node
+    return visit(schema)
+
+
+class GroqProfileOutput(ProviderWireSuggestionOutput):
+    """Groq profile wire contract: absent required keys cannot become defaults."""
+    partial: bool
+    message: str | None = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def require_all_wire_fields(self):
+        errors = []
+
+        def visit(value, path=()):
+            if isinstance(value, BaseModel):
+                for name in type(value).model_fields:
+                    if name not in value.model_fields_set:
+                        errors.append({"type": "missing", "loc": path + (name,), "input": None})
+                    else:
+                        visit(getattr(value, name), path + (name,))
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    visit(item, path + (index,))
+        visit(self)
+        if errors:
+            raise ValidationError.from_exception_data(type(self).__name__, errors)
+        return self
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs):
+        return _groq_profile_schema(super().model_json_schema(*args, **kwargs))
 
 
 class SuggestionSetResponse(BaseModel):

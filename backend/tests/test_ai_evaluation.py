@@ -227,7 +227,7 @@ def test_schema_contract_violation_halts_eval_without_fallbacks():
     assert row["usage"]["input_tokens"] == 508
     assert row["usage"]["output_tokens"] == 1097
     assert row["status_code"] is None
-    assert row["validation"]["model"] == "ProviderWireSuggestionOutput"
+    assert row["validation"]["model"] == "GroqProfileOutput"
     assert row["validation"]["errors"]
     assert row["estimated_cost_usd"] == pytest.approx(0.0003672)
     assert report["stopped"] == \

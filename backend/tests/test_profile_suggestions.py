@@ -234,7 +234,7 @@ def test_suggestion_schema_constrains_per_field_values():
     assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
     assert defs["LocationSuggestion"]["properties"]["value"]["maxLength"] == 300
-    # The wire schema drops only tautological keys and duplicated id/quote/value
+    # The wire schema drops only tautological keys and duplicated id/value
     # min-bounds; the typed structure ("required", "$ref", enums, maxLength,
     # additionalProperties) stays so the provider still sees the contract.
     assert defs["HeadlineSuggestion"]["properties"]["id"] == {"type": "string"}
@@ -246,12 +246,12 @@ def test_suggestion_schema_constrains_per_field_values():
         assert "pattern" not in defs[branch]["properties"]["id"]
     assert "maxItems" not in schema["properties"]["suggestions"]
     assert "minLength" not in defs["HeadlineSuggestion"]["properties"]["value"]
-    assert defs["Evidence"]["properties"]["quote"] == {"type": "string"}
+    assert defs["Evidence"]["properties"]["quote"] == {"type": "string", "minLength": 1, "maxLength": 1000}
     assert defs["HeadlineSuggestion"]["properties"]["field"] == {"type": "string", "const": "headline"}
 
 
 def test_wire_compaction_never_weakens_local_parse():
-    """The wire schema may omit id bounds, value minLength and quote length
+    """The wire schema may omit id bounds and value minLength
     guidance, but the production parse enforces the same constraints locally."""
     quote_ok = [{"id": "exp-1", "field": "experience",
                  "value": {"title": "Engineer", "organization": "Cedar Demo", "period": "2021-2024"},
