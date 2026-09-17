@@ -71,16 +71,16 @@ export function Discovery() {
   }
   return <Shell><div className="collection-page discovery-page">
     <header><p className="eyebrow">Find your next opportunity</p><h1>Discover jobs</h1>
-      <p>Listings from Sweden’s public employment service, via <a href="https://jobsearch.api.jobtechdev.se/" target="_blank" rel="noopener noreferrer">JobTech JobSearch</a>. Mostly Swedish listings; coverage is not worldwide.</p>
+      <p>Listings from Sweden’s public employment service, via <a href="https://jobsearch.api.jobtechdev.se/" target="_blank" rel="noopener noreferrer">JobTech JobSearch</a>. Primarily Swedish coverage; this is not a worldwide job search.</p>
       <p>Review a listing before saving it. Discovery does not run AI or send applications.</p>
     </header>
     <form className="discovery-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void search(0, true); }}>
       <label>Keywords<input value={q} maxLength={200} disabled={!!busy} onChange={e => setQ(e.target.value)} placeholder="Job title, skills or employer" /></label>
       <label>Sort<select value={sort} disabled={!!busy} onChange={e => setSort(e.target.value)}><option value="relevance">Relevance</option><option value="pubdate-desc">Newest published</option></select></label>
-      <label className="discovery-checkbox"><input type="checkbox" checked={remote} disabled={!!busy} onChange={e => setRemote(e.target.checked)} />Likely remote (source phrase matching)</label>
+      <label className="discovery-checkbox"><input type="checkbox" checked={remote} disabled={!!busy} onChange={e => setRemote(e.target.checked)} />Approximate remote matches (source phrase matching)</label>
       <button className="primary-button" disabled={!!busy}>Search JobTech</button>
     </form>
-    <p className="privacy-caption">Remote matches need verification. Location, salary and workplace details may be missing. No salary or exact-location filter is offered in this version.</p>
+    <p className="privacy-caption">Remote matching is approximate and does not mean worldwide eligibility. Verify permitted work locations, residency and work-authorization requirements with the employer. Location, salary and workplace details may be missing. No salary or exact-location filter is offered in this version.</p>
     {busy && <p role="status">{busy}</p>}
     {error && <p className="notice form-error" role="alert">{error}</p>}
     {saved && <div role="status" className="notice"><p>{saved.duplicate ? 'Already saved. Your edits were preserved.' : 'Job imported. Review and edit it in your saved jobs.'}</p><Link href={`/jobs/${saved.id}`}>Open saved job</Link></div>}

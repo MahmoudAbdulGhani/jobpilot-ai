@@ -1,0 +1,82 @@
+{
+  "timestamp_utc": "20260917-091322Z",
+  "kind": "live read-only public-source smoke",
+  "maximum_requests": 4,
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://jobsearch.api.jobtechdev.se/swagger.json",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "https://jobsearch.api.jobtechdev.se/search?q=Python&sort=pubdate-desc&offset=0&limit=20&resdet=full",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "url": "https://jobsearch.api.jobtechdev.se/ad/31488391",
+      "status": 200
+    },
+    {
+      "method": "HEAD",
+      "url": "https://arbetsformedlingen.se/platsbanken/annonser/31488391",
+      "status": 200
+    }
+  ],
+  "retries": 0,
+  "credentials_used": false,
+  "database_operations": 0,
+  "contract": {
+    "version": "1.37.0",
+    "license": {
+      "name": "Ads are licensed under CC0",
+      "url": "https://creativecommons.org/publicdomain/zero/1.0/deed.sv"
+    },
+    "security": null,
+    "remote_parameter": "True will return ads which are likely to allow remote work based on phrase matching,\nFalse will only return ads that do not match these phrases\n "
+  },
+  "search": {
+    "query": "Python",
+    "limit": 20,
+    "parsed_count": 20,
+    "total": 724,
+    "all_source_links_canonical": true,
+    "sample": {
+      "external_id": "31488391",
+      "title": "DevOps Engineer",
+      "company": "Memlist AB",
+      "location": "Stockholm, Stockholms län, Sverige",
+      "source_url": "https://arbetsformedlingen.se/platsbanken/annonser/31488391",
+      "published_at": "2026-09-17T11:06:20",
+      "deadline": "2026-10-17T23:59:59",
+      "description_characters": 4848,
+      "salary_supplied": false,
+      "workplace_model": "Arbete på plats"
+    }
+  },
+  "preview": {
+    "parsed": true,
+    "same_identity": true,
+    "fields": {
+      "external_id": "31488391",
+      "title": "DevOps Engineer",
+      "company": "Memlist AB",
+      "location": "Stockholm, Stockholms län, Sverige",
+      "source_url": "https://arbetsformedlingen.se/platsbanken/annonser/31488391",
+      "published_at": "2026-09-17T11:06:20",
+      "deadline": "2026-10-17T23:59:59",
+      "description_characters": 4848,
+      "salary_supplied": false,
+      "workplace_model": "Arbete på plats"
+    }
+  },
+  "source_link_check": {
+    "method": "HEAD",
+    "status": 200,
+    "redirect_followed": false,
+    "body_retained": false
+  },
+  "outcome": "completed",
+  "actual_requests": 4
+}

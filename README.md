@@ -203,9 +203,12 @@ browser harness. The additive migration head is `a2b3c4d5e6f7`; on another check
 run `.venv/Scripts/python.exe -m alembic upgrade head` from `backend` before use.
 See [source contract, limits and verification](docs/job-discovery.md).
 
-For backend checks that must preserve existing test data, set
-`JOBPILOT_TEST_PRESERVE_DB=1` in that test process. This skips table truncation and
-legacy downgrade tests; ordinary test transactions still roll back their own work.
+The persistent backend/browser test fixture never truncates or migrates its
+database automatically; provision its schema explicitly before database tests.
+Downgrade/reset tests require a separate, explicitly confirmed disposable database
+and are skipped by default. `JOBPILOT_TEST_PRESERVE_DB=1` additionally vetoes
+destructive opt-in. See [test isolation and discovery closeout](docs/discovery-closeout.md)
+for the guards, skipped coverage and live JobTech smoke evidence.
 
 ### AI profile suggestions
 

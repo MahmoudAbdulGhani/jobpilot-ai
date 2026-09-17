@@ -10,6 +10,14 @@ const results = { items: [job], total: 1, offset: 0, next_offset: null };
 
 describe('reviewed discovery', () => {
   beforeEach(() => apiMock.mockReset());
+  it('discloses Swedish coverage and approximate remote matching without worldwide eligibility', () => {
+    render(<Discovery />);
+    expect(screen.getByText(/Primarily Swedish coverage/)).not.toBeNull();
+    expect(screen.getByLabelText('Approximate remote matches (source phrase matching)')).not.toBeNull();
+    expect(screen.getByText(/does not mean worldwide eligibility/)).not.toBeNull();
+    expect(screen.getByText(/residency and work-authorization requirements/)).not.toBeNull();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
   it('requires search, preview and explicit import and escapes source text', async () => {
     apiMock.mockResolvedValueOnce(results).mockResolvedValueOnce({job, preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'}).mockResolvedValueOnce({job:{id:'saved-1'},already_saved:false});
     const {container} = render(<Discovery />);

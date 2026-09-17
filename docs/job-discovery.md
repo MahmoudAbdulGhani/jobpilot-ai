@@ -2,6 +2,10 @@
 
 Implemented on `feat/job-discovery-reviewed-import`, starting from `a8cdd10`.
 
+This document records the initial `ee5cf56` milestone. The subsequent
+[closeout](discovery-closeout.md) replaces its preservation-mode setup with
+fail-closed disposable-database isolation and adds bounded live-source evidence.
+
 ## Source and permitted access
 
 Selected **JobTech JobSearch**, operated by Arbetsförmedlingen (Swedish Public

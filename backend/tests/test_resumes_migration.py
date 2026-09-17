@@ -1,6 +1,8 @@
 import uuid
 from pathlib import Path
 
+import pytest
+
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect, select
@@ -11,24 +13,25 @@ from app.models import CandidateProfile, User
 CANDIDATE_PROFILE_REVISION = "a1b2c3d4e5f6"
 REFRESH_TOKENS_REVISION = "299fe1eaa3f0"
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+pytestmark = pytest.mark.destructive_database
 
 
-def test_resume_migration_preserves_saved_data(test_engine):
+def test_resume_migration_preserves_saved_data(disposable_engine):
     config = Config(str(ALEMBIC_INI))
     config.set_main_option(
-        "sqlalchemy.url", test_engine.url.render_as_string(hide_password=False)
+        "sqlalchemy.url", disposable_engine.url.render_as_string(hide_password=False).replace("%", "%%")
     )
     email = f"resume-migration-{uuid.uuid4()}@jobpilot-test.com"
 
     try:
         command.downgrade(config, CANDIDATE_PROFILE_REVISION)
-        with Session(test_engine) as session:
+        with Session(disposable_engine) as session:
             existing_user = User(email=email, password_hash="existing-auth-hash")
             session.add(existing_user)
             session.commit()
             existing_user_id = existing_user.id
 
-        with Session(test_engine) as session:
+        with Session(disposable_engine) as session:
             existing_profile = CandidateProfile(
                 owner_id=existing_user_id,
                 headline="Retained Senior Backend Engineer",
@@ -38,7 +41,7 @@ def test_resume_migration_preserves_saved_data(test_engine):
 
         command.upgrade(config, "head")
 
-        inspector = inspect(test_engine)
+        inspector = inspect(disposable_engine)
         assert "resumes" in inspector.get_table_names()
         columns = {
             column["name"]: column for column in inspector.get_columns("resumes")
@@ -68,7 +71,7 @@ def test_resume_migration_preserves_saved_data(test_engine):
         assert foreign_key["referred_table"] == "users"
         assert foreign_key["options"]["ondelete"] == "CASCADE"
 
-        with Session(test_engine) as session:
+        with Session(disposable_engine) as session:
             retained_user = session.scalar(select(User).where(User.id == existing_user_id))
             retained_profile = session.scalar(
                 select(CandidateProfile).where(CandidateProfile.owner_id == existing_user_id)
@@ -81,22 +84,22 @@ def test_resume_migration_preserves_saved_data(test_engine):
             session.commit()
     finally:
         command.upgrade(config, "head")
-        with Session(test_engine) as session:
+        with Session(disposable_engine) as session:
             retained = session.scalar(select(User).where(User.email == email))
             if retained is not None:
                 session.delete(retained)
                 session.commit()
 
 
-def test_resume_migration_downgrades_through_prior_heads(test_engine):
+def test_resume_migration_downgrades_through_prior_heads(disposable_engine):
     """Downgrade straight to the pre-saved-jobs head and confirm no transient failures."""
     config = Config(str(ALEMBIC_INI))
     config.set_main_option(
-        "sqlalchemy.url", test_engine.url.render_as_string(hide_password=False)
+        "sqlalchemy.url", disposable_engine.url.render_as_string(hide_password=False).replace("%", "%%")
     )
     try:
         command.downgrade(config, REFRESH_TOKENS_REVISION)
-        tables = inspect(test_engine).get_table_names()
+        tables = inspect(disposable_engine).get_table_names()
         assert "resumes" not in tables
         assert "candidate_profiles" not in tables
         assert "saved_jobs" not in tables
@@ -104,5 +107,5 @@ def test_resume_migration_downgrades_through_prior_heads(test_engine):
     finally:
         command.upgrade(config, "head")
 
-    inspector = inspect(test_engine)
+    inspector = inspect(disposable_engine)
     assert "resumes" in inspector.get_table_names()
