@@ -1,0 +1,12 @@
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Shell } from '../../components/Shell';
+import { api } from '../../lib/api';
+type Progress={step:string;ai_enabled:boolean};
+const steps=[{id:'profile',name:'Build your profile',href:'/profile',description:'Add your career facts manually. AI is optional.'},{id:'cv',name:'Upload and review a CV',href:'/resumes',description:'Upload your document, review extracted text and confirm it.'},{id:'job',name:'Save your first job',href:'/jobs',description:'Save a job manually, or use Discover jobs.'}];
+export default function Page(){const [progress,setProgress]=useState<Progress|null>(null);const [error,setError]=useState('');const [pending,setPending]=useState(false);
+ useEffect(()=>{api<Progress>('/account/onboarding').then(setProgress).catch(()=>setError('Unable to load onboarding. Reload to retry.'))},[]);
+ async function advance(step:string){if(pending)return;setPending(true);setError('');try{setProgress(await api<Progress>('/account/onboarding',{method:'PATCH',body:JSON.stringify({step})},false))}catch{setError('Unable to save progress. Try again.')}finally{setPending(false)}}
+ return <Shell><section className="collection-page"><p className="eyebrow">Getting started</p><h1>Your private career journal</h1><p>All steps are optional. Progress is saved across sessions. Gmail and AI access are not required.</p>{error&&<p className="form-error" role="alert">{error}</p>}{!progress&&!error&&<p role="status">Loading your progress…</p>}{progress&&<>{!progress.ai_enabled&&<p className="notice">AI features are unavailable. Profiles, CV upload/review and saved jobs remain available.</p>}{progress.step==='done'?<><p role="status">Onboarding complete. You can revisit any step below.</p><Link href="/jobs">Go to saved jobs</Link></>:<p role="status">Current step: {steps.find(s=>s.id===progress.step)?.name}</p>}{steps.map((step,index)=><article className="mailbox-card" key={step.id}><h2>{step.name}</h2><p>{step.description}</p><Link href={step.href}>Open {step.id==='cv'?'CVs':step.id==='job'?'saved jobs':'profile'}</Link>{step.id==='job'&&<> · <Link href="/discover">Discover jobs</Link></>}{progress.step===step.id&&<div><button className="primary-button" disabled={pending} onClick={()=>advance(steps[index+1]?.id||'done')}>Mark step done</button><button className="secondary-button" disabled={pending} onClick={()=>advance(steps[index+1]?.id||'done')}>Skip for now</button></div>}</article>)}</>}</section></Shell>
+}

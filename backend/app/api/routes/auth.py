@@ -1,4 +1,5 @@
 import secrets
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -11,7 +12,7 @@ from app.core.security import (
     CSRF_HEADER_NAME,
     REFRESH_COOKIE_NAME,
     clear_auth_cookies,
-    decode_access_token,
+    decode_access_claims,
     generate_csrf_token,
     set_auth_cookies,
 )
@@ -40,7 +41,8 @@ def _require_bearer_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        user_id = decode_access_token(credentials.credentials)
+        claims = decode_access_claims(credentials.credentials)
+        user_id = uuid.UUID(claims["sub"])
     except Exception:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -48,7 +50,7 @@ def _require_bearer_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     user = db.get(User, user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.email_verified or claims.get("session_version", 0) != user.session_version:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=GENERIC_TOKEN_DETAIL)
     return user
 
@@ -130,5 +132,5 @@ def me(current_user: User = Depends(_require_bearer_user)) -> MeResponse:
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
-        is_active=current_user.is_active,
+        is_active=current_user.is_active, onboarding_step=current_user.onboarding_step,
     )

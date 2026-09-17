@@ -32,7 +32,7 @@ def dummy_verify() -> None:
     _password_hasher.verify("invalid-dummy-input", DUMMY_PASSWORD_HASH)
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
+def create_access_token(user_id: uuid.UUID, session_version: int = 0) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
@@ -40,12 +40,17 @@ def create_access_token(user_id: uuid.UUID) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         "type": "access",
+        "session_version": session_version,
         "iss": JWT_ISSUER,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> uuid.UUID:
+    return uuid.UUID(decode_access_claims(token)["sub"])
+
+
+def decode_access_claims(token: str) -> dict:
     settings = get_settings()
     payload = jwt.decode(
         token,
@@ -56,7 +61,7 @@ def decode_access_token(token: str) -> uuid.UUID:
     )
     if payload.get("type") != "access":
         raise jwt.InvalidTokenError("wrong token type")
-    return uuid.UUID(payload["sub"])
+    return payload
 
 
 def generate_refresh_token() -> str:

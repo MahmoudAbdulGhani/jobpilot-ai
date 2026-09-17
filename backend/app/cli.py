@@ -35,7 +35,33 @@ def main(argv: list[str] | None = None) -> int:
         "setup-owner",
         help="Create the single owner account (interactive, never echoed)",
     )
+    invite = subparsers.add_parser("invite", help="Create one email-bound invitation; local operator only")
+    invite.add_argument("--email", required=True)
+    invite.add_argument("--hours", type=int, default=24)
+    invite.add_argument("--output", required=True, help="New private file for the invitation (never stdout)")
     args = parser.parse_args(argv)
+
+    if args.command == "invite":
+        import os
+        from pydantic import TypeAdapter, EmailStr
+        from app.services.account_service import invitation
+        from app.core.config import get_settings
+        from urllib.parse import urlsplit
+        email = str(TypeAdapter(EmailStr).validate_python(args.email)).lower()
+        if not 1 <= args.hours <= 168:
+            parser.error("--hours must be between 1 and 168")
+        url = get_settings().JOBPILOT_ACCOUNT_APP_URL.rstrip("/")
+        parsed = urlsplit(url)
+        if not parsed.netloc or parsed.query or parsed.fragment or parsed.username or (parsed.scheme != "https" and not (get_settings().ENVIRONMENT != "production" and parsed.hostname in {"localhost", "127.0.0.1"} and parsed.scheme == "http")):
+            parser.error("Configure a trusted JOBPILOT_ACCOUNT_APP_URL first")
+        # O_EXCL prevents clobbering files. On Windows use an operator-private
+        # directory with an appropriate ACL; POSIX receives mode 0600.
+        with os.fdopen(os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as output:
+            with SessionLocal() as session:
+                raw = invitation(session, email, args.hours)
+            output.write(f"{url}/register#token={raw}\n")
+        print("Invitation written to the selected private file. Share securely; do not log it.")
+        return 0
 
     if args.command == "setup-owner":
         email, password = prompt_credentials()
@@ -45,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
                     session, email=email, password=password
                 )
             except OwnerAlreadyExistsError:
-                print("Refused: an owner account already exists. JobPilot is single-user.")
+                print("Refused: an owner account already exists.")
                 return 1
         print(f"Owner account created for {user.email}.")
         return 0

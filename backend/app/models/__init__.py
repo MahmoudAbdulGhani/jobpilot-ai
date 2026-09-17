@@ -1,4 +1,5 @@
 from app.models.interview import InterviewSession, InterviewOperation
+from app.models.account_token import AccountToken, AccountThrottle
 from app.models.base import Base
 from app.models.application_pack import AIUsage, ApplicationPack, ApplicationPackVersion, ApplicationPackOperation
 from app.models.application_tracking import ApplicationRecord, ApplicationStatusEvent

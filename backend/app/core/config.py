@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     AUTH_COOKIE_SECURE: bool = False
+    JOBPILOT_REGISTRATION: Literal["closed", "invite-only", "public"] = "invite-only"
+    JOBPILOT_ACCOUNT_APP_URL: str = ""
+    JOBPILOT_ACCOUNT_MAIL_TRANSPORT: Literal["disabled", "smtp", "test"] = "disabled"
+    JOBPILOT_ACCOUNT_MAIL_FROM: str = ""
+    JOBPILOT_ACCOUNT_SMTP_HOST: str = ""
+    JOBPILOT_ACCOUNT_SMTP_PORT: int = 465
+    JOBPILOT_ACCOUNT_SMTP_USER: str = Field(default="", repr=False)
+    JOBPILOT_ACCOUNT_SMTP_PASSWORD: str = Field(default="", repr=False, exclude=True)
 
     RESUME_STORAGE_DIR: str = str(BASE_DIR / "storage" / "resumes")
     RESUME_MAX_SIZE_MB: int = 10

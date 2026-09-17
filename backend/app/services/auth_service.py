@@ -57,14 +57,14 @@ def create_first_owner(session: Session, *, email: str, password: str) -> User:
 
 def authenticate(session: Session, *, email: str, password: str) -> User:
     user = session.scalar(
-        select(User).where(User.email == normalize_email(email))
+        select(User).where(User.email == normalize_email(email)).with_for_update()
     )
     if user is None:
         dummy_verify()
         raise InvalidCredentialsError
     if not verify_password(password, user.password_hash):
         raise InvalidCredentialsError
-    if not user.is_active:
+    if not user.is_active or not user.email_verified:
         raise InvalidCredentialsError
     return user
 
@@ -72,8 +72,8 @@ def authenticate(session: Session, *, email: str, password: str) -> User:
 def issue_session(session: Session, *, user: User) -> tuple[str, str]:
     refresh = generate_refresh_token()
     session.add(_refresh_row(user.id, refresh))
+    access = create_access_token(user.id, user.session_version)
     session.commit()
-    access = create_access_token(user.id)
     return access, refresh
 
 
@@ -81,14 +81,16 @@ def rotate_refresh(session: Session, *, presented: str) -> tuple[User, str, str]
     row = _lookup_active(session, presented)
     if row is None:
         raise InvalidRefreshTokenError
-    user = session.get(User, row.user_id)
-    if user is None or not user.is_active:
+    user = session.scalar(select(User).where(User.id == row.user_id).with_for_update())
+    session.refresh(row)
+    if user is None or not user.is_active or not user.email_verified or not row.is_active():
         raise InvalidRefreshTokenError
     row.revoked_at = datetime.now(timezone.utc)
     new_refresh = generate_refresh_token()
     session.add(_refresh_row(user.id, new_refresh))
+    access = create_access_token(user.id, user.session_version)
     session.commit()
-    return user, create_access_token(user.id), new_refresh
+    return user, access, new_refresh
 
 
 def revoke_presented(

@@ -21,6 +21,34 @@ from app.models import CandidateProfile, User
 from app.services import resume_service
 
 router = APIRouter(prefix="/e2e", tags=["test support"])
+_account_tickets = {}
+
+
+@router.post("/account-fixture")
+def account_fixture(db: Session = Depends(get_db)):
+    _require_e2e_test_mode(get_settings())
+    if get_settings().JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "test":
+        raise HTTPException(404, "Not found")
+    import secrets
+    from app.services.account_service import invitation
+    email = f"e2e-onboarding-{uuid.uuid4().hex}@example.com"
+    ticket = secrets.token_urlsafe(32)
+    _account_tickets[ticket] = email
+    return {"email": email, "ticket": ticket, "invitation": invitation(db, email, 1)}
+
+
+class AccountTestTicket(BaseModel):
+    ticket: str = Field(min_length=20, max_length=100)
+
+
+@router.post("/account-message")
+def account_message(body: AccountTestTicket):
+    _require_e2e_test_mode(get_settings())
+    from app.services.account_mail import test_messages
+    email = _account_tickets.get(body.ticket)
+    if get_settings().JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "test" or not email:
+        raise HTTPException(404, "Not found")
+    return {"text": test_messages.get(email, "")}
 
 GENERIC_NOT_FOUND = "Not found"
 

@@ -1,4 +1,8 @@
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
+from app.api.routes.accounts import router as accounts_router
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.application_packs import router as application_packs_router
@@ -30,6 +34,13 @@ def create_application() -> FastAPI:
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+    @application.exception_handler(RequestValidationError)
+    async def safe_account_validation(request, error):
+        if request.url.path.startswith(settings.API_PREFIX + "/account/"):
+            return JSONResponse(status_code=422, content={"detail": [
+                {"loc": list(item["loc"]), "msg": item["msg"], "type": item["type"]}
+                for item in error.errors()]})
+        return await request_validation_exception_handler(request, error)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -39,6 +50,7 @@ def create_application() -> FastAPI:
     )
     application.include_router(health_router, prefix=settings.API_PREFIX)
     application.include_router(auth_router, prefix=settings.API_PREFIX)
+    application.include_router(accounts_router, prefix=settings.API_PREFIX)
     application.include_router(jobs_router, prefix=settings.API_PREFIX)
     application.include_router(discovery_router, prefix=settings.API_PREFIX)
     application.include_router(mailboxes_router, prefix=settings.API_PREFIX)
