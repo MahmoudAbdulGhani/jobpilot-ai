@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { api } from '../lib/api';
+import { ReminderEditor } from './Reminders';
 import { ReplyTimeline } from './ReplyTimeline';
 import type { ApplicationEventList, ApplicationMethod, ApplicationRecord, ApplicationRecordList, ApplicationStatus } from '../lib/types';
 import type { ApplicationPack, PackPage, PackVersion, PackVersionList } from '../lib/application-packs';
@@ -19,7 +20,6 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
   const [status, setStatus] = useState<ApplicationStatus>('Applied');
   const [method, setMethod] = useState<ApplicationMethod>('email');
   const [notes, setNotes] = useState('');
-  const [followUp, setFollowUp] = useState('');
   const [submission, setSubmission] = useState(new Date().toISOString().slice(0, 10));
   const [packId, setPackId] = useState<string | null>(null);
   const [packVersion, setPackVersion] = useState<number | null>(null);
@@ -29,7 +29,6 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
     setStatus(item?.status ?? 'Applied');
     setMethod(item?.method ?? 'email');
     setNotes(item?.notes ?? '');
-    setFollowUp(item?.follow_up_date ? item.follow_up_date.slice(0, 10) : '');
     setSubmission(item?.submission_date ? item.submission_date.slice(0, 10) : new Date().toISOString().slice(0, 10));
     setPackId(item?.pack_id ?? null);
     setPackVersion(item?.pack_version ?? null);
@@ -99,7 +98,6 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
         submission_date: new Date(submission).toISOString(),
         method,
         notes: notes || null,
-        follow_up_date: followUp ? new Date(followUp).toISOString() : null,
         status,
         pack_id: packId ?? null,
         pack_version: packVersion ?? null,
@@ -150,8 +148,7 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
       <div className="tracking-grid">
         <label><span>Submission date</span><input type="date" value={submission} onChange={e => setSubmission(e.target.value)} required /></label>
         <label><span>Method</span><select value={method} onChange={e => setMethod(e.target.value as ApplicationMethod)}><option value="email">email</option><option value="employer_website">employer website</option><option value="linkedin_manual">LinkedIn manually</option><option value="other">other</option></select></label>
-        <label><span>Status</span><select value={status} onChange={e => setStatus(e.target.value as ApplicationStatus)}><option>Applied</option><option>Interview</option><option>Offer</option><option>Rejected</option><option>Withdrawn</option></select></label>
-        <label><span>Follow up date</span><input type="date" value={followUp} onChange={e => setFollowUp(e.target.value)} /></label>
+        <label><span>Status</span><select value={status} onChange={e => setStatus(e.target.value as ApplicationStatus)}><option>Applied</option><option>Interview</option><option>Offer</option><option>Accepted</option><option>Rejected</option><option>Withdrawn</option></select></label>
       </div>
       <div className="tracking-grid">
         <label><span>Approved pack</span><select value={packId ?? ''} onChange={e => { const id = e.target.value || null; setPackId(id); setPackVersion(null); }}>
@@ -174,6 +171,7 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
       <ul>{events.items.map(item => <li key={item.id}><span><CheckCircle size={18}/>{item.status}</span><time>{new Date(item.changed_at).toLocaleDateString()}</time></li>)}</ul>
     </section>}
     {selectedPack && !selectedPack.version && <p className="notice">No approved version selected yet.</p>}
+    {record && <ReminderEditor key={`${record.id}-${record.status}`} applicationId={record.id}/>}
     <ReplyTimeline jobId={job.id}/>
   </section>
 }

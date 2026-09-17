@@ -26,7 +26,7 @@ function ReplyCard({reply,jobs,reload}:{reply:Reply;jobs:Job[];reload:()=>Promis
   const [jobId,setJobId]=useState(reply.job_id||reply.suggested_job_id),[busy,setBusy]=useState(false),[error,setError]=useState(''),[discard,setDiscard]=useState(false);
   async function associate(target:string|null){
     setBusy(true);setError('');
-    try{await api(`/replies/${reply.id}/association`,{method:'PATCH',body:JSON.stringify({job_id:target,confirm:true})},false);await reload();}
+    try{await api(`/replies/${reply.id}/association`,{method:'PATCH',body:JSON.stringify({job_id:target,confirm:true})},false);await reload();window.dispatchEvent(new Event('replies-changed'));}
     catch(e){setError(e instanceof Error?e.message:'Correction failed.');}finally{setBusy(false);}
   }
   return <article className="mailbox-card" aria-label={`Reply from ${reply.sender}`}>
@@ -48,7 +48,7 @@ export function ReplyTimeline({jobId}:{jobId:string}) {
   useEffect(()=>{void load();},[load]);
   async function sync(attemptId:string){
     setBusy(attemptId);setError('');
-    try{await api(`/jobs/${jobId}/email-applications/${attemptId}/replies/sync`,{method:'POST',body:JSON.stringify({confirm:true})},false);await load();}
+    try{await api(`/jobs/${jobId}/email-applications/${attemptId}/replies/sync`,{method:'POST',body:JSON.stringify({confirm:true})},false);await load();window.dispatchEvent(new Event('replies-changed'));}
     catch(e){setError(e instanceof Error?e.message:'Sync interrupted. Refresh saved replies before trying another batch.');}
     finally{setBusy('');}
   }

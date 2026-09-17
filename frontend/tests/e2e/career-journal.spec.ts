@@ -98,10 +98,13 @@ test('connected application tracking record reload edit status history delete fl
   await page.getByLabel('Submission date').fill('2026-09-14');
   await page.getByLabel('Method').selectOption('email');
   await page.getByLabel('Status').selectOption('Applied');
-  await page.getByLabel('Follow up date').fill('2026-09-21');
   await page.getByLabel('Notes').fill('Follow up this week.');
   await page.getByRole('button', { name: 'Record application' }).click();
   await expect(page.getByText('Follow up this week.')).toBeVisible();
+  await page.getByLabel('Reminder date and time').fill('2026-09-21T10:00');
+  await page.getByLabel('Reminder timezone').fill('UTC');
+  await page.getByRole('button', { name: 'Create reminder', exact: true }).click();
+  await expect(page.locator('time[datetime^="2026-09-21"]')).toBeVisible();
 
   await page.reload();
   await expect(page.getByText('Status history')).toBeVisible();

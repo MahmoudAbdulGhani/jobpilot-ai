@@ -84,5 +84,13 @@
 .reply-timeline p { margin: 1rem 0; }
 .reply-timeline button { margin: .5rem .7rem .5rem 0; }
 .reply-timeline label { display: grid; gap: .5rem; }
+.reminders-page { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem; }
+.reminders-page h1 { font-size: 2.6rem; margin-bottom: 1rem; }
+.reminders-page > label, .reminder-editor label { display: grid; gap: .5rem; margin: 1rem 0; }
+.reminder-editor fieldset { display: flex; flex-wrap: wrap; gap: .75rem; border: 1px solid var(--line); border-radius: 8px; margin-top: 1rem; min-width: 0; }
+.reminder-editor label { flex: 1 1 220px; min-width: 0; }
+.reminder-editor input, .reminder-editor select, .reminders-page select { max-width: 100%; padding: .65rem; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; }
+.reminder-editor button { padding: .65rem 1rem; border: 1px solid var(--line); border-radius: 5px; }
+.reminder-editor select:focus-visible, .reminders-page select:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
 .reply-timeline select { padding: .7rem; max-width: 100%; font: inherit; }
 @media(min-width:881px) { .app-header { gap: 32px; } .primary-nav { min-width: 0; } }

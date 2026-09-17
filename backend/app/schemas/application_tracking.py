@@ -2,12 +2,12 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, field_validator
 
 ApplicationMethod = Literal["email",
                             "employer_website", "linkedin_manual", "other"]
 ApplicationStatus = Literal["Applied",
-                            "Interview", "Offer", "Rejected", "Withdrawn"]
+                            "Interview", "Offer", "Accepted", "Rejected", "Withdrawn"]
 
 
 class ApplicationCreate(BaseModel):
@@ -17,7 +17,7 @@ class ApplicationCreate(BaseModel):
     submission_date: datetime
     method: ApplicationMethod
     notes: str | None = None
-    follow_up_date: datetime | None = None
+    follow_up_date: AwareDatetime | None = None
     pack_id: uuid.UUID | None = None
     pack_version: int | None = None
     status: ApplicationStatus = "Applied"
@@ -37,7 +37,7 @@ class ApplicationUpdate(BaseModel):
     submission_date: datetime | None = None
     method: ApplicationMethod | None = None
     notes: str | None = None
-    follow_up_date: datetime | None = None
+    follow_up_date: AwareDatetime | None = None
     status: ApplicationStatus | None = None
     pack_id: uuid.UUID | None = None
     pack_version: int | None = None
@@ -54,6 +54,8 @@ class ApplicationResponse(BaseModel):
     notes: str | None
     status: str
     follow_up_date: datetime | None
+    reminder_status: str | None
+    reminder_timezone: str | None
     pack_id: uuid.UUID | None
     pack_version: int | None
     cv_snapshot: dict[str, Any] | None

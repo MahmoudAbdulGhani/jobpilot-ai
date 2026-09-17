@@ -470,6 +470,9 @@ Connecting does not send messages or read inboxes. The separate
 pack, recipient confirmation and explicit approval of the exact message and PDFs.
 Optional [reply tracking](docs/reply-synchronization.md) requires separate reading
 consent and a user-triggered bounded sync; connecting alone never scans mail.
+Owner-scoped [follow-up reminders](docs/follow-up-reminders.md) are available in-app,
+with timezone-aware scheduling and a review warning for confirmed replies. They
+never send messages or notify while the app is closed.
 
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking

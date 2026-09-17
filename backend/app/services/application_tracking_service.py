@@ -9,7 +9,7 @@ from app.models import ApplicationPack, ApplicationPackVersion, SavedJob
 from app.models.application_tracking import ApplicationRecord, ApplicationStatusEvent
 from app.services.application_pack_service import PackError
 
-STATUSES = {"Applied", "Interview", "Offer", "Rejected", "Withdrawn"}
+STATUSES = {"Applied", "Interview", "Offer", "Accepted", "Rejected", "Withdrawn"}
 METHODS = {"email", "employer_website", "linkedin_manual", "other"}
 
 
@@ -82,6 +82,9 @@ def create_application(db: Session, owner_id: uuid.UUID, payload) -> Application
     if payload.status not in STATUSES:
         raise PackError(422, "Unsupported application status")
 
+    if payload.follow_up_date is not None and payload.status in {"Rejected", "Withdrawn", "Accepted", "Offer"}:
+        raise PackError(409, "Record the application first, then explicitly confirm a reminder using its controls")
+
     pack, version = _validate_pack(
         db, owner_id, payload.job_id, payload.pack_id, payload.pack_version)
     snapshot = None
@@ -117,7 +120,16 @@ def create_application(db: Session, owner_id: uuid.UUID, payload) -> Application
 
 def update_application(db: Session, owner_id: uuid.UUID, job_id: uuid.UUID, app_id: uuid.UUID, payload) -> ApplicationRecord:
     app = get_record(db, owner_id, job_id, app_id)
+    app = db.scalar(select(ApplicationRecord).where(
+        ApplicationRecord.id == app.id, ApplicationRecord.owner_id == owner_id,
+        ApplicationRecord.job_id == job_id).with_for_update().execution_options(populate_existing=True))
+    if app is None:
+        raise PackError(404, "Application not found")
     updated = False
+    if payload.follow_up_date is not None and payload.follow_up_date != app.follow_up_date and (payload.status or app.status) in {"Rejected", "Withdrawn", "Accepted", "Offer"}:
+        raise PackError(409, "Use the reminder controls to explicitly confirm scheduling")
+    if payload.follow_up_date is not None and app.reminder_revision > 0 and payload.follow_up_date != app.follow_up_date:
+        raise PackError(409, "Use the reminder controls to change this follow-up")
     for field in ["submission_date", "method", "notes", "follow_up_date", "pack_id", "pack_version"]:
         if getattr(payload, field, None) is not None:
             setattr(app, field, getattr(payload, field))

@@ -58,11 +58,11 @@ export type JobFitAnalysis = {
 export type JobFitAnalysisList = {items:JobFitAnalysis[];total:number;page:number;page_size:number};
 
 export type ApplicationMethod = 'email'|'employer_website'|'linkedin_manual'|'other';
-export type ApplicationStatus = 'Applied'|'Interview'|'Offer'|'Rejected'|'Withdrawn';
+export type ApplicationStatus = 'Applied'|'Interview'|'Offer'|'Accepted'|'Rejected'|'Withdrawn';
 export type ApplicationRecord = {
   id: string; owner_id: string; job_id: string; submission_date: string;
   method: ApplicationMethod; notes: string | null; status: ApplicationStatus;
-  follow_up_date: string | null; pack_id: string | null; pack_version: number | null;
+  follow_up_date: string | null; reminder_status?: string | null; reminder_timezone?: string | null; pack_id: string | null; pack_version: number | null;
   cv_snapshot: unknown | null; cover_letter_snapshot: unknown | null;
   created_at: string; updated_at: string;
 };

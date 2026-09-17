@@ -23,6 +23,9 @@ class ApplicationRecord(Base, TimestampMixin):
     method: Mapped[str] = mapped_column(String(32))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16))
+    reminder_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reminder_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reminder_revision: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
     follow_up_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
     pack_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey(

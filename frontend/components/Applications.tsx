@@ -5,7 +5,7 @@ import { CalendarBlank, ArrowSquareOut } from '@phosphor-icons/react';
 import { api } from '../lib/api';
 import type { ApplicationRecordList, ApplicationStatus } from '../lib/types';
 
-const STATUSES: Array<ApplicationStatus | 'All'> = ['All', 'Applied', 'Interview', 'Offer', 'Rejected', 'Withdrawn'];
+const STATUSES: Array<ApplicationStatus | 'All'> = ['All', 'Applied', 'Interview', 'Offer', 'Accepted', 'Rejected', 'Withdrawn'];
 
 export function Applications() {
   const [data, setData] = useState<ApplicationRecordList | null>(null);
@@ -54,7 +54,7 @@ export function Applications() {
           <div className="application-row-top">
             <span className="status-badge status-${item.status}">{item.status}</span>
             <span className="method-label">{item.method}</span>
-            {item.follow_up_date && <span className="followup-label"><CalendarBlank size={16}/>Follow up {new Date(item.follow_up_date).toLocaleDateString()}</span>}
+            {item.follow_up_date && <span className="followup-label"><CalendarBlank size={16}/>{item.reminder_status === 'completed' || item.reminder_status === 'cancelled' ? `Reminder ${item.reminder_status}` : `Follow up ${new Date(item.follow_up_date).toLocaleString(undefined, {timeZone:item.reminder_timezone || 'UTC'})} (${item.reminder_timezone || 'UTC'})`}</span>}
           </div>
           <div className="application-row-meta">
             <span><strong>Submitted:</strong> {new Date(item.submission_date).toLocaleDateString()}</span>
