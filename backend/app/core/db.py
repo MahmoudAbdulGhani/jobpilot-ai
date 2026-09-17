@@ -20,6 +20,7 @@ settings = get_settings()
 
 engine = create_engine(
     settings.database_url,
+    hide_parameters=True,
     pool_pre_ping=True,
     connect_args={"connect_timeout": settings.POSTGRES_CONNECT_TIMEOUT},
 )

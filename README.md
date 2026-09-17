@@ -465,7 +465,9 @@ Supported fields: `headline` (≤200), `target_roles` (≤10), `location` (≤30
 Gmail connection and permission management are available under **Settings**.
 See [mailbox setup and security notes](docs/mailbox-connections.md) for Google
 configuration, consent/verification requirements and mocked verification.
-This foundation does not send messages or read inboxes.
+Connecting does not send messages or read inboxes. The separate
+[email application workflow](docs/email-applications.md) requires an approved
+pack, recipient confirmation and explicit approval of the exact message and PDFs.
 
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking

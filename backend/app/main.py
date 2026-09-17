@@ -10,6 +10,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.jobs import router as jobs_router
 from app.api.routes.discovery import router as discovery_router
 from app.api.routes.mailboxes import router as mailboxes_router, ScrubMailboxCallback, protect_access_logs
+from app.api.routes.email_applications import router as email_applications_router
 from app.api.routes.job_fit import router as job_fit_router
 from app.api.routes.profile import router as profile_router
 from app.api.routes.profile_suggestions import router as profile_suggestions_router
@@ -38,6 +39,7 @@ def create_application() -> FastAPI:
     application.include_router(jobs_router, prefix=settings.API_PREFIX)
     application.include_router(discovery_router, prefix=settings.API_PREFIX)
     application.include_router(mailboxes_router, prefix=settings.API_PREFIX)
+    application.include_router(email_applications_router, prefix=settings.API_PREFIX)
     application.add_middleware(ScrubMailboxCallback)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)

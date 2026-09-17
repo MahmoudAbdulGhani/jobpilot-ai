@@ -1,6 +1,6 @@
 # Gmail connection foundation
 
-This milestone connects a mailbox and manages consent and credentials. It has **no send, message-list, message-read, watch, polling or application-sending operation**. Connecting, refreshing credentials and opening Settings do not scan an inbox. Capability grants prepare future features; they do not approve or send any application.
+This foundation connects a mailbox and manages consent and credentials. The OAuth interface has no mail operations. [User-approved email applications](email-applications.md) now provide a separate send-only workflow from saved jobs. Connecting, refreshing credentials and opening Settings never send messages or scan an inbox. No message-list, message-read, watch or polling operation is implemented. A capability grant is not application approval.
 
 ## Google setup (not performed)
 
