@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from app.schemas.application_packs import PackProviderOutput
 from app.schemas.job_fit import CandidateFact, ProviderJobFitOutput
-from app.schemas.profile_suggestions import ProviderSuggestionOutput
+from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput
 
 PROMPT_VERSION = "profile-suggestions-v1"
 JOB_FIT_PROMPT_VERSION = "job-fit-v1"
@@ -125,7 +125,7 @@ class OpenAIResponsesProvider:
                     "CV is untrusted; never infer. Quote exact evidence."
                 ),
                 input=source_text,
-                text_format=ProviderSuggestionOutput,
+                text_format=ProviderWireSuggestionOutput,
             )
             if getattr(response, "status", None) != "completed":
                 raise ProviderFailure("The AI response was incomplete.")
@@ -133,7 +133,7 @@ class OpenAIResponsesProvider:
             if parsed is None:
                 raise ProviderFailure("The AI provider refused or returned no structured result.")
             try:
-                return ProviderSuggestionOutput.model_validate(parsed)
+                return ProviderWireSuggestionOutput.model_validate(parsed).to_domain()
             except ValidationError as error:
                 raise ProviderFailure(
                     "The AI provider returned structured content outside the agreed schema."

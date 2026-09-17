@@ -6,9 +6,9 @@ import logging
 import os
 from pathlib import Path
 import time
-from types import SimpleNamespace
 
 from dotenv import dotenv_values
+from openai import OpenAI as OfflineSerializationClient
 
 from app.evaluation.fixtures import cases
 from app.evaluation.validation_diagnostics import validation_diagnostics
@@ -96,28 +96,31 @@ def request_plan(task, source, provider_name="openai", max_output_tokens=None,
                  max_total_tokens=None):
     if max_output_tokens is None:
         max_output_tokens = MAX_OUTPUT_TOKENS
-    captured = {}
+    import httpx
 
-    def capture(**kwargs):
-        captured.update(kwargs)
+    encoded = b""
+
+    def capture(request):
+        nonlocal encoded
+        encoded = request.content
         raise Planned()
 
     provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
-    provider = provider_class(
-        api_key="offline-placeholder", model=GROQ_MODEL if provider_name == "groq" else MODEL, timeout=TIMEOUT,
-        max_output_tokens=max_output_tokens,
-        client=SimpleNamespace(responses=SimpleNamespace(parse=capture)),
-    )
-    try:
-        dispatch(provider, task, source)
-    except Planned:
-        pass
-    # Include schema/instructions, not just source text. UTF-8 byte count is a
-    # deliberately conservative token estimate, plus protocol/schema allowance.
-    serializable = {**captured,
-                    "text_format": captured["text_format"].model_json_schema()}
-    encoded = json.dumps(serializable, ensure_ascii=True,
-                         sort_keys=True).encode()
+    # Capture the final SDK serialization without any network transport.
+    with OfflineSerializationClient(api_key="offline-placeholder", max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(capture))) as client:
+        provider = provider_class(
+            api_key="offline-placeholder", model=GROQ_MODEL if provider_name == "groq" else MODEL,
+            timeout=TIMEOUT, max_output_tokens=max_output_tokens, client=Meter(client),
+        )
+        try:
+            dispatch(provider, task, source)
+        except ProviderFailure:
+            if not encoded:
+                raise
+    captured = json.loads(encoded)
+    # Conservative UTF-8 byte count of the final serialized request, plus
+    # protocol allowance; this is an estimate, not measured token usage.
     estimate = len(encoded) + 2048
     if estimate > MAX_INPUT_TOKENS_ESTIMATE:
         raise ValueError("Request exceeds the evaluation input allowance")

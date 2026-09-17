@@ -106,7 +106,7 @@ def fake_client(mode="success"):
         if mode == "invalid_evidence" and task == "profile":
             output.suggestions[0].evidence[0].quote = "not in CV"
         return SimpleNamespace(status="incomplete" if mode == "incomplete" else "completed",
-            output_parsed=None if mode == "refusal" else ({} if mode == "malformed" else output),
+            output_parsed=None if mode == "refusal" else ({} if mode == "malformed" else output.model_dump()),
             model="resolved-synthetic-model",
             usage=None if mode == "unknown_usage" else SimpleNamespace(
                 input_tokens=32001 if mode == "over_limit" else 100,
@@ -227,7 +227,7 @@ def test_schema_contract_violation_halts_eval_without_fallbacks():
     assert row["usage"]["input_tokens"] == 508
     assert row["usage"]["output_tokens"] == 1097
     assert row["status_code"] is None
-    assert row["validation"]["model"] == "ProviderSuggestionOutput"
+    assert row["validation"]["model"] == "ProviderWireSuggestionOutput"
     assert row["validation"]["errors"]
     assert row["estimated_cost_usd"] == pytest.approx(0.0003672)
     assert report["stopped"] == \

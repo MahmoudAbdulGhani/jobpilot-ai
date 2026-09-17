@@ -125,11 +125,12 @@ def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_use
 def test_openai_adapter_uses_responses_structured_output_without_storage():
     captured = {}
     parsed = ProviderSuggestionOutput(suggestions=[])
-    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: captured.update(kwargs) or SimpleNamespace(status="completed", output_parsed=parsed)))
+    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: captured.update(kwargs) or SimpleNamespace(status="completed", output_parsed=parsed.model_dump())))
     provider = OpenAIResponsesProvider(api_key="test", model="model", timeout=3, max_output_tokens=100, client=client)
     assert provider.suggest("synthetic CV") == parsed
     assert captured["store"] is False
-    assert captured["text_format"] is ProviderSuggestionOutput
+    from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
+    assert captured["text_format"] is ProviderWireSuggestionOutput
     assert "synthetic CV" == captured["input"]
 
 
@@ -214,19 +215,21 @@ def test_suggestion_schema_constrains_per_field_values():
     """The JSON schema sent to the provider must not have the value: Any
     loophole; each field's value is typed to the shape it will be validated
     against downstream."""
-    schema = ProviderSuggestionOutput.model_json_schema()
+    from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
+
+    schema = ProviderWireSuggestionOutput.model_json_schema()
     defs = schema["$defs"]
     suggestions = schema["properties"]["suggestions"]
     assert suggestions["type"] == "array"
     variants = {ref["$ref"].split("/")[-1] for ref in suggestions["items"]["anyOf"]}
     assert variants == {
         "HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion",
-        "ExperienceSuggestion", "EducationSuggestion", "LanguageSuggestion",
+        "ProviderExperienceSuggestion", "EducationSuggestion", "LanguageSuggestion",
     }
-    assert defs["ExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ExperienceEntry"}
+    assert defs["ProviderExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ProviderExperienceEntry"}
     assert defs["EducationSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/EducationEntry"}
     assert defs["LanguageSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/LanguageEntry"}
-    assert defs["ExperienceEntry"]["required"] == ["job_title", "organization"]
+    assert defs["ProviderExperienceEntry"]["required"] == ["job_title", "organization"]
     assert defs["HeadlineSuggestion"]["properties"]["value"]["type"] == "string"
     assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
@@ -235,7 +238,7 @@ def test_suggestion_schema_constrains_per_field_values():
     # min-bounds; the typed structure ("required", "$ref", enums, maxLength,
     # additionalProperties) stays so the provider still sees the contract.
     assert defs["HeadlineSuggestion"]["properties"]["id"] == {"type": "string"}
-    for branch in ("HeadlineSuggestion", "ExperienceSuggestion"):
+    for branch in ("HeadlineSuggestion", "ProviderExperienceSuggestion"):
         assert defs[branch]["additionalProperties"] is False
         assert set(defs[branch]["required"]) == {"id", "field", "value", "evidence"}
         assert "minLength" not in defs[branch]["properties"]["id"]

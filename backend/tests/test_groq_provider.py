@@ -261,7 +261,7 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
         output = evaluation.dispatch(synthetic, task, case["source"])
         return SimpleNamespace(
             status="completed",
-            output_parsed=output,
+            output_parsed=output.model_dump(),
             model="openai/gpt-oss-20b",
             usage=SimpleNamespace(
                 input_tokens=2000,
@@ -512,7 +512,7 @@ def test_sdk_validation_report_is_safe_and_stops(tmp_path, mode, kind, path):
     else:
         assert row["usage"] is None  # Content parse errors hide response/usage.
     assert row["status_code"] == (200 if mode == "envelope" else None)
-    assert row["validation"]["model"] == ("Response" if mode == "envelope" else "ProviderSuggestionOutput")
+    assert row["validation"]["model"] == ("Response" if mode == "envelope" else "ProviderWireSuggestionOutput")
     assert any(e["type"] == kind and e["location"] == path for e in row["validation"]["errors"])
     assert secret not in report_path.read_text()
     assert all(set(e) == {"type", "location", "location_truncated"} for e in row["validation"]["errors"])
@@ -592,11 +592,11 @@ def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, 
     def parse(**kwargs):
         calls.append(kwargs)
         assert kwargs["max_output_tokens"] == 1500
-        assert kwargs["text_format"].__name__ == "ProviderSuggestionOutput"
+        assert kwargs["text_format"].__name__ == "ProviderWireSuggestionOutput"
         if mode == "failure":
             kwargs["text_format"].model_validate_json('{')
         return SimpleNamespace(status="completed", usage=None, model="synthetic",
-                               output_parsed=DeterministicTestProvider().suggest(cases()[0]["source"]["cv_text"]))
+                               output_parsed=DeterministicTestProvider().suggest(cases()[0]["source"]["cv_text"]).model_dump())
 
     class Client:
         def __init__(self, **kwargs):

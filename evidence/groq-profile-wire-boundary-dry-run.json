@@ -1,0 +1,85 @@
+{
+  "mode": "planned",
+  "plan": {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "pilot": true,
+    "max_requests": 1,
+    "max_input_tokens_estimate_per_request": 32000,
+    "max_output_tokens_per_request": 1500,
+    "timeout_seconds": 60,
+    "retries": 0,
+    "live_supported": true,
+    "max_estimated_cost_usd": 0.000919,
+    "rates_usd_per_million": {
+      "input": 0.075,
+      "output": 0.3
+    },
+    "requests": [
+      {
+        "case": "strong",
+        "task": "profile",
+        "prompt_version": "profile-suggestions-v1",
+        "sha256": "31fa89cf50a1115b6850a69e7289b93d1ac8178bf82dc26e85d39a25410520de",
+        "input_token_estimate": 6260,
+        "max_output_tokens": 1500,
+        "complete_token_estimate": 7760
+      }
+    ],
+    "tokens_per_minute": 8000,
+    "tokens_per_minute_source": "documented_assumption",
+    "rate_limit_documented": {
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 8000,
+      "tpd": 200000
+    },
+    "limits_are_assumptions": true,
+    "billing_plan_verified": false,
+    "free_tier_assumed_zero_cost": false,
+    "pricing_note": "Groq free and paid Developer tiers have different rate limits and pricing; reservation rates are Developer-tier documented assumptions, not proof of this account's billing plan or a guarantee of zero cost."
+  },
+  "cases": [
+    {
+      "id": "strong",
+      "source": {
+        "cv_text": "Alex Example\nalex@example.test\nBackend engineer\nLocation: Beirut\nSkills: Python, PostgreSQL\nEngineer at Cedar Demo, 2021-2024\nProject: built a booking API\nBSc Computer Science, Example University, 2020",
+        "reviewed_at": "2026-09-15T00:00:00Z",
+        "profile_facts": [
+          {
+            "id": "fact-1",
+            "path": "headline",
+            "value": "Backend engineer"
+          },
+          {
+            "id": "fact-2",
+            "path": "skills[0]",
+            "value": "Python"
+          },
+          {
+            "id": "fact-3",
+            "path": "skills[1]",
+            "value": "PostgreSQL"
+          },
+          {
+            "id": "fact-4",
+            "path": "experience[0]",
+            "value": "Engineer at Cedar Demo, 2021-2024; built a booking API"
+          },
+          {
+            "id": "fact-5",
+            "path": "education[0]",
+            "value": "BSc Computer Science, Example University, 2020"
+          }
+        ],
+        "job": {
+          "title": "Backend Engineer",
+          "company": "Harbor Demo",
+          "location": "Remote",
+          "description": "Python and PostgreSQL required. Build booking APIs."
+        }
+      },
+      "expectation": "Support Python/PostgreSQL with saved skills. Emphasize booking API work; invent no metrics."
+    }
+  ]
+}

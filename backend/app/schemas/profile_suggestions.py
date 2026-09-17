@@ -6,6 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.profile import (
     ENTRY_TITLE_MAX_LENGTH,
+    ORGANIZATION_MAX_LENGTH,
+    PERIOD_MAX_LENGTH,
+    ENTRY_NOTES_MAX_LENGTH,
     EducationEntry,
     HEADLINE_MAX_LENGTH,
     LOCATION_MAX_LENGTH,
@@ -125,12 +128,11 @@ def _compact_wire_schema(schema):
                .get("properties", {}).get("value"))
         if isinstance(val, dict):
             val.pop("minLength", None)
-    # Entry string fields follow the same rule, except ExperienceEntry.title:
+    # Entry string fields follow the same rule, except ProviderExperienceEntry.job_title:
     # it stays fully typed (minLength 1) on the wire so the previously restored
     # title requirement is explicit. The other entry strings are max-bounded on
-    # the wire and min-bounded at application parse, keeping every Groq request
-    # within the documented token budget.
-    for entry, props in (("ExperienceEntry", ("organization",)),
+    # the wire and min-bounded at application parse, reducing the serialized request size.
+    for entry, props in (("ProviderExperienceEntry", ("organization",)),
                          ("EducationEntry", ("school",)),
                          ("LanguageEntry", ("name",))):
         node = (compacted.get("$defs", {}).get(entry, {})
@@ -139,28 +141,54 @@ def _compact_wire_schema(schema):
             spec = node.get(prop)
             if isinstance(spec, dict):
                 spec.pop("minLength", None)
-    # The provider rejects a property literally named ``title`` (the wire
-    # inliner collides it with the JSON-Schema annotation keyword), so the wire
-    # sends the same fully typed field under ``job_title``. Local parse accepts
-    # both names via ``ExperienceEntry``; serialization and every non-wire
-    # schema keep ``title``.
-    experience = compacted.get("$defs", {}).get("ExperienceEntry")
-    if isinstance(experience, dict):
-        props = experience.get("properties")
-        if isinstance(props, dict) and "title" in props:
-            props["job_title"] = props.pop("title")
-            required = experience.get("required")
-            if isinstance(required, list):
-                experience["required"] = [
-                    "job_title" if name == "title" else name for name in required]
     return compacted
 
 
 class ProviderSuggestionOutput(BaseModel):
+    """Validated suggestions using domain field names for storage and public APIs."""
+
     model_config = ConfigDict(extra="forbid")
     suggestions: list[ProfileSuggestion] = Field(max_length=50)
     partial: bool = False
     message: str | None = Field(default=None, max_length=500)
+
+
+class ProviderExperienceEntry(BaseModel):
+    # Unverified compatibility workaround: retained evidence does not establish
+    # that the property name title caused the provider's HTTP 400.
+    model_config = ConfigDict(extra="forbid")
+
+    job_title: str = Field(min_length=1, max_length=ENTRY_TITLE_MAX_LENGTH)
+    organization: str = Field(min_length=1, max_length=ORGANIZATION_MAX_LENGTH)
+    period: str | None = Field(default=None, max_length=PERIOD_MAX_LENGTH)
+    notes: str | None = Field(default=None, max_length=ENTRY_NOTES_MAX_LENGTH)
+
+    def to_domain(self) -> ExperienceEntry:
+        return ExperienceEntry(title=self.job_title, organization=self.organization,
+                               period=self.period, notes=self.notes)
+
+
+class ProviderExperienceSuggestion(_SuggestionShape):
+    field: Literal["experience"]
+    value: ProviderExperienceEntry
+
+
+class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
+    suggestions: list[Union[
+        HeadlineSuggestion, LocationSuggestion, SkillsSuggestion,
+        ProviderExperienceSuggestion, EducationSuggestion, LanguageSuggestion,
+    ]] = Field(max_length=50)
+
+    def to_domain(self) -> ProviderSuggestionOutput:
+        return ProviderSuggestionOutput(
+            suggestions=[
+                ExperienceSuggestion(id=item.id, field=item.field,
+                                     value=item.value.to_domain(), evidence=item.evidence)
+                if isinstance(item, ProviderExperienceSuggestion) else item
+                for item in self.suggestions
+            ],
+            partial=self.partial, message=self.message,
+        )
 
     @classmethod
     def model_json_schema(cls, *args, **kwargs):

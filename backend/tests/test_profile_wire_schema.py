@@ -1,15 +1,15 @@
-"""Offline regression for schema metadata colliding with an actual title field."""
+"""Offline regressions for the provider-only job_title compatibility workaround."""
 import json
 import socket
 
 import httpx
 import pytest
 from openai import OpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from app.evaluation.validation_diagnostics import validation_diagnostics
-from app.schemas.profile import CandidateProfileUpdate
-from app.schemas.profile_suggestions import ProviderSuggestionOutput, _compact_wire_schema
+from app.schemas.profile import CandidateProfileUpdate, CandidateProfileResponse
+from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput, _compact_wire_schema
 from app.services.ai_provider import GroqResponsesProvider
 
 
@@ -26,7 +26,7 @@ def suggestion(field, value):
             "evidence": [{"quote": "Synthetic evidence"}]}
 
 
-def test_serialized_sdk_schema_preserves_title_and_all_discriminators():
+def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
     captured = []
 
     def transport(request):
@@ -35,46 +35,46 @@ def test_serialized_sdk_schema_preserves_title_and_all_discriminators():
             "id": "offline", "object": "response", "created_at": 0,
             "model": "synthetic", "status": "completed",
             "output": [{"id": "msg", "type": "message", "role": "assistant", "status": "completed",
-                        "content": [{"type": "output_text", "annotations": [], "text": '{"suggestions":[]}'}]}],
+                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps({"suggestions": [suggestion("experience", {
+                            "job_title": "Engineer", "organization": "Synthetic",
+                            "period": None, "notes": None})], "partial": False, "message": None})}]}],
         })
 
     with OpenAI(api_key="synthetic", max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
-        GroqResponsesProvider(api_key="unused", model="synthetic", timeout=3,
+        output = GroqResponsesProvider(api_key="unused", model="synthetic", timeout=3,
                               max_output_tokens=1500, client=client).suggest("Synthetic evidence")
+    assert output.suggestions[0].value.title == "Engineer"
+    assert "job_title" not in output.model_dump()["suggestions"][0]["value"]
     assert len(captured) == 1
     assert captured[0]["strict"] is True
-    local = BaseModel.model_json_schema.__func__(ProviderSuggestionOutput)
-    compact = ProviderSuggestionOutput.model_json_schema()
+    local = ProviderSuggestionOutput.model_json_schema()
+    compact = ProviderWireSuggestionOutput.model_json_schema()
     wire = captured[0]["schema"]
-    variants = {"HeadlineSuggestion": "headline", "LocationSuggestion": "location",
-                "SkillsSuggestion": "skills", "ExperienceSuggestion": "experience",
-                "EducationSuggestion": "education", "LanguageSuggestion": "languages"}
-    for schema in (local, compact, wire):
-        assert schema["$defs"]["ExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ExperienceEntry"}
+    local_entry = local["$defs"]["ExperienceEntry"]
+    assert "title" in local_entry["required"]
+    assert "job_title" not in local_entry["properties"]
+    for schema in (compact, wire):
+        entry = schema["$defs"]["ProviderExperienceEntry"]
+        assert "job_title" in entry["required"]
+        assert "organization" in entry["required"]
+        assert "title" not in entry["properties"]
+        assert entry["properties"]["job_title"] == {
+            "type": "string", "minLength": 1, "maxLength": 200}
+        assert entry["additionalProperties"] is False
+        variants = {"HeadlineSuggestion": "headline", "LocationSuggestion": "location",
+                    "SkillsSuggestion": "skills", "ProviderExperienceSuggestion": "experience",
+                    "EducationSuggestion": "education", "LanguageSuggestion": "languages"}
+        assert schema["$defs"]["ProviderExperienceSuggestion"]["properties"]["value"] == {
+            "$ref": "#/$defs/ProviderExperienceEntry"}
         assert {item["$ref"] for item in schema["properties"]["suggestions"]["items"]["anyOf"]} == {
             f"#/$defs/{variant}" for variant in variants}
         for variant, literal in variants.items():
             branch = schema["$defs"][variant]
-            assert "field" in branch["required"]
+            assert set(branch["required"]) == {"id", "field", "value", "evidence"}
             assert branch["properties"]["field"]["const"] == literal
-    # The domain/local schema keeps the real ``title`` field name.
-    local_entry = local["$defs"]["ExperienceEntry"]
-    assert "title" in local_entry["required"]
-    assert local_entry["properties"]["title"]["type"] == "string"
-    assert local_entry["properties"]["title"]["minLength"] == 1
-    assert local_entry["properties"]["title"]["maxLength"] == 200
-    assert local_entry["additionalProperties"] is False
-    # The wire and its compact source rename only the colliding property to
-    # ``job_title`` (JSON-Schema annotation keyword collision on the provider).
-    for schema in (compact, wire):
-        entry = schema["$defs"]["ExperienceEntry"]
-        assert "job_title" in entry["required"]
-        assert "title" not in entry["properties"]
-        assert entry["properties"]["job_title"]["type"] == "string"
-        assert entry["properties"]["job_title"]["minLength"] == 1
-        assert entry["properties"]["job_title"]["maxLength"] == 200
-        assert entry["additionalProperties"] is False
+    assert set(wire["$defs"]["ProviderExperienceEntry"]["required"]) == {
+        "job_title", "organization", "period", "notes"}
 
 
 def test_compaction_preserves_names_that_match_metadata_keywords():
@@ -144,7 +144,7 @@ def test_wire_job_title_parses_and_round_trips_to_domain_title():
         "value": {"job_title": "Engineer", "organization": "Cedar Demo",
                   "period": None, "notes": None},
         "evidence": [{"quote": "Engineer at Cedar Demo"}]}]}
-    parsed = ProviderSuggestionOutput.model_validate(payload)
+    parsed = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
     value = parsed.suggestions[0].value
     assert value.title == "Engineer"
     # Serialization and downstream apply keep the domain ``title`` shape.
@@ -163,3 +163,116 @@ def test_client_selections_still_accept_the_domain_title_key():
         "evidence": [{"quote": "Engineer at Cedar Demo"}]}]}
     parsed = ProviderSuggestionOutput.model_validate(payload)
     assert parsed.suggestions[0].value.title == "Engineer"
+
+
+@pytest.mark.parametrize("model", [CandidateProfileUpdate, CandidateProfileResponse])
+@pytest.mark.parametrize("entry,valid", [
+    ({"title": "Engineer", "organization": "Synthetic"}, True),
+    ({"title": "x" * 200, "organization": "x" * 200,
+      "period": "x" * 100, "notes": "x" * 2000}, True),
+    ({"job_title": "Engineer", "organization": "Synthetic"}, False),
+    ({"title": "Engineer", "job_title": "Engineer", "organization": "Synthetic"}, False),
+    ({"organization": "Synthetic"}, False),
+    ({"title": "Engineer"}, False),
+    ({"title": "", "organization": "Synthetic"}, False),
+    ({"title": None, "organization": "Synthetic"}, False),
+    ({"title": "x" * 201, "organization": "Synthetic"}, False),
+    ({"title": "Engineer", "organization": ""}, False),
+    ({"title": "Engineer", "organization": "x" * 201}, False),
+    ({"title": "Engineer", "organization": "Synthetic", "period": "x" * 101}, False),
+    ({"title": "Engineer", "organization": "Synthetic", "notes": "x" * 2001}, False),
+])
+def test_public_profile_experience_contract_before_ed05a0f(model, entry, valid):
+    payload = {"experience": [entry]}
+    if model is CandidateProfileResponse:
+        payload.update({name: None for name in (
+            "headline", "target_roles", "location", "remote_preference", "work_authorization",
+            "skills", "education", "languages", "salary_preference")})
+        payload.update(id="00000000-0000-0000-0000-000000000001",
+                       owner_id="00000000-0000-0000-0000-000000000002",
+                       created_at="2026-09-17T00:00:00Z", updated_at="2026-09-17T00:00:00Z")
+    if valid:
+        dumped = model.model_validate(payload).model_dump(mode="json")
+        assert dumped["experience"][0]["title"] == entry["title"]
+        assert "job_title" not in dumped["experience"][0]
+    else:
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+    schema = model.model_json_schema()["$defs"]["ExperienceEntry"]
+    assert schema["required"] == ["title", "organization"]
+    assert "job_title" not in schema["properties"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"job_title": None}, {"job_title": ""}, {"job_title": "x" * 201},
+    {"organization": ""}, {"organization": "x" * 201},
+    {"period": "x" * 101}, {"notes": "x" * 2001}, {"title": "Engineer"},
+])
+def test_provider_entry_preserves_bounds(changes):
+    entry = {"job_title": "Engineer", "organization": "Synthetic", **changes}
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate({"suggestions": [suggestion("experience", entry)]})
+
+
+@pytest.mark.parametrize("missing", ["job_title", "organization"])
+def test_provider_entry_requires_fields(missing):
+    entry = {"job_title": "Engineer", "organization": "Synthetic"}
+    del entry[missing]
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate({"suggestions": [suggestion("experience", entry)]})
+
+
+@pytest.mark.parametrize("evidence", [[], [{"quote": ""}], [{"quote": "x" * 1001}]])
+def test_provider_evidence_constraints(evidence):
+    item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
+    item["evidence"] = evidence
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate({"suggestions": [item]})
+
+
+def test_mapped_experience_preserves_evidence_validation():
+    from app.services.profile_suggestion_service import validate_output
+    item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
+    output = ProviderWireSuggestionOutput.model_validate({"suggestions": [item]}).to_domain()
+    accepted, partial = validate_output(output, "Synthetic evidence")
+    assert not partial and accepted[0]["value"]["title"] == "Engineer"
+    assert validate_output(output, "Different source") == ([], True)
+
+
+def test_dry_run_estimates_actual_sdk_serialization():
+    import hashlib
+    from app.evaluation import __main__ as evaluation
+    from app.evaluation.fixtures import cases
+    captured = []
+
+    def transport(request):
+        captured.append(request.content)
+        return httpx.Response(200, json={
+            "id": "offline", "object": "response", "created_at": 0,
+            "model": evaluation.GROQ_MODEL, "status": "completed", "output": [],
+        })
+
+    source = cases()[0]["source"]
+    with OpenAI(api_key="synthetic", max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL,
+            timeout=evaluation.TIMEOUT, max_output_tokens=1500, client=evaluation.Meter(client))
+        from app.services.ai_provider import ProviderFailure
+        with pytest.raises(ProviderFailure):  # Empty mock result; request already serialized.
+            provider.suggest(source["cv_text"])
+    plan = evaluation.request_plan("profile", source, "groq", max_output_tokens=1500)
+    assert len(captured) == 1
+    assert json.loads(captured[0])["service_tier"] == "default"
+    assert plan["sha256"] == hashlib.sha256(captured[0]).hexdigest()
+    assert plan["input_token_estimate"] == len(captured[0]) + 2048
+    assert plan["complete_token_estimate"] == len(captured[0]) + 2048 + 1500
+
+
+def test_public_apply_selection_uses_title_only():
+    from app.schemas.profile_suggestions import ApplySuggestionRequest
+    item = suggestion("experience", {"title": "Engineer", "organization": "Synthetic"})
+    parsed = ApplySuggestionRequest.model_validate({"selections": [item]})
+    assert parsed.model_dump()["selections"][0]["value"]["title"] == "Engineer"
+    item["value"]["job_title"] = item["value"].pop("title")
+    with pytest.raises(ValidationError):
+        ApplySuggestionRequest.model_validate({"selections": [item]})
