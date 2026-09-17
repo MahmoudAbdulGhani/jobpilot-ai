@@ -1,0 +1,15 @@
+**/.env
+**/.env.*
+**/.venv
+**/node_modules
+**/__pycache__
+.git
+storage
+data
+uploads
+scripts
+backend/app/tools
+backend/tests
+frontend
+**/*.json
+**/*.md

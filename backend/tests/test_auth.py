@@ -496,10 +496,9 @@ class TestAuthenticationConfiguration:
         with pytest.raises(ValidationError):
             Settings(**self.base_kwargs(REFRESH_TOKEN_EXPIRE_DAYS=-1))
 
-    def test_valid_production_settings_accepted(self):
-        settings = Settings(**self.base_kwargs())
-        assert settings.AUTH_COOKIE_SECURE is True
-        assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 15
+    def test_secure_cookie_alone_is_not_complete_production_configuration(self):
+        with pytest.raises(ValidationError, match="trusted HTTPS application origin"):
+            Settings(**self.base_kwargs())
 
 
 class TestSecretSanitization:

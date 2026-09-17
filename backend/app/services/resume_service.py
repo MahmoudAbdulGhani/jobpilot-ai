@@ -33,7 +33,10 @@ def create_resume(
         session.commit()
     except Exception:
         session.rollback()
-        resume_store.delete_bytes(resume_id)
+        try:
+            resume_store.delete_bytes(resume_id)
+        except Exception:
+            pass  # Original failure survives; inventory identifies possible orphans.
         raise
     session.refresh(resume)
     return resume
@@ -94,10 +97,10 @@ def update_resume(
 
 def delete_resume(session: Session, *, resume: Resume) -> None:
     from app.services.profile_suggestion_service import mark_source_unavailable
+    resume_store.delete_bytes(resume.id)
     mark_source_unavailable(session, owner_id=resume.owner_id, resume_id=resume.id)
     session.delete(resume)
     session.commit()
-    resume_store.delete_bytes(resume.id)
 
 
 def delete_owned_resumes(
@@ -110,11 +113,10 @@ def delete_owned_resumes(
     )
     ids = [resume.id for resume in resumes]
     for resume in resumes:
+        resume_store.delete_bytes(resume.id)
         from app.services.profile_suggestion_service import mark_source_unavailable
         mark_source_unavailable(session, owner_id=owner_id, resume_id=resume.id)
         session.delete(resume)
     if resumes:
         session.commit()
-    for resume_id in ids:
-        resume_store.delete_bytes(resume_id)
     return ids

@@ -11,7 +11,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import _require_bearer_user
@@ -130,18 +130,18 @@ def list_resumes(db: Database, current_user: CurrentUser) -> ResumeListResponse:
 @router.get("/{resume_id}/download")
 def download_resume(
     resume_id: uuid.UUID, db: Database, current_user: CurrentUser
-) -> FileResponse:
+) -> Response:
     resume = _owned_resume_or_404(db, current_user, resume_id)
-    path = resume_store.file_path(resume.id)
-    if not path.is_file():
+    data = resume_store.read_bytes(resume.id)
+    if data is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=GENERIC_NOT_FOUND_DETAIL
         )
-    return FileResponse(
-        path=path,
+    return Response(
+        content=data,
         media_type=resume_validation.media_type(resume.file_extension),
-        filename=resume.original_filename,
         headers={
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(resume.original_filename, safe=''),
             "Cache-Control": "no-store, private",
             "Pragma": "no-cache",
             "X-Content-Type-Options": "nosniff",
@@ -183,7 +183,14 @@ def extract_resume_text(
     db.commit()
     db.refresh(extraction)
 
-    data = resume_store.read_bytes(resume.id)
+    try:
+        data = resume_store.read_bytes(resume.id)
+    except resume_store.StorageUnavailable:
+        extraction.status = "failed"
+        extraction.failure_code = "storage_unavailable"
+        extraction.failure_message = "Private document storage is unavailable."
+        db.commit()
+        raise
     if data is None:
         extraction.status = "failed"
         extraction.failure_code = "missing_source"

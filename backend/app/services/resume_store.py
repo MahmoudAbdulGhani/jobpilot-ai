@@ -9,6 +9,11 @@ import uuid
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.services.object_store import SupabaseStore, StorageUnavailable
+
+
+def object_store():
+    return SupabaseStore(get_settings()) if get_settings().JOBPILOT_STORAGE == "supabase" else None
 
 
 def storage_root() -> Path:
@@ -16,7 +21,7 @@ def storage_root() -> Path:
 
 
 def file_path(storage_id: uuid.UUID) -> Path:
-    return storage_root() / str(storage_id)
+    return storage_root() / str(uuid.UUID(str(storage_id)))
 
 
 def ensure_storage_dir() -> Path:
@@ -30,6 +35,11 @@ def ensure_storage_dir() -> Path:
 def write_bytes(storage_id: uuid.UUID, data: bytes) -> None:
     """Atomically write resume bytes. The destination is derived only from the
     server-generated storage id, never from submitted filenames."""
+    store = object_store()
+    if store:
+        store.write(storage_id, data)
+        return
+    storage_id = uuid.UUID(str(storage_id))
     root = ensure_storage_dir()
     destination = root / str(storage_id)
     temporary = root / f".{storage_id}.tmp-{uuid.uuid4().hex}"
@@ -46,13 +56,19 @@ def write_bytes(storage_id: uuid.UUID, data: bytes) -> None:
 
 
 def delete_bytes(storage_id: uuid.UUID) -> None:
+    store = object_store()
+    if store:
+        store.delete(storage_id)
+        return
     try:
         file_path(storage_id).unlink(missing_ok=True)
     except OSError:
-        pass
+        raise StorageUnavailable() from None
 
 
 def read_bytes(storage_id: uuid.UUID) -> bytes | None:
+    store = object_store()
+    if store: return store.read(storage_id)
     try:
         return file_path(storage_id).read_bytes()
     except FileNotFoundError:

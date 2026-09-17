@@ -36,7 +36,12 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(_database_url())
+    existing = config.attributes.get("connection")
+    if existing is not None:
+        context.configure(connection=existing, target_metadata=target_metadata, compare_type=True)
+        with context.begin_transaction(): context.run_migrations()
+        return
+    connectable = create_engine(_database_url(), hide_parameters=True)
 
     with connectable.connect() as connection:
         context.configure(

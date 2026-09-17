@@ -65,7 +65,12 @@ in command history):
 .\.venv\Scripts\python.exe -m app.cli setup-owner
 ```
 
-JobPilot is strictly single-user: once an owner exists, further `setup-owner` runs are refused.
+Once an owner exists, further `setup-owner` runs are refused. Registration defaults
+to invite-only; see [account onboarding](docs/accounts-onboarding.md).
+
+For production preparation, use the [deployment runbook and launch checklist](docs/deployment.md).
+Deployment templates have empty secrets. No deployment or live storage migration
+has been performed; development files must be inventoried and verified before cutover.
 
 - API: http://127.0.0.1:8000/api/health
 - Docs: http://127.0.0.1:8000/api/docs
