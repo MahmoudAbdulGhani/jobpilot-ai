@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     JOBPILOT_AI_MAX_REQUESTS_PER_USER: int = 20
     JOBPILOT_AI_TEST_PROVIDER: bool = False
 
+    # Packs have an independent, validated provider configuration.
+    JOBPILOT_PACK_PROVIDER: Literal["openai"] = "openai"
+    JOBPILOT_PACK_MODEL: str = "gpt-5-mini"
+    JOBPILOT_PACK_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "minimal"
+    JOBPILOT_PACK_MAX_OUTPUT_TOKENS: int = 4_000
+    JOBPILOT_PACK_TIMEOUT_SECONDS: int = 60
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key_strength(cls, value: str) -> str:
@@ -101,6 +108,8 @@ class Settings(BaseSettings):
         "JOBPILOT_AI_MAX_INPUT_CHARS",
         "JOBPILOT_AI_MAX_OUTPUT_TOKENS",
         "JOBPILOT_AI_MAX_REQUESTS_PER_USER",
+        "JOBPILOT_PACK_MAX_OUTPUT_TOKENS",
+        "JOBPILOT_PACK_TIMEOUT_SECONDS",
     )
     @classmethod
     def validate_extraction_limits(cls, value: int) -> int:

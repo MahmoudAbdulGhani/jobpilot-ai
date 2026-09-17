@@ -102,10 +102,13 @@ test('connected application-pack workflow verifies PDF and DOCX exports', async 
   await page.goto(`/jobs/${job.id}`);
   await expect(page.getByText('CV & cover letter packs')).toBeVisible();
 
+  await expect(page.getByText('the deterministic test provider', { exact: false })).toBeVisible();
   await page.selectOption('#pack-resume', resume.id);
   await page.getByRole('button', { name: /Generate application pack/ }).click();
   await expect(page.getByText('Both drafts are ready for your review.')).toBeVisible({ timeout: 15000 });
 
+  await expect(page.getByRole('button', { name: /CV PDF/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Cover letter DOCX/ })).toHaveCount(0);
   await page.getByLabel('Tailored CV block 1 text').fill('Connected CV text for application-pack export verification changed by review.');
   await page.getByRole('button', { name: /Save both drafts/ }).click();
   await expect(page.getByText('Both drafts saved. This version needs approval.')).toBeVisible();

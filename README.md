@@ -212,6 +212,36 @@ normal-server fallback. Live OpenAI behavior and suggestion quality remain
 unverified. After configuring the service, an owner may separately opt into a
 smoke test using a synthetic CV; never use a real CV for initial validation.
 
+### Application-pack configuration
+
+Packs use independent settings through the existing Responses adapter:
+
+| Setting | Default |
+| --- | --- |
+| `JOBPILOT_PACK_PROVIDER` | `openai` (only supported pack provider) |
+| `JOBPILOT_PACK_MODEL` | `gpt-5-mini` |
+| `JOBPILOT_PACK_REASONING_EFFORT` | `minimal` |
+| `JOBPILOT_PACK_MAX_OUTPUT_TOKENS` | `4000` |
+| `JOBPILOT_PACK_TIMEOUT_SECONDS` | `60` |
+
+Set credentials only in the ignored private `.env` using
+`JOBPILOT_OPENAI_API_KEY`; never commit the key. AI remains disabled until
+`JOBPILOT_AI_ENABLED=true`. Profile suggestions and job-fit analysis retain their
+existing `JOBPILOT_AI_*`/`JOBPILOT_GROQ_*` selection and limits. Pack configuration
+does not override them. Missing pack credentials fail closed, with zero SDK retries
+and no provider fallback. Input limits and the shared per-user request quota still
+apply; the in-flight quota lease covers the pack timeout.
+
+The review UI discloses the selected provider/model, also saved with each pack.
+Generation preserves required fields, structural-label normalization and strict
+source-evidence validation. Review and editing precede explicit approval; only an
+approved version can be exported as PDF or DOCX. Generation never sends an application.
+
+One strong synthetic OpenAI pack completed and passed evidence validation on
+2026-09-17. Its letter was readable but brief and generic, with limited tailoring;
+this does not establish general readiness. See the
+[checkpoint and integration verification](evidence/openai-pack-production-integration-20260917.md).
+
 #### Groq provider
 
 The backend also accepts `JOBPILOT_AI_PROVIDER="groq"` and reads
@@ -228,12 +258,13 @@ key placeholders only. Both AI keys are excluded from settings repr/serializatio
 Groq uses the existing OpenAI Python SDK against its fixed
 `https://api.groq.com/openai/v1` endpoint, as described by
 [Groq's Responses API documentation](https://console.groq.com/docs/responses-api).
-All three tasks reuse the same prompts, schemas, evidence validators, input/output
-bounds, timeouts, zero-retry policy, `store=false` and tool-free requests.
-Pack options report the selected provider/model and respect the same test-provider
-guards as generation. Groq documents Responses as beta; live compatibility and
-semantic quality are not yet verified. SDK serialization is tested with a mocked
-HTTP transport, including incomplete, refused, malformed and failed responses.
+Profile and job-fit selection uses these shared provider settings. The Groq
+adapter remains available for offline pack comparisons, while application packs
+use the independent OpenAI configuration above. Both adapters retain strict
+evidence validation, zero retries, `store=false` and tool-free requests. Groq
+documents Responses as beta; retained pack failures do not establish general
+compatibility or semantic quality. SDK serialization is tested with a mocked HTTP
+transport, including incomplete, refused, malformed and failed responses.
 
 For a Groq offline plan (from `backend`, with a new report filename):
 

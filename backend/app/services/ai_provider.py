@@ -108,13 +108,14 @@ class OpenAIResponsesProvider:
     pack_output_model = PackProviderOutput
 
     def _pack_request_options(self):
-        return {}
+        return {"reasoning": {"effort": self.pack_reasoning_effort}} if self.pack_reasoning_effort else {}
 
     def _profile_request_options(self):
         return {}
 
-    def __init__(self, *, api_key: str, model: str, timeout: int, max_output_tokens: int, client=None):
+    def __init__(self, *, api_key: str, model: str, timeout: int, max_output_tokens: int, client=None, pack_reasoning_effort=None):
         from openai import OpenAI
+        self.pack_reasoning_effort = pack_reasoning_effort
         self.model = model
         self.timeout = timeout
         self.max_output_tokens = max_output_tokens

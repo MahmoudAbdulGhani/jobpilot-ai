@@ -136,7 +136,7 @@ def test_actual_sdk_wire_contract_and_failures(task, mode):
                                          max_output_tokens=4000, client=client)
         if mode == "success":
             result = evaluation.dispatch(provider, task, source)
-            assert result == expected
+            assert result.model_dump() == expected.model_dump()
             evaluation.check_output(task, result, source)
         else:
             with pytest.raises(ProviderFailure) as caught:
@@ -151,21 +151,19 @@ def test_groq_dry_run_and_live_rejection(tmp_path, monkeypatch):
     monkeypatch.setattr("openai.OpenAI", lambda **
                         kwargs: pytest.fail("Dry run constructed a network client"))
     path = tmp_path / "groq.json"
-    assert evaluation.main(["--provider", "groq", "--output", str(path)]) == 0
-    report = json.loads(path.read_text())
-    assert report["plan"]["provider"] == "groq"
-    assert report["plan"]["model"] == "openai/gpt-oss-20b"
-    assert len(report["plan"]["requests"]) == 15
-    assert report["plan"]["max_estimated_cost_usd"] is None
-    assert "synthetic-secret" not in path.read_text()
+    # The v2 pack prompt makes the longer non-pilot fixtures exceed 8,000.
+    # Keep the hard gate; full-suite planning is no longer expected to fit.
+    with pytest.raises(SystemExit):
+        evaluation.main(["--provider", "groq", "--output", str(path)])
+    assert not path.exists()
     with pytest.raises(SystemExit):
         evaluation.main(["--provider", "groq", "--live", "--max-cost-usd",
                         "0.24", "--output", str(tmp_path / "live.json")])
     assert not (tmp_path / "live.json").exists()
 
 
-@pytest.mark.parametrize("enabled,expected_provider", [(True, "groq"), (False, "unknown")])
-def test_pack_options_show_groq_without_constructing_client(enabled, expected_provider, monkeypatch):
+@pytest.mark.parametrize("enabled,expected_provider", [(True, "openai"), (False, "unknown")])
+def test_pack_options_use_independent_openai_config_without_constructing_client(enabled, expected_provider, monkeypatch):
     from app.services import application_pack_service
     monkeypatch.setattr(application_pack_service,
                         "owned_job", lambda *args: None)
@@ -175,10 +173,10 @@ def test_pack_options_show_groq_without_constructing_client(enabled, expected_pr
     db = SimpleNamespace(scalar=lambda *args: next(scalars),
                          execute=lambda *args: SimpleNamespace(all=lambda: []))
     config = settings(JOBPILOT_AI_ENABLED=enabled,
-                      JOBPILOT_AI_PROVIDER="groq", JOBPILOT_GROQ_API_KEY="synthetic")
+                      JOBPILOT_AI_PROVIDER="groq", JOBPILOT_GROQ_API_KEY="synthetic", JOBPILOT_OPENAI_API_KEY="synthetic")
     result = application_pack_service.options(db, "owner", "job", config)
     assert result["provider"] == expected_provider
-    assert result["model"] == "openai/gpt-oss-20b"
+    assert result["model"] == "gpt-5-mini"
     assert result["available"] is enabled
     assert "synthetic" not in json.dumps(result)
 
@@ -546,13 +544,15 @@ def test_error_body_tags_cannot_leak_short_credentials():
 @pytest.mark.parametrize("pilot", [True, False])
 @pytest.mark.parametrize("task", [None, "profile", "fit", "pack"])
 def test_task_selection_precedes_estimation(pilot, task, monkeypatch):
-    original = evaluation.request_plan
     estimated_tasks = []
 
     def estimate(selected_task, *args, **kwargs):
         estimated_tasks.append(selected_task)
         assert task is None or selected_task == task
-        return original(selected_task, *args, **kwargs)
+        # This test isolates selection order; budget/SDK checks have dedicated tests.
+        return {"sha256": "synthetic", "input_token_estimate": 100,
+                "max_output_tokens": kwargs["max_output_tokens"],
+                "complete_token_estimate": 100 + kwargs["max_output_tokens"]}
 
     monkeypatch.setattr(evaluation, "request_plan", estimate)
     plan = evaluation.build_plan("groq", pilot=pilot, task=task)

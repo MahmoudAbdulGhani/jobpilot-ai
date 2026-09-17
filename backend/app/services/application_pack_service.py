@@ -22,10 +22,10 @@ from app.schemas.application_packs import (
 )
 from app.schemas.profile import CandidateProfileUpdate
 from app.services import ai_usage
-from app.services.ai_provider import ProviderFailure
-from app.services.profile_suggestion_service import SuggestionError, provider_for, provider_configuration
+from app.services.ai_provider import ProviderFailure, OpenAIResponsesProvider, DeterministicTestProvider, PACK_PROMPT_VERSION
+from app.services.profile_suggestion_service import SuggestionError, provider_configuration as shared_provider_configuration
 
-PROMPT_VERSION = "application-pack-v1"
+PROMPT_VERSION = PACK_PROMPT_VERSION
 MAX_VERSIONS = 100
 
 
@@ -33,6 +33,26 @@ class PackError(Exception):
     def __init__(self, status_code, message):
         self.status_code, self.message = status_code, message
         super().__init__(message)
+
+
+def pack_provider_configuration(settings):
+    # Reuse enablement, credential and guarded-test gates; never fall back to
+    # the profile/fit provider when pack credentials are absent.
+    return shared_provider_configuration(settings.model_copy(update={
+        "JOBPILOT_AI_PROVIDER": settings.JOBPILOT_PACK_PROVIDER,
+        "JOBPILOT_AI_MODEL": settings.JOBPILOT_PACK_MODEL,
+    }))
+
+
+def pack_provider_for(settings):
+    name, model, key = pack_provider_configuration(settings)
+    if name == "deterministic-test":
+        return DeterministicTestProvider()
+    return OpenAIResponsesProvider(
+        api_key=key, model=model, timeout=settings.JOBPILOT_PACK_TIMEOUT_SECONDS,
+        max_output_tokens=settings.JOBPILOT_PACK_MAX_OUTPUT_TOKENS,
+        pack_reasoning_effort=settings.JOBPILOT_PACK_REASONING_EFFORT,
+    )
 
 
 def digest(value):
@@ -203,7 +223,7 @@ def generate(db, owner_id, job_id, body, settings):
                 409, "This request key was used with different sources. Start a new generation.")
         return existing
     try:
-        provider = provider_for(settings)
+        provider = pack_provider_for(settings)
     except SuggestionError as error:
         raise PackError(error.status_code, error.message) from None
     request_source = {
@@ -212,7 +232,9 @@ def generate(db, owner_id, job_id, body, settings):
         raise PackError(
             413, "The job, profile and CV text exceed the AI input limit. Use a shorter confirmed CV.")
     try:
-        token = ai_usage.reserve(db, owner_id, settings)
+        token = ai_usage.reserve(db, owner_id, settings.model_copy(update={
+            "JOBPILOT_AI_TIMEOUT_SECONDS": settings.JOBPILOT_PACK_TIMEOUT_SECONDS,
+        }))
     except ai_usage.AIUsageError as error:
         raise PackError(error.status_code, error.message) from None
     now = datetime.now(timezone.utc)
@@ -224,13 +246,13 @@ def generate(db, owner_id, job_id, body, settings):
                                snapshot["extraction_id"]),
                            source_snapshot=snapshot, source_hash=hashed, idempotency_key=body.idempotency_key,
                            status="generating", current_version=0, generated=None, review_notes=[], provider=provider.name,
-                           model=provider.model, prompt_version=PROMPT_VERSION, deadline=now + timedelta(seconds=settings.JOBPILOT_AI_TIMEOUT_SECONDS + 10))
+                           model=provider.model, prompt_version=PROMPT_VERSION, deadline=now + timedelta(seconds=settings.JOBPILOT_PACK_TIMEOUT_SECONDS + 10))
     db.add(pack)
     db.commit()
     # No refresh or attribute reads here: that would start a new transaction.
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
-            request_source), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
+            request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
         output = validate_generated(result, snapshot)
         failure = None
     except PackError as error:
@@ -319,9 +341,9 @@ def edit_or_approve(db, owner_id, job_id, pack_id, body, approve=False):
 
 def options(db, owner_id, job_id, settings):
     owned_job(db, owner_id, job_id)
-    model = settings.JOBPILOT_GROQ_MODEL if settings.JOBPILOT_AI_PROVIDER == "groq" else settings.JOBPILOT_AI_MODEL
+    model = settings.JOBPILOT_PACK_MODEL
     try:
-        provider, model, _ = provider_configuration(settings)
+        provider, model, _ = pack_provider_configuration(settings)
         available = True
     except SuggestionError:
         provider, available = "unknown", False
