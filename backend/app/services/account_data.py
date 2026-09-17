@@ -7,9 +7,9 @@ import zipfile
 from datetime import timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import Text, delete, func, select, text, update
+from sqlalchemy import Text, case, delete, func, select, text, update
 from app.models import (Base, User, Resume, RefreshToken, AccountToken, AccountThrottle,
-    MailboxOAuthState, MailboxConnection, MailboxReply, AccountExport, AccountDeletion)
+    MailboxOAuthState, MailboxConnection, MailboxReply, AccountExport, AccountDeletion, InterviewVoiceOperation)
 from app.core.security import hash_token, verify_password
 from app.services.account_service import now, throttle
 from app.services import resume_store, mailbox_service
@@ -28,6 +28,7 @@ EXPORT_COLUMNS = {
     "application_pack_versions": "id pack_id number cv cover_letter approved_at created_at updated_at",
     "interview_sessions": "id job_id source_snapshot configuration mode question_count status revision turns created_at updated_at",
     "interview_operations": "id session_id step status outcome usage created_at updated_at",
+    "interview_voice_operations": "id session_id kind question_number status outcome configuration usage transcript expires_at created_at updated_at",
     "profile_suggestion_sets": "id resume_id extraction_id source_text source_reviewed_at status suggestions provider model prompt_version outcome_message applied_at apply_result created_at updated_at",
     "job_fit_analyses": "id job_id profile_id job_snapshot profile_facts status result counts provider model prompt_version outcome_message created_at updated_at",
     "email_applications": "id job_id application_id snapshot status approved_at dispatch_at provider_message_id provider_thread_id outcome provider_status created_at updated_at",
@@ -63,6 +64,9 @@ def has_recovery_account(db, owner):
 def export_query(name, owner):
     table = Base.metadata.tables[name]
     columns = [table.c[c] for c in EXPORT_COLUMNS[name].split()]
+    if name == "interview_voice_operations":
+        columns = [case((table.c.expires_at > now(), c), else_=None).label("transcript")
+                   if c.name == "transcript" else c for c in columns]
     if name == "users": condition = table.c.id == owner
     elif "owner_id" in table.c: condition = table.c.owner_id == owner
     else:
@@ -219,6 +223,15 @@ def cleanup_deletion(db, deletion_id, settings, *, batch_size=20):
         db.commit()
 
 
+def voice_retention(db, cutoff, *, dry_run=True, batch_size=100):
+    condition = (InterviewVoiceOperation.expires_at <= cutoff) & InterviewVoiceOperation.transcript.is_not(None) & InterviewVoiceOperation.owner_id.in_(select(User.id).where(User.is_active.is_(True)))
+    count = db.scalar(select(func.count()).select_from(InterviewVoiceOperation).where(condition))
+    if not dry_run:
+        ids = select(InterviewVoiceOperation.id).where(condition).order_by(InterviewVoiceOperation.id).limit(batch_size).with_for_update(skip_locked=True)
+        db.execute(update(InterviewVoiceOperation).where(InterviewVoiceOperation.id.in_(ids)).values(transcript=None))
+    return count
+
+
 def retention(db, settings, *, dry_run=True, batch_size=100):
     """Counts only. Bounded mutation; repeat until eligible counts reach zero."""
     cutoff = now()
@@ -243,6 +256,7 @@ def retention(db, settings, *, dry_run=True, batch_size=100):
     condition = (MailboxReply.received_at <= preview_cutoff) & (MailboxReply.preview != "") & MailboxReply.owner_id.in_(select(User.id).where(User.is_active.is_(True)))
     counts["email_previews"] = db.scalar(select(func.count()).select_from(MailboxReply).where(condition))
     counts["pending_deletions"] = db.scalar(select(func.count()).select_from(AccountDeletion).where(AccountDeletion.status != "complete"))
+    counts["voice_transcripts"] = voice_retention(db, cutoff, dry_run=dry_run, batch_size=batch_size)
     if not dry_run:
         ids = select(MailboxReply.id).where(condition).order_by(MailboxReply.id).limit(batch_size).with_for_update(skip_locked=True)
         db.execute(update(MailboxReply).where(MailboxReply.id.in_(ids)).values(preview=""))

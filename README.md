@@ -480,7 +480,9 @@ with timezone-aware scheduling and a review warning for confirmed replies. They
 never send messages or notify while the app is closed.
 Private [text interview practice](docs/interview-practice.md) starts from a saved
 job and reviewed CV or approved pack. Sessions snapshot their sources, save answers
-for resumption and provide evidence-linked AI guidance. Voice is planned separately.
+for resumption and provide evidence-linked AI guidance. Optional [voice practice](docs/voice-interview-practice.md)
+adds explicit recording, editable transcript review and labelled spoken questions;
+speech is disabled by default and the full text workflow remains available.
 
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking

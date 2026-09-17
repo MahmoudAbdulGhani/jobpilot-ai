@@ -1,5 +1,9 @@
 # Text interview practice
 
+Optional recording, reviewed transcription and spoken questions are now described
+in [Voice interview practice](voice-interview-practice.md). The complete text
+workflow and all content evidence checks remain unchanged.
+
 From a saved job, choose **Prepare interview practice**. Select either a reviewed
 CV or an approved application-pack version for that job, select behavioral,
 technical or mixed practice, and choose 2–6 questions. Review the provider/model
@@ -46,8 +50,8 @@ and extra claim fields; they do not prove that an excerpt is relevant, that an
 assessment is fair, or that technical statements in an answer are true. The UI
 labels assessments as AI-generated guidance. The bounded strategy/rubric approach
 is deliberately narrower than free-form interview coaching. Live question quality,
-rubric calibration and pedagogical usefulness remain unverified. Voice is a
-separate planned feature, not implemented here.
+rubric calibration and pedagogical usefulness remain unverified. Optional voice
+input/playback is documented separately and does not change this rubric.
 
 ## Configuration and limits
 

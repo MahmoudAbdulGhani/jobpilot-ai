@@ -4,6 +4,12 @@ Settings offers password-reauthenticated private export and explicit account del
 
 ## Export
 
+Voice interview exports also include unexpired transcript drafts and safe speech
+dispatch metadata. Raw recordings and generated audio are never stored by
+JobPilot. The retention command clears expired transcript drafts; dispatch
+receipts remain until session/job/account deletion to preserve idempotency.
+See [voice privacy and limits](voice-interview-practice.md).
+
 The authenticated owner must supply their current password. Reauthentication attempts share a five-per-hour account limit with deletion. An export is downloadable only with the same active owner's session version, before its expiry (default ten minutes; configurable 1–10). Password reset invalidates outstanding downloads. Only one export per account is retained; creating another replaces it. No signed public URL, browser-stored credential or email delivery is used. The ZIP is stored privately as a bounded database byte field, not an ephemeral web-worker file. Scheduler delays cannot make an expired download usable.
 
 `account.json` includes account identity, profile/provenance, saved jobs, applications/status history/reminders, packs and their versions, reviewed resume text, profile suggestions, fit results, interview snapshots/turns/usage, email application snapshots and attachment bytes (base64), retained replies and sync status. `documents/<resume UUID>` contains the original upload bytes; filename and extension are in the JSON. CVs/letters generated from structured blocks remain JSON; no new PDF/DOCX render or AI call occurs. Missing document bytes fail the export instead of silently omitting a file.

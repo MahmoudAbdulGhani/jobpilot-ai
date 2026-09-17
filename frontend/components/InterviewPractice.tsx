@@ -4,6 +4,7 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import {api} from '../lib/api';
 import {Dialog} from './Dialog';
+import {InterviewVoice} from './InterviewVoice';
 import type {Config,Source,Preview,Options,Interview,Turn,History} from '../lib/interviews';
 
 const label=(value:string)=>value.replaceAll('_',' ');
@@ -22,7 +23,7 @@ export function InterviewHome({jobId}:{jobId:string}) {
   function selection(){const [kind,id,version]=source.split(':');return {resume_id:kind==='cv'?id:null,pack_id:kind==='pack'?id:null,pack_version:kind==='pack'?Number(version):null,mode,question_count:count};}
   async function review(){if(busy.current)return;busy.current=true;setPending(true);setError('');try{setPreview(await api<Preview>(`${base}/preview`,{method:'POST',body:JSON.stringify(selection())},false));key.current=crypto.randomUUID();setConfirm(false);}catch(e){setError((e as Error).message);}finally{busy.current=false;setPending(false);}}
   async function start(){if(!preview||!confirm||busy.current)return;busy.current=true;setPending(true);setError('');try{const session=await api<Interview>(base,{method:'POST',body:JSON.stringify({...selection(),preview_hash:preview.preview_hash,request_key:key.current,confirm:true})},false);router.push(`/interviews/${session.id}`);}catch(e){setError((e as Error).message);}finally{busy.current=false;setPending(false);}}
-  return <section className="interview-page"><Link href={`/jobs/${jobId}`}>Back to saved job</Link><h1>Interview practice</h1><p>Private text practice, not a hiring prediction. Voice is not available in this milestone.</p>
+  return <section className="interview-page"><Link href={`/jobs/${jobId}`}>Back to saved job</Link><h1>Interview practice</h1><p>Private interview practice, not a hiring prediction. Optional voice input is available inside a session; the full text workflow remains available.</p>
     {error&&<p className="form-error" role="alert">{error} <button onClick={()=>void load()}>Reload options</button></p>}
     {!options&&!error&&<p role="status">Loading interview sources…</p>}
     {options&&<><Provider config={options.configuration}/>{!options.available&&<p role="alert">{options.message}</p>}
@@ -47,6 +48,7 @@ function Feedback({turn,session}:{turn:Turn;session:Interview}) {return <section
 export function InterviewSessionView({id}:{id:string}) {
   const router=useRouter();const [session,setSession]=useState<Interview|null>(null),[answer,setAnswer]=useState(''),[error,setError]=useState(''),[pending,setPending]=useState(false),[notice,setNotice]=useState(''),[deleting,setDeleting]=useState(false);
   const busy=useRef(false),key=useRef<{revision:number;value:string}|null>(null);
+  const [voiceBusy,setVoiceBusy]=useState(false);
   const display=useCallback((value:Interview)=>{setSession(value);setAnswer(value.turns.at(-1)?.answer||'');},[]);
   const load=useCallback(async()=>{setError('');try{display(await api<Interview>(`/interviews/${id}`));}catch(e){setError((e as Error).message);}},[id,display]);
   useEffect(()=>{void load();},[load]);
@@ -56,12 +58,12 @@ export function InterviewSessionView({id}:{id:string}) {
   const current=session.turns.at(-1),completed=session.status==='completed',waiting=pending||session.status==='generating';
   return <section className="interview-page" aria-busy={pending}><Link href={`/jobs/${session.job_id}/interviews`}>Back to practice sessions</Link><h1>{completed?'Interview review':'Interview practice session'}</h1><Provider config={session.configuration}/><p>AI-generated practice guidance, not a hiring probability or verified assessment of your abilities.</p><Snapshot source={session.source_snapshot}/>
     <p>Status: {session.status} · {session.turns.length} of {session.question_count} questions</p>
-    <button className="secondary-button" disabled={pending} onClick={()=>void load()}>Refresh saved session (discards unsaved text)</button>
+    <button className="secondary-button" disabled={pending||voiceBusy} onClick={()=>void load()}>Refresh saved session (discards unsaved text)</button>
     {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status">{notice}</p>}
     {waiting&&<p role="status">Model request pending. Saved answers are retained. Refresh to check progress; no automatic retry.</p>}
     {session.status==='interrupted'&&<p role="alert">Practice was interrupted or the response failed validation. Your saved answers remain. You may explicitly request one retry for this step; it consumes quota.</p>}
     {!completed&&<>
-      {current?<section><h2 aria-live="polite">Question {current.number} · {current.category}</h2><p>{current.text}</p><blockquote>{current.question.quote}</blockquote><p className="muted">Exact excerpt from {current.question.source==='job'?'the captured job description':'your previous answer'}.</p><label>Your answer<textarea rows={8} maxLength={3000} value={answer} onChange={e=>setAnswer(e.target.value)} disabled={waiting}/></label><p>{answer.length}/3,000 characters. Save before leaving; unsaved text is not kept in browser storage.</p><button className="secondary-button" disabled={waiting} onClick={()=>void act(false)}>Save answer without AI</button><button className="primary-button" disabled={waiting||!answer.trim()} onClick={()=>void act(true)}>{session.status==='interrupted'?'Retry this step explicitly':current.number===session.question_count?'Finish interview and review':'Submit answer and continue'}</button></section>:<button className="primary-button" disabled={waiting} onClick={()=>void act(true)}>Ask first question (AI request)</button>}
+      {current?<section><h2 aria-live="polite">Question {current.number} · {current.category}</h2><p>{current.text}</p><blockquote>{current.question.quote}</blockquote><p className="muted">Exact excerpt from {current.question.source==='job'?'the captured job description':'your previous answer'}.</p><InterviewVoice key={current.number} id={id} question={current.number} disabled={waiting} onTranscript={setAnswer} onBusy={setVoiceBusy}/><label>Your answer<textarea rows={8} maxLength={3000} value={answer} onChange={e=>setAnswer(e.target.value)} disabled={waiting}/></label><p>{answer.length}/3,000 characters. Save before leaving; unsaved text is not kept in browser storage.</p><button className="secondary-button" disabled={waiting||voiceBusy} onClick={()=>void act(false)}>Save answer without AI</button><button className="primary-button" disabled={waiting||voiceBusy||!answer.trim()} onClick={()=>void act(true)}>{session.status==='interrupted'?'Retry this step explicitly':current.number===session.question_count?'Finish interview and review':'Submit answer and continue'}</button></section>:<button className="primary-button" disabled={waiting} onClick={()=>void act(true)}>Ask first question (AI request)</button>}
     </>}
     {completed&&<><h2>Practice priorities</h2>{session.practice_actions.length?<ul>{session.practice_actions.map(p=><li key={p}>{session.actions[p]}</li>)}</ul>:<p>Rehearse concise explanations and verify all facts; these limited answers do not establish general readiness.</p>}</>}
     <h2>{completed?'Questions, answers and feedback':'Saved practice so far'}</h2>

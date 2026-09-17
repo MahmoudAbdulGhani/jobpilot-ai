@@ -27,6 +27,8 @@ export default defineConfig({
         JOBPILOT_REGISTRATION: 'invite-only',
         JOBPILOT_AI_ENABLED: 'true',
         JOBPILOT_AI_TEST_PROVIDER: 'true',
+        JOBPILOT_VOICE_ENABLED: 'true',
+        JOBPILOT_VOICE_TEST_PROVIDER: 'true',
         JOBPILOT_DISCOVERY_TEST_PROVIDER: 'true',
         JOBPILOT_MAILBOX_TEST_PROVIDER: 'true',
         JOBPILOT_MAILBOX_ENCRYPTION_KEY: randomBytes(32).toString('base64'),

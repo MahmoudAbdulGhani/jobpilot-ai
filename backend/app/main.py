@@ -19,6 +19,7 @@ from app.api.routes.discovery import router as discovery_router
 from app.api.routes.mailboxes import router as mailboxes_router, ScrubMailboxCallback, protect_access_logs
 from app.api.routes.email_applications import router as email_applications_router
 from app.api.routes.interviews import router as interviews_router
+from app.api.routes.interview_voice import router as interview_voice_router
 from app.api.routes.reminders import router as reminders_router
 from app.api.routes.replies import router as replies_router
 from app.api.routes.job_fit import router as job_fit_router
@@ -40,7 +41,7 @@ def create_application() -> FastAPI:
     )
     @application.exception_handler(RequestValidationError)
     async def safe_account_validation(request, error):
-        if settings.ENVIRONMENT == "production" or request.url.path.startswith(settings.API_PREFIX + "/account/"):
+        if settings.ENVIRONMENT == "production" or request.url.path.startswith(settings.API_PREFIX + "/account/") or "/voice/" in request.url.path:
             return JSONResponse(status_code=422, content={"detail": [
                 {"loc": list(item["loc"]), "msg": item["msg"], "type": item["type"]}
                 for item in error.errors()]})
@@ -67,6 +68,7 @@ def create_application() -> FastAPI:
     application.include_router(replies_router, prefix=settings.API_PREFIX)
     application.include_router(reminders_router, prefix=settings.API_PREFIX)
     application.include_router(interviews_router, prefix=settings.API_PREFIX)
+    application.include_router(interview_voice_router, prefix=settings.API_PREFIX)
     application.add_middleware(ScrubMailboxCallback)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)

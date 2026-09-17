@@ -18,6 +18,7 @@ from app.models.email_application import EmailApplication
 from app.models.mailbox_reply import ReplySync, MailboxReply
 
 __all__ = [
+    "InterviewVoiceOperation",
     "InterviewSession", "InterviewOperation",
     "ReplySync", "MailboxReply",
     "EmailApplication",
@@ -29,3 +30,4 @@ __all__ = [
     "ProfileSuggestionSet",
     "JobFitAnalysis",
 ]
+from app.models.interview_voice import InterviewVoiceOperation

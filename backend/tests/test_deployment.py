@@ -29,7 +29,7 @@ def production(tmp_path, **changes):
 
 @pytest.mark.parametrize('change',[
     {'JOBPILOT_DEBUG':True},{'E2E_TEST_MODE':True},{'JOBPILOT_AI_TEST_PROVIDER':True},
-    {'JOBPILOT_MAILBOX_TEST_PROVIDER':True},{'JOBPILOT_DISCOVERY_TEST_PROVIDER':True},
+    {'JOBPILOT_MAILBOX_TEST_PROVIDER':True},{'JOBPILOT_DISCOVERY_TEST_PROVIDER':True},{'JOBPILOT_VOICE_TEST_PROVIDER':True},
     {'AUTH_COOKIE_SECURE':False},{'JOBPILOT_APP_URL':'http://app.example.com'},
     {'CORS_ORIGINS':['*']},{'ALLOWED_HOSTS':['*']},{'JOBPILOT_PROXY_IPS':'*'},
     {'JOBPILOT_PROXY_IPS':'0.0.0.0/0'},{'POSTGRES_HOST':'localhost'},

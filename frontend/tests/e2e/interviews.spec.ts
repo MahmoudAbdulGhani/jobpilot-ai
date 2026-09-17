@@ -4,7 +4,9 @@ import path from 'node:path';
 import {API,bootstrapUser,accessToken,login,cleanupUser,createdUsers} from './helpers';
 test.afterEach(async({request})=>{for(const email of createdUsers.splice(0))await cleanupUser(request,email);});
 
-test('guarded interview start answer reload resume finish review delete',async({page,request})=>{
+test.use({launchOptions:{args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']}});
+
+for(const voice of [false,true])test(`guarded ${voice?'voice transcript review':'text'} interview start answer reload resume finish review delete`,async({page,request})=>{
   const user=await bootstrapUser(request,'interview');const token=await accessToken(request,user);
   const headers={Authorization:`Bearer ${token}`};
   const jobResponse=await request.post(`${API}/jobs`,{headers,data:{title:'Interview engineer',company:'Synthetic',description:'Build APIs and explain database trade-offs.'}});
@@ -26,6 +28,31 @@ test('guarded interview start answer reload resume finish review delete',async({
   await expect(page).toHaveURL(/\/interviews\/[0-9a-f-]+$/);
   await page.getByRole('button',{name:'Ask first question (AI request)'}).click();
   await expect(page.getByRole('heading',{name:'Question 1 · behavioral'})).toBeVisible();
+  if(voice){
+    await page.getByLabel('Use optional voice controls').check();
+    await expect(page.getByText('Synthetic test audio only; no live speech provider.',{exact:false})).toBeVisible();
+    await page.getByRole('button',{name:'Start recording',exact:true}).click();
+    await expect(page.getByText(/Recording microphone/)).toBeVisible();
+    // Collect enough synthetic samples to exercise the real WAV encoder/parser.
+    await page.waitForTimeout(1100);
+    await page.getByRole('button',{name:'Stop recording',exact:true}).click();
+    await expect(page.getByLabel('Recorded answer playback')).toBeVisible();
+    await expect(page.getByRole('button',{name:'Send recording for transcription'})).toBeDisabled();
+    await page.getByLabel('I agree to the described external audio and question processing.').check();
+    const before=await (await request.get(`${API}/interviews/${page.url().split('/').at(-1)}`,{headers})).json();
+    await page.getByRole('button',{name:'Send recording for transcription'}).click();
+    await expect(page.getByLabel('Review transcript')).toHaveValue('I built a synthetic API and tested its error paths.');
+    await expect(page.getByLabel('Your answer')).toHaveValue('');
+    const after=await (await request.get(`${API}/interviews/${before.id}`,{headers})).json();
+    expect(after.revision).toBe(before.revision);expect(after.turns).toEqual(before.turns);
+    await page.getByLabel('Review transcript').fill('Reviewed: I tested a synthetic API.');
+    await page.getByRole('button',{name:'Use reviewed transcript as answer draft'}).click();
+    await expect(page.getByLabel('Your answer')).toHaveValue('Reviewed: I tested a synthetic API.');
+    await page.getByRole('button',{name:'Generate spoken question'}).click();
+    await expect(page.getByLabel('AI-generated question playback')).toBeVisible();
+    await page.getByLabel('Mute generated speech').check();
+    await page.getByRole('button',{name:'Stop spoken question'}).click();
+  }
   const first='I built a booking API and checked error cases. I have no measured performance results.';
   await page.getByLabel('Your answer').fill(first);
   await page.getByRole('button',{name:'Save answer without AI'}).click();

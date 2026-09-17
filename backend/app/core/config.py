@@ -130,6 +130,18 @@ class Settings(BaseSettings):
     JOBPILOT_INTERVIEW_MAX_CALLS_PER_SESSION: int = Field(default=10, ge=3, le=14)
     JOBPILOT_INTERVIEW_MAX_SESSIONS_PER_USER: int = Field(default=20, ge=1, le=100)
 
+    # Optional speech input/output only. Existing AI configurations are unchanged.
+    JOBPILOT_VOICE_ENABLED: bool = False
+    JOBPILOT_VOICE_PROVIDER: Literal["openai"] = "openai"
+    JOBPILOT_VOICE_TRANSCRIPTION_MODEL: Literal["whisper-1"] = "whisper-1"
+    JOBPILOT_VOICE_SPEECH_MODEL: Literal["tts-1"] = "tts-1"
+    JOBPILOT_VOICE_API_KEY: str = Field(default="", repr=False, exclude=True)
+    JOBPILOT_VOICE_TEST_PROVIDER: bool = False
+    JOBPILOT_VOICE_MAX_SECONDS: int = Field(default=60, ge=1, le=60)
+    JOBPILOT_VOICE_TIMEOUT_SECONDS: int = Field(default=30, ge=1, le=60)
+    JOBPILOT_VOICE_MAX_CALLS_PER_SESSION: int = Field(default=18, ge=1, le=30)
+    JOBPILOT_VOICE_TRANSCRIPT_MINUTES: int = Field(default=10, ge=1, le=60)
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key_strength(cls, value: str) -> str:
@@ -183,7 +195,7 @@ class Settings(BaseSettings):
                 except ValueError: return False
                 if port not in {None, 443}: return False
                 return u.scheme == "https" and bool(u.hostname) and u.hostname not in {"localhost", "127.0.0.1"} and not u.username and not u.password and not u.query and not u.fragment and u.path in {"", "/"}
-            if self.DEBUG or any((self.E2E_TEST_MODE, self.JOBPILOT_AI_TEST_PROVIDER, self.JOBPILOT_MAILBOX_TEST_PROVIDER, self.JOBPILOT_DISCOVERY_TEST_PROVIDER)) or self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT == "test":
+            if self.DEBUG or any((self.E2E_TEST_MODE, self.JOBPILOT_AI_TEST_PROVIDER, self.JOBPILOT_MAILBOX_TEST_PROVIDER, self.JOBPILOT_DISCOVERY_TEST_PROVIDER, self.JOBPILOT_VOICE_TEST_PROVIDER)) or self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT == "test":
                 raise ValueError("Production forbids debug and test providers")
             if not origin(self.JOBPILOT_APP_URL) or self.CORS_ORIGINS != [self.JOBPILOT_APP_URL.rstrip('/')]:
                 raise ValueError("Production requires one trusted HTTPS application origin")
