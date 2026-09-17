@@ -39,6 +39,21 @@ describe('reviewed discovery', () => {
     expect((await screen.findByRole('link',{name:/Already saved/})).getAttribute('href')).toBe('/jobs/existing');
     expect(screen.queryByRole('button',{name:'Preview job'})).toBeNull();
   });
+  it('separates Jobicy remote arrangement from source eligibility and warns without merging', async () => {
+    const remote={...job,source:'jobicy',source_url:'https://jobicy.com/jobs/123-backend',workplace_model:'Remote (Jobicy listing)',applicant_region:'EMEA',possible_duplicate_ids:['other-source']};
+    apiMock.mockResolvedValueOnce({...results,items:[remote]}).mockResolvedValueOnce({job:remote,preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'});
+    render(<Discovery/>);
+    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobicy'}});
+    fireEvent.change(screen.getByLabelText('Applicant region text (Jobicy cache)'),{target:{value:'EMEA'}});
+    fireEvent.click(screen.getByRole('button',{name:'Search Jobicy'}));
+    expect(await screen.findByText('EMEA')).not.toBeNull();
+    expect(screen.getByText(/Possible cross-source match/)).not.toBeNull();
+    expect(screen.getByRole('link',{name:'View on Jobicy'}).getAttribute('href')).toBe(remote.source_url);
+    expect(apiMock.mock.calls[0][0]).toContain('source=jobicy&location=EMEA');
+    fireEvent.click(screen.getByRole('button',{name:'Preview job'}));
+    expect(await screen.findByRole('button',{name:'Import this job into saved jobs'})).not.toBeNull();
+    expect(apiMock).toHaveBeenLastCalledWith('/discovery/123/preview?source=jobicy');
+  });
   it('shows loading and an empty result', async () => {
     let done!: (value: unknown) => void;
     apiMock.mockReturnValue(new Promise(resolve => {done=resolve;}));

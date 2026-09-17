@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.models import SavedJob
@@ -12,16 +12,23 @@ from app.schemas.jobs import SavedJobCreate
 from app.services.discovery_provider import DiscoveryError
 
 
-def existing_job(db, owner_id, external_id):
+def existing_job(db, owner_id, external_id, source='jobtech'):
     return db.scalar(select(SavedJob).where(SavedJob.owner_id == owner_id,
-        SavedJob.source_provider == "jobtech", SavedJob.source_external_id == external_id))
+        SavedJob.source_provider == source, SavedJob.source_external_id == external_id))
 
 
 def with_duplicates(db, owner_id, jobs):
     rows = db.scalars(select(SavedJob).where(SavedJob.owner_id == owner_id,
-        SavedJob.source_provider == "jobtech", SavedJob.source_external_id.in_([j.external_id for j in jobs])))
-    existing = {row.source_external_id: row.id for row in rows}
-    return [DiscoveryResult(**j.model_dump(), existing_job_id=existing.get(j.external_id)) for j in jobs]
+        SavedJob.source_provider.in_([j.source for j in jobs]), SavedJob.source_external_id.in_([j.external_id for j in jobs])))
+    existing = {(row.source_provider,row.source_external_id): row.id for row in rows}
+    results = []
+    for job in jobs:
+        possible = list(db.scalars(select(SavedJob.id).where(SavedJob.owner_id==owner_id,
+            SavedJob.source_provider.is_not(None), SavedJob.source_provider!=job.source,
+            func.lower(func.trim(SavedJob.title))==job.title.lower(),
+            func.lower(func.trim(SavedJob.company))==job.company.lower()).order_by(SavedJob.id).limit(5)))
+        results.append(DiscoveryResult(**job.model_dump(), existing_job_id=existing.get((job.source,job.external_id)),possible_duplicate_ids=possible))
+    return results
 
 
 def prepare_preview(db, owner_id, job, settings):
@@ -46,7 +53,7 @@ def import_preview(db, owner_id, token, settings):
         raise DiscoveryError(422, "The preview is invalid or expired. Preview the listing again.") from None
     if source.test_data and (not settings.E2E_TEST_MODE or settings.POSTGRES_DB != settings.POSTGRES_TEST_DB):
         raise DiscoveryError(422, "Synthetic listings cannot be imported outside guarded tests.")
-    existing = existing_job(db, owner_id, source.external_id)
+    existing = existing_job(db, owner_id, source.external_id, source.source)
     if existing:
         return existing, True
     job = SavedJob(owner_id=owner_id, **values.model_dump(mode="json"),
@@ -58,7 +65,7 @@ def import_preview(db, owner_id, token, settings):
             db.add(job)
             db.flush()
     except IntegrityError:
-        existing = existing_job(db, owner_id, source.external_id)
+        existing = existing_job(db, owner_id, source.external_id, source.source)
         if existing:
             return existing, True
         raise

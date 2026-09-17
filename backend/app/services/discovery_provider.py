@@ -75,7 +75,8 @@ class JobTechProvider:
         except (ValueError, UnicodeError):
             raise DiscoveryError(502, "JobTech returned an invalid response.") from None
 
-    def search(self, *, q, remote, sort, offset):
+    def search(self, *, q, remote, sort, offset, location=''):
+        if location: raise DiscoveryError(422, 'JobTech structured location filtering is not available here; use keywords.')
         params = {"q": q, "sort": sort, "offset": offset, "limit": PAGE_SIZE, "resdet": "full"}
         if remote:
             params["remote"] = "true"
@@ -109,7 +110,8 @@ class SyntheticJobTechProvider:
             "publication_date": "2026-09-17T08:00:00", "application_deadline": "2026-10-31T23:59:59"})
         return job.model_copy(update={"test_data": True})
 
-    def search(self, *, q, remote, sort, offset):
+    def search(self, *, q, remote, sort, offset, location=''):
+        if location: raise DiscoveryError(422, 'JobTech structured location filtering is not available here; use keywords.')
         if q == "rate-limit":
             raise DiscoveryError(429, "JobTech's rate limit was reached. Wait before searching again.")
         if q == "unavailable":
@@ -117,11 +119,19 @@ class SyntheticJobTechProvider:
         return ([], 0) if q == "empty" or offset else ([self.preview("synthetic-100")], 1)
 
 
-def provider_for(settings):
+def provider_for(settings, source_name='jobtech', db=None):
+    if source_name not in {'jobtech','jobicy'}: raise DiscoveryError(422, 'Unsupported discovery source.')
     if not settings.JOBPILOT_DISCOVERY_ENABLED:
         raise DiscoveryError(503, "Job discovery is disabled.")
     if settings.JOBPILOT_DISCOVERY_TEST_PROVIDER:
         if not settings.E2E_TEST_MODE or settings.POSTGRES_DB != settings.POSTGRES_TEST_DB:
             raise DiscoveryError(503, "The discovery test provider is restricted to guarded tests.")
+        if source_name == 'jobicy':
+            from app.services.jobicy_provider import SyntheticJobicyProvider
+            return SyntheticJobicyProvider()
         return SyntheticJobTechProvider()
+    if source_name == 'jobicy':
+        from app.services.discovery_catalog import JobicyCatalog
+        if db is None: raise DiscoveryError(503, 'Jobicy shared cache is unavailable.')
+        return JobicyCatalog(db)
     return JobTechProvider()

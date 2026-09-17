@@ -11,9 +11,9 @@ from app.services import discovery_provider, discovery_service
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
-def provider(settings=Depends(get_settings)):
+def provider(db: Database, source: Literal['jobtech','jobicy']='jobtech', settings=Depends(get_settings)):
     try:
-        return discovery_provider.provider_for(settings)
+        return discovery_provider.provider_for(settings, source, db)
     except discovery_provider.DiscoveryError as error:
         raise HTTPException(error.status, error.message) from None
 
@@ -21,10 +21,12 @@ def provider(settings=Depends(get_settings)):
 @router.get("", response_model=DiscoverySearch)
 def search(db: Database, current_user: CurrentUser,
     q: Annotated[str, Query(max_length=200)] = "",
+    location: Annotated[str, Query(max_length=100)] = "",
     remote: bool = False, sort: Literal["relevance", "pubdate-desc"] = "relevance",
     offset: Annotated[int, Query(ge=0, le=1980)] = 0, source=Depends(provider)):
     try:
-        jobs, total = source.search(q=q.strip(), remote=remote, sort=sort, offset=offset)
+        filters = {'location':location.strip()} if location.strip() else {}
+        jobs, total = source.search(q=q.strip(), remote=remote, sort=sort, offset=offset, **filters)
         next_offset = offset + discovery_provider.PAGE_SIZE
         return DiscoverySearch(items=discovery_service.with_duplicates(db, current_user.id, jobs),
             total=total, offset=offset,

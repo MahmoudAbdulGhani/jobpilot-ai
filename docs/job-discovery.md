@@ -1,5 +1,8 @@
 # Job discovery and reviewed import
 
+For the subsequent Jobicy expansion, current source-selection research, shared cache,
+eligibility semantics and live/mock evidence, see [International discovery](discovery-international.md).
+
 Implemented on `feat/job-discovery-reviewed-import`, starting from `a8cdd10`.
 
 This document records the initial `ee5cf56` milestone. The subsequent

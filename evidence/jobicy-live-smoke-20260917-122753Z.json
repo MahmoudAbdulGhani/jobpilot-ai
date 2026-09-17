@@ -1,0 +1,108 @@
+{
+  "timestamp_utc": "20260917-122753Z",
+  "jobicy_requests_attempted": 2,
+  "credentials_used": false,
+  "imported": false,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/v2/remote-jobs",
+      "params": {
+        "count": 5
+      },
+      "status": 200,
+      "top_level_keys": [
+        "apiVersion",
+        "documentationUrl",
+        "friendlyNotice",
+        "jobCount",
+        "lastUpdate",
+        "appliedFilters",
+        "jobs",
+        "statusCode",
+        "success"
+      ],
+      "first_listing_field_types": {
+        "id": "int",
+        "url": "str",
+        "jobSlug": "str",
+        "jobTitle": "str",
+        "companyName": "str",
+        "companyLogo": "str",
+        "jobIndustry": "list",
+        "jobType": "list",
+        "jobGeo": "str",
+        "jobLevel": "str",
+        "jobExcerpt": "str",
+        "jobDescription": "str",
+        "pubDate": "str",
+        "salaryMin": "int",
+        "salaryMax": "int",
+        "salaryCurrency": "str",
+        "salaryPeriod": "str"
+      }
+    },
+    {
+      "method": "HEAD",
+      "path": "/jobs/153489-infrastructure-software-engineer-metadata-core",
+      "params": null,
+      "status": 200
+    }
+  ],
+  "parsed_count": 5,
+  "examples": [
+    {
+      "id": "153489",
+      "source_url": "https://jobicy.com/jobs/153489-infrastructure-software-engineer-metadata-core",
+      "applicant_region": "Poland",
+      "remote_arrangement": "remote",
+      "has_salary": true,
+      "published_at": "2026-09-17T06:50:36+00:00",
+      "description_characters": 3475
+    },
+    {
+      "id": "153488",
+      "source_url": "https://jobicy.com/jobs/153488-senior-product-designer-full-remote-italy",
+      "applicant_region": "Italy",
+      "remote_arrangement": "remote",
+      "has_salary": true,
+      "published_at": "2026-09-17T06:50:36+00:00",
+      "description_characters": 8688
+    },
+    {
+      "id": "153486",
+      "source_url": "https://jobicy.com/jobs/153486-partnerships-lead-emea",
+      "applicant_region": "UK",
+      "remote_arrangement": "remote",
+      "has_salary": false,
+      "published_at": "2026-09-17T06:50:35+00:00",
+      "description_characters": 5522
+    },
+    {
+      "id": "153490",
+      "source_url": "https://jobicy.com/jobs/153490-developer-relations-engineer-london-uk",
+      "applicant_region": "UK",
+      "remote_arrangement": "remote",
+      "has_salary": false,
+      "published_at": "2026-09-17T06:50:34+00:00",
+      "description_characters": 4591
+    },
+    {
+      "id": "153485",
+      "source_url": "https://jobicy.com/jobs/153485-infrastructure-software-engineer",
+      "applicant_region": "Poland",
+      "remote_arrangement": "remote",
+      "has_salary": true,
+      "published_at": "2026-09-17T06:50:34+00:00",
+      "description_characters": 2831
+    }
+  ],
+  "first_listing_head": "accepted",
+  "source": "Jobicy",
+  "documentation": "https://jobicy.com/jobs-rss-feed",
+  "other_public_data_operations": {
+    "remote_ok_api_browser_opens": 2,
+    "note": "Documentation browser opened the API terms-bearing response and reopened its retained reference. The latter may have used cached data; exact browser network count is unknown."
+  },
+  "public_data_operation_ceiling": 4
+}

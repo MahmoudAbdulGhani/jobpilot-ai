@@ -13,7 +13,7 @@ ExternalId = Annotated[str, Field(pattern=r"^[0-9A-Za-z_-]{1,128}$")]
 class DiscoveryJob(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["jobtech"] = "jobtech"
+    source: Literal["jobtech", "jobicy"] = "jobtech"
     external_id: ExternalId
     title: str = Field(min_length=1, max_length=200)
     company: str = Field(min_length=1, max_length=200)
@@ -24,6 +24,8 @@ class DiscoveryJob(BaseModel):
     deadline: str | None = None
     salary: str | None = Field(default=None, max_length=2000)
     workplace_model: str | None = Field(default=None, max_length=300)
+    applicant_region: str | None = Field(default=None, max_length=300)
+    remote_arrangement: Literal["remote", "unknown"] = "unknown"
     test_data: bool = False
 
     @field_validator("title", "company")
@@ -43,6 +45,7 @@ class DiscoveryJob(BaseModel):
 
 class DiscoveryResult(DiscoveryJob):
     existing_job_id: uuid.UUID | None = None
+    possible_duplicate_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class DiscoverySearch(BaseModel):

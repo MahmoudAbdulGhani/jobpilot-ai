@@ -1,3 +1,4 @@
+from app.models.discovery_cache import DiscoveryCache
 from app.models.account_data import AccountExport, AccountDeletion
 from app.models.interview import InterviewSession, InterviewOperation
 from app.models.account_token import AccountToken, AccountThrottle
@@ -23,7 +24,7 @@ __all__ = [
     "MailboxConnection", "MailboxOAuthState",
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",
     "ApplicationRecord", "ApplicationStatusEvent",
-    "AccountExport", "AccountDeletion", "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",
+    "DiscoveryCache", "AccountExport", "AccountDeletion", "Base", "User", "RefreshToken", "SavedJob", "CandidateProfile", "Resume",
     "ResumeExtraction",
     "ProfileSuggestionSet",
     "JobFitAnalysis",

@@ -51,3 +51,30 @@ test('search, preview and reviewed import preserves edits and connects to saved-
   await page.reload();
   await expect(page.getByPlaceholder('Optional notes', {exact:true})).toHaveValue('Synthetic tracking verification only');
 });
+
+test('Jobicy remote → region preview → cross-source warning → explicit separate import',async({page,request})=>{
+  const user=await bootstrapUser(request,'jobicy');
+  const token=await accessToken(request,user),headers={Authorization:`Bearer ${token}`};
+  const first=await request.get(`${API}/discovery/synthetic-100/preview`,{headers});expect(first.ok()).toBeTruthy();
+  expect((await request.post(`${API}/discovery/import`,{headers,data:{preview_token:(await first.json()).preview_token,confirm:true}})).status()).toBe(201);
+  await login(page,user);await page.getByRole('link',{name:'Discover jobs',exact:true}).click();
+  await page.getByLabel('Source',{exact:true}).selectOption('jobicy');
+  await page.getByLabel('Applicant region text (Jobicy cache)').fill('EMEA');
+  await page.getByRole('button',{name:'Search Jobicy'}).click();
+  await expect(page.getByText('EMEA',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Possible cross-source match/)).toBeVisible();
+  await page.getByRole('button',{name:'Preview job'}).click();
+  await expect(page.getByRole('heading',{name:'Preview: Synthetic Backend Engineer'})).toBeFocused();
+  expect((await (await request.get(`${API}/jobs`,{headers})).json()).total).toBe(1);
+  await page.getByRole('button',{name:'Import this job into saved jobs'}).click();
+  await page.getByRole('link',{name:'Open saved job',exact:true}).click();
+  await expect(page.getByText(/Imported from Jobicy/)).toBeVisible();
+  await page.getByText('Imported source details').click();
+  await expect(page.getByText(/Applicant region \(source\): EMEA/)).toBeVisible();
+  expect((await (await request.get(`${API}/jobs`,{headers})).json()).total).toBe(2);
+  const id=page.url().split('/').pop();
+  expect((await request.patch(`${API}/jobs/${id}`,{headers,data:{title:'My Jobicy edits',notes:'Preserve'}})).ok()).toBeTruthy();
+  const preview=await request.get(`${API}/discovery/123456/preview?source=jobicy`,{headers});
+  const duplicate=await request.post(`${API}/discovery/import`,{headers,data:{preview_token:(await preview.json()).preview_token,confirm:true}});
+  expect(duplicate.status()).toBe(200);expect((await duplicate.json()).job.notes).toBe('Preserve');
+});
