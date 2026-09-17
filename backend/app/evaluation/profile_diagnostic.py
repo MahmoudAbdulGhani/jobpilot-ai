@@ -1,4 +1,4 @@
-"""One canonical synthetic profile request through the production adapter; dry by default."""
+"""One canonical synthetic profile or pack request through the production adapter; dry by default."""
 import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -12,7 +12,8 @@ import re
 
 import httpx
 from openai import OpenAI
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from app.schemas.application_packs import PackProviderOutput
 
 from app.evaluation import __main__ as evaluation
 from app.evaluation.fixtures import cases
@@ -41,6 +42,8 @@ locationsuggestion skillssuggestion providerexperiencesuggestion educationsugges
 languagesuggestion experienceentry educationentry languageentry python postgresql beirut cedar
 demo bsc computer science university built booking api project profile strong schema error
 pattern too short long additional property unexpected invalid request required
+cv cover_letter review_notes blocks kind paragraph bullet heading fact_id cv_quote pack
+packprovideroutput providerdocument providerblock claimevidence
 """.casefold().split())
 
 
@@ -73,7 +76,8 @@ def usage_from(body):
 
 class SyntheticTransport(httpx.BaseTransport):
     """Guard one serialized request and capture before the SDK can lose a response."""
-    def __init__(self, inner, request_hash, secrets=()):
+    def __init__(self, inner, request_hash, secrets=(), task="profile"):
+        self.task = task
         self.inner, self.request_hash, self.secrets = inner, request_hash, secrets
         self.count = 0
         self.details = {}
@@ -107,18 +111,10 @@ class SyntheticTransport(httpx.BaseTransport):
         self.details["failed_generation"] = redacted(error.get("failed_generation"), 4096, self.secrets)
         failed = error.get("failed_generation")
         if isinstance(failed, str) and len(failed) <= 32768:
-            try:
-                parsed = GroqProfileOutput.model_validate_json(failed).to_domain()
-                self.details["failed_generation_local_parse"] = "passed"
-                try:
-                    self.details["failed_generation_checks"] = evaluation.check_output("profile", parsed, cases()[0]["source"])
-                except ValueError:
-                    self.details["failed_generation_checks"] = "evidence_rejected"
-            except ValidationError as failure:
-                self.details["failed_generation_local_parse"] = "failed"
-                self.details["failed_generation_validation"] = validation_diagnostics(failure)
+            self.check_generation(failed, "failed_generation")
         # Retain bounded returned output text for SDK parsing failures; never reasoning.
         text = []
+        complete_text = []
         for item in body.get("output", []) if isinstance(body.get("output"), list) else []:
             if isinstance(item, dict) and item.get("type") == "message":
                 for part in item.get("content", []) if isinstance(item.get("content"), list) else []:
@@ -126,10 +122,15 @@ class SyntheticTransport(httpx.BaseTransport):
                         value = part.get("text", part.get("refusal"))
                         if isinstance(value, str):
                             text.append(value[:4096])
+                            complete_text.append(value)
                         if len(text) >= 4:
                             break
             if len(text) >= 4:
                 break
+        if self.task == "pack" and complete_text:
+            joined = "\n".join(complete_text)
+            if len(joined) <= 32768:
+                self.check_generation(joined, "returned_generation")
         if text:
             self.details["returned_text"] = redacted("\n".join(text), 4096, self.secrets)
         reason = body.get("incomplete_details")
@@ -137,11 +138,44 @@ class SyntheticTransport(httpx.BaseTransport):
             self.details["incomplete_reason"] = redacted(reason.get("reason"), 256, self.secrets)
         return response
 
+    def check_generation(self, raw, prefix):
+        try:
+            if self.task == "profile":
+                parsed = GroqProfileOutput.model_validate_json(raw).to_domain()
+            else:
+                parsed = PackProviderOutput.model_validate_json(raw)
+                # The SDK makes every wire property required. Check fields_set
+                # before defaults can conceal missing nullable fields or notes.
+                errors = []
+                def visit(value, path=()):
+                    if isinstance(value, BaseModel):
+                        for name in type(value).model_fields:
+                            if name not in value.model_fields_set:
+                                errors.append({"type": "missing", "loc": path + (name,), "input": None})
+                            else:
+                                visit(getattr(value, name), path + (name,))
+                    elif isinstance(value, list):
+                        for index, item in enumerate(value):
+                            visit(item, path + (index,))
+                visit(parsed)
+                if errors:
+                    raise ValidationError.from_exception_data("PackProviderOutput", errors)
+            self.details[prefix + "_local_parse"] = "passed"
+            try:
+                self.details[prefix + "_checks"] = evaluation.check_output(self.task, parsed, cases()[0]["source"])
+            except Exception:
+                self.details[prefix + "_checks"] = "evidence_rejected"
+        except ValidationError as failure:
+            self.details[prefix + "_local_parse"] = "failed"
+            self.details[prefix + "_validation"] = validation_diagnostics(failure)
+
     def close(self):
         self.inner.close()
 
 
-def prepared_request():
+def prepared_request(task="profile"):
+    if task not in ("profile", "pack"):
+        raise ValueError("Unsupported synthetic task")
     captured = []
     def capture(request):
         captured.append(request.content)
@@ -149,8 +183,9 @@ def prepared_request():
     with OpenAI(api_key="synthetic", base_url=GROQ_BASE_URL, max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(capture))) as client:
         try:
-            GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL, timeout=60,
-                max_output_tokens=evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS, client=evaluation.Meter(client)).suggest(cases()[0]["source"]["cv_text"])
+            provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL, timeout=60,
+                max_output_tokens=(evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS if task == "profile" else evaluation.GROQ_MAX_OUTPUT_TOKENS), client=evaluation.Meter(client))
+            evaluation.dispatch(provider, task, cases()[0]["source"])
         except ProviderFailure:
             pass
     assert len(captured) == 1
@@ -159,15 +194,16 @@ def prepared_request():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", choices=("profile", "pack"), default="profile")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--max-cost-usd", type=Decimal)
     parser.add_argument("--dry-report", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
-    plan = evaluation.build_plan("groq", pilot=True, task="profile", env={})
+    plan = evaluation.build_plan("groq", pilot=True, task=args.task, env={})
     if plan["tokens_per_minute"] != 8000:
         parser.error("This diagnostic requires the existing 8,000 TPM limit")
-    request = prepared_request()
+    request = prepared_request(args.task)
     if hashlib.sha256(request).hexdigest() != plan["requests"][0]["sha256"]:
         parser.error("Prepared request differs from the plan")
     if args.live:
@@ -190,8 +226,16 @@ def main(argv=None):
         parser.error("Groq credential unavailable")
     secrets = [key] + [v for k, v in {**config, **os.environ}.items() if isinstance(v, str) and v and
                       any(word in k.upper() for word in ("SECRET", "PASSWORD", "TOKEN", "API_KEY"))]
-    transport = SyntheticTransport(httpx.HTTPTransport(retries=0), plan["requests"][0]["sha256"], secrets)
+    transport = SyntheticTransport(httpx.HTTPTransport(retries=0), plan["requests"][0]["sha256"], secrets, task=args.task)
     def save(report):
+        if args.task == "pack":
+            for row in report.get("results", []):
+                if row.get("status") == "contract_pass" and (
+                    transport.details.get("returned_generation_local_parse") != "passed"
+                    or transport.details.get("returned_generation_checks") != {}
+                ):
+                    row["status"] = "validation_failure"
+                    row["diagnostic_rejection"] = "Required wire fields or evidence not verified"
         safe = deepcopy(report)
         safe["created_at_utc"] = initial["created_at_utc"]
         safe["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
