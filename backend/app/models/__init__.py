@@ -1,3 +1,4 @@
+from app.models.interview import InterviewSession, InterviewOperation
 from app.models.base import Base
 from app.models.application_pack import AIUsage, ApplicationPack, ApplicationPackVersion, ApplicationPackOperation
 from app.models.application_tracking import ApplicationRecord, ApplicationStatusEvent
@@ -14,6 +15,7 @@ from app.models.email_application import EmailApplication
 from app.models.mailbox_reply import ReplySync, MailboxReply
 
 __all__ = [
+    "InterviewSession", "InterviewOperation",
     "ReplySync", "MailboxReply",
     "EmailApplication",
     "MailboxConnection", "MailboxOAuthState",

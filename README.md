@@ -473,6 +473,9 @@ consent and a user-triggered bounded sync; connecting alone never scans mail.
 Owner-scoped [follow-up reminders](docs/follow-up-reminders.md) are available in-app,
 with timezone-aware scheduling and a review warning for confirmed replies. They
 never send messages or notify while the app is closed.
+Private [text interview practice](docs/interview-practice.md) starts from a saved
+job and reviewed CV or approved pack. Sessions snapshot their sources, save answers
+for resumption and provide evidence-linked AI guidance. Voice is planned separately.
 
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking

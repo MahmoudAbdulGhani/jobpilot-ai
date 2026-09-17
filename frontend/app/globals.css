@@ -94,3 +94,17 @@
 .reminder-editor select:focus-visible, .reminders-page select:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
 .reply-timeline select { padding: .7rem; max-width: 100%; font: inherit; }
 @media(min-width:881px) { .app-header { gap: 32px; } .primary-nav { min-width: 0; } }
+
+.interview-page { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem; }
+.interview-page h1 { font-size: 2.6rem; margin: 1rem 0; }
+.interview-page h2 { margin: 1.5rem 0 1rem; }
+.interview-page p { margin: .9rem 0; line-height: 1.55; }
+.interview-page fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1.5rem 0; }
+.interview-page label { display: grid; gap: .5rem; margin: 1rem 0; }
+.interview-page input, .interview-page select, .interview-page textarea { padding: .7rem; max-width: 100%; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; }
+.interview-page textarea { width: 100%; resize: vertical; }
+.interview-page button { margin: .5rem .5rem .5rem 0; }
+.interview-page .interview-consent { display: flex; align-items: flex-start; }
+.interview-page blockquote { margin: 1rem 0; padding: 1rem; border-left: 3px solid var(--forest); background: var(--note); white-space: pre-wrap; overflow-wrap: anywhere; }
+.interview-snapshot { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); overflow-wrap: anywhere; }
+.interview-page select:focus-visible, .interview-page summary:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }

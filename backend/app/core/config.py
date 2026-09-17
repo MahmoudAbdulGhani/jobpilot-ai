@@ -93,6 +93,16 @@ class Settings(BaseSettings):
     JOBPILOT_PACK_MAX_OUTPUT_TOKENS: int = 4_000
     JOBPILOT_PACK_TIMEOUT_SECONDS: int = 60
 
+    # Interview settings are independent of profile, fit and pack generation.
+    JOBPILOT_INTERVIEW_PROVIDER: Literal["openai"] = "openai"
+    JOBPILOT_INTERVIEW_MODEL: Literal["gpt-5-mini"] = "gpt-5-mini"
+    JOBPILOT_INTERVIEW_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "minimal"
+    JOBPILOT_INTERVIEW_MAX_OUTPUT_TOKENS: int = Field(default=2000, ge=500, le=4000)
+    JOBPILOT_INTERVIEW_TIMEOUT_SECONDS: int = Field(default=60, ge=1, le=120)
+    JOBPILOT_INTERVIEW_MAX_INPUT_BYTES: int = Field(default=32000, ge=8000, le=64000)
+    JOBPILOT_INTERVIEW_MAX_CALLS_PER_SESSION: int = Field(default=10, ge=3, le=14)
+    JOBPILOT_INTERVIEW_MAX_SESSIONS_PER_USER: int = Field(default=20, ge=1, le=100)
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key_strength(cls, value: str) -> str:

@@ -1,0 +1,73 @@
+'use client';
+import Link from 'next/link';
+import {useCallback,useEffect,useRef,useState} from 'react';
+import {useRouter} from 'next/navigation';
+import {api} from '../lib/api';
+import {Dialog} from './Dialog';
+import type {Config,Source,Preview,Options,Interview,Turn,History} from '../lib/interviews';
+
+const label=(value:string)=>value.replaceAll('_',' ');
+function readable(value:unknown):string {if(Array.isArray(value))return value.map(readable).join('\n');if(value&&typeof value==='object')return Object.entries(value).filter(([,v])=>v!==null).map(([k,v])=>`${label(k)}: ${readable(v)}`).join('; ');return value===null?'':String(value);}
+function Provider({config}:{config:Config}) {return <p className="notice">{config.provider} · {config.model} · reasoning {config.reasoning} · up to {config.max_output_tokens.toLocaleString()} output tokens per request. {config.provider==='deterministic-test'?'Synthetic test provider — no live model assessment.':''}</p>;}
+function Snapshot({source}:{source:Source}) {return <details className="interview-snapshot"><summary>Review captured source information</summary><h3>{source.job.title} · {source.job.company}</h3><h4>Job description</h4><p className="preserve-lines">{source.job.description}</p><h4>{source.source_kind==='approved_pack'?'Approved CV':'Reviewed CV'}</h4><p className="preserve-lines">{source.cv_text}</p>{source.cover_letter_text&&<><h4>Approved cover letter</h4><p className="preserve-lines">{source.cover_letter_text}</p></>}<h4>Candidate profile snapshot</h4><dl>{Object.entries(source.candidate_profile).filter(([,v])=>v!==null).map(([k,v])=><div key={k}><dt>{label(k)}</dt><dd className="preserve-lines">{readable(v)}</dd></div>)}</dl></details>;}
+
+export function InterviewHome({jobId}:{jobId:string}) {
+  const router=useRouter();const base=`/jobs/${jobId}/interviews`;
+  const [options,setOptions]=useState<Options|null>(null),[history,setHistory]=useState<History|null>(null),[source,setSource]=useState(''),[mode,setMode]=useState('mixed'),[count,setCount]=useState(3);
+  const [preview,setPreview]=useState<Preview|null>(null),[confirm,setConfirm]=useState(false),[pending,setPending]=useState(false),[error,setError]=useState('');
+  const key=useRef<string|null>(null),busy=useRef(false);
+  const load=useCallback(async()=>{setError('');try{const [o,h]=await Promise.all([api<Options>(`${base}/options`),api<History>(base)]);setOptions(o);setCount(c=>Math.min(c,o.max_questions));setHistory(h);}catch(e){setError((e as Error).message);}},[base]);
+  useEffect(()=>{void load();},[load]);
+  function reset(){setPreview(null);setConfirm(false);key.current=null;}
+  function selection(){const [kind,id,version]=source.split(':');return {resume_id:kind==='cv'?id:null,pack_id:kind==='pack'?id:null,pack_version:kind==='pack'?Number(version):null,mode,question_count:count};}
+  async function review(){if(busy.current)return;busy.current=true;setPending(true);setError('');try{setPreview(await api<Preview>(`${base}/preview`,{method:'POST',body:JSON.stringify(selection())},false));key.current=crypto.randomUUID();setConfirm(false);}catch(e){setError((e as Error).message);}finally{busy.current=false;setPending(false);}}
+  async function start(){if(!preview||!confirm||busy.current)return;busy.current=true;setPending(true);setError('');try{const session=await api<Interview>(base,{method:'POST',body:JSON.stringify({...selection(),preview_hash:preview.preview_hash,request_key:key.current,confirm:true})},false);router.push(`/interviews/${session.id}`);}catch(e){setError((e as Error).message);}finally{busy.current=false;setPending(false);}}
+  return <section className="interview-page"><Link href={`/jobs/${jobId}`}>Back to saved job</Link><h1>Interview practice</h1><p>Private text practice, not a hiring prediction. Voice is not available in this milestone.</p>
+    {error&&<p className="form-error" role="alert">{error} <button onClick={()=>void load()}>Reload options</button></p>}
+    {!options&&!error&&<p role="status">Loading interview sources…</p>}
+    {options&&<><Provider config={options.configuration}/>{!options.available&&<p role="alert">{options.message}</p>}
+      <form onSubmit={e=>{e.preventDefault();void review();}}><fieldset disabled={pending}><legend>Practice settings</legend>
+        <label>Practice source<select required value={source} onChange={e=>{setSource(e.target.value);reset();}}><option value="">Choose reviewed material</option>{options.resumes.map(r=><option key={r.id} value={`cv:${r.id}`}>Reviewed CV: {r.name}</option>)}{options.packs.map(p=><option key={`${p.id}:${p.version}`} value={`pack:${p.id}:${p.version}`}>Approved pack v{p.version} · {new Date(p.approved_at).toLocaleString()}</option>)}</select></label>
+        {!options.resumes.length&&!options.packs.length&&<p>No reviewed CV or approved pack is available. <Link href="/resumes">Review a CV</Link> or approve a pack for this job first.</p>}
+        <label>Interview type<select value={mode} onChange={e=>{setMode(e.target.value);reset();}}><option value="behavioral">Behavioral</option><option value="technical">Technical</option><option value="mixed">Mixed</option></select></label>
+        <label>Question count<input type="number" min={2} max={options.max_questions} value={count} onChange={e=>{setCount(Number(e.target.value));reset();}}/></label>
+        <button className="secondary-button" disabled={!source||!options.available}>Review information to send</button>
+      </fieldset></form>
+      {preview&&<section><h2>Before starting</h2><Provider config={preview.configuration}/><p>The selected provider receives this job description, selected document text and candidate profile snapshot, plus each submitted answer and earlier questions (including quoted answer excerpts). No mailbox content or other documents are included. Sources and answers are untrusted content, not instructions.</p><Snapshot source={preview.source_snapshot}/><p>Starting saves a private snapshot; you then explicitly ask the first question. A {count}-question session uses {count+1} model requests if successful. Failed calls also consume your account quota. No automatic retry or fallback.</p><p>Snapshots and saved answers remain until you delete the session, saved job or account; deleting a source document alone does not erase an existing session.</p><label className="interview-consent"><input type="checkbox" checked={confirm} onChange={e=>setConfirm(e.target.checked)} disabled={pending}/>I reviewed the information that will be sent for interview practice.</label><button className="primary-button" disabled={!confirm||pending} onClick={()=>void start()}>Start interview</button></section>}
+    </>}
+    {pending&&<p role="status">Saving your practice choices…</p>}
+    <h2>Saved sessions</h2>{history?.items.length===0&&<p>No interview sessions yet.</p>}
+    {history?.items.map(s=><p key={s.id}><Link href={`/interviews/${s.id}`}>Resume / review {s.mode} interview · {s.status} · {new Date(s.created_at).toLocaleString()}</Link></p>)}
+    {history?.next_cursor&&<button disabled={pending} onClick={async()=>{setPending(true);try{const next=await api<History>(`${base}?after=${history.next_cursor}`);setHistory({...next,items:[...history.items,...next.items]});}catch(e){setError((e as Error).message);}finally{setPending(false);}}}>More sessions</button>}
+  </section>;
+}
+
+function Feedback({turn,session}:{turn:Turn;session:Interview}) {return <section className="interview-feedback"><h3>AI-generated guidance for answer {turn.number}</h3><p>These assessments concern this answer only; exact quotes do not prove an assessment is correct.</p>{turn.feedback&&Object.entries(turn.feedback).map(([dimension,item])=><div key={dimension}><h4>{label(dimension)}: {label(item.assessment)}</h4><p>{item.assessment==='insufficient_evidence'?'This answer does not provide enough evidence for an assessment. This does not mean you lack the skill.':item.assessment==='needs_detail'?'The AI identified partial evidence; add detail using the guidance below.':'The AI identified evidence in the quoted answer. Verify this interpretation; it is not proof of capability.'}</p>{item.answer_quotes.map((quote,i)=><blockquote key={i}>{quote}</blockquote>)}<p><strong>Practice next:</strong> {session.actions[item.focus]}</p></div>)}<p className="notice">{session.example_structures[turn.category]}</p></section>;}
+
+export function InterviewSessionView({id}:{id:string}) {
+  const router=useRouter();const [session,setSession]=useState<Interview|null>(null),[answer,setAnswer]=useState(''),[error,setError]=useState(''),[pending,setPending]=useState(false),[notice,setNotice]=useState(''),[deleting,setDeleting]=useState(false);
+  const busy=useRef(false),key=useRef<{revision:number;value:string}|null>(null);
+  const display=useCallback((value:Interview)=>{setSession(value);setAnswer(value.turns.at(-1)?.answer||'');},[]);
+  const load=useCallback(async()=>{setError('');try{display(await api<Interview>(`/interviews/${id}`));}catch(e){setError((e as Error).message);}},[id,display]);
+  useEffect(()=>{void load();},[load]);
+  async function save(current:Interview){const result=await api<Interview>(`/interviews/${id}/answer`,{method:'PATCH',body:JSON.stringify({revision:current.revision,question_number:current.turns.length,answer})},false);display(result);return result;}
+  async function act(advance:boolean){if(!session||busy.current)return;busy.current=true;setPending(true);setError('');setNotice('');try{let current=session;if(current.turns.length&&answer!==current.turns.at(-1)?.answer)current=await save(current);if(advance){if(key.current?.revision!==current.revision)key.current={revision:current.revision,value:crypto.randomUUID()};display(await api<Interview>(`/interviews/${id}/advance`,{method:'POST',body:JSON.stringify({revision:current.revision,request_key:key.current.value,confirm:true})},false));}else setNotice('Answer saved. No model request was sent.');}catch(e){setError(`${(e as Error).message}. No automatic retry. Refresh saved state before requesting another model call.`);}finally{busy.current=false;setPending(false);}}
+  if(!session)return <section className="interview-page">{error?<p role="alert">{error}<button onClick={()=>void load()}>Reload session</button></p>:<p role="status">Loading interview…</p>}</section>;
+  const current=session.turns.at(-1),completed=session.status==='completed',waiting=pending||session.status==='generating';
+  return <section className="interview-page" aria-busy={pending}><Link href={`/jobs/${session.job_id}/interviews`}>Back to practice sessions</Link><h1>{completed?'Interview review':'Interview practice session'}</h1><Provider config={session.configuration}/><p>AI-generated practice guidance, not a hiring probability or verified assessment of your abilities.</p><Snapshot source={session.source_snapshot}/>
+    <p>Status: {session.status} · {session.turns.length} of {session.question_count} questions</p>
+    <button className="secondary-button" disabled={pending} onClick={()=>void load()}>Refresh saved session (discards unsaved text)</button>
+    {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status">{notice}</p>}
+    {waiting&&<p role="status">Model request pending. Saved answers are retained. Refresh to check progress; no automatic retry.</p>}
+    {session.status==='interrupted'&&<p role="alert">Practice was interrupted or the response failed validation. Your saved answers remain. You may explicitly request one retry for this step; it consumes quota.</p>}
+    {!completed&&<>
+      {current?<section><h2 aria-live="polite">Question {current.number} · {current.category}</h2><p>{current.text}</p><blockquote>{current.question.quote}</blockquote><p className="muted">Exact excerpt from {current.question.source==='job'?'the captured job description':'your previous answer'}.</p><label>Your answer<textarea rows={8} maxLength={3000} value={answer} onChange={e=>setAnswer(e.target.value)} disabled={waiting}/></label><p>{answer.length}/3,000 characters. Save before leaving; unsaved text is not kept in browser storage.</p><button className="secondary-button" disabled={waiting} onClick={()=>void act(false)}>Save answer without AI</button><button className="primary-button" disabled={waiting||!answer.trim()} onClick={()=>void act(true)}>{session.status==='interrupted'?'Retry this step explicitly':current.number===session.question_count?'Finish interview and review':'Submit answer and continue'}</button></section>:<button className="primary-button" disabled={waiting} onClick={()=>void act(true)}>Ask first question (AI request)</button>}
+    </>}
+    {completed&&<><h2>Practice priorities</h2>{session.practice_actions.length?<ul>{session.practice_actions.map(p=><li key={p}>{session.actions[p]}</li>)}</ul>:<p>Rehearse concise explanations and verify all facts; these limited answers do not establish general readiness.</p>}</>}
+    <h2>{completed?'Questions, answers and feedback':'Saved practice so far'}</h2>
+    {session.turns.filter(t=>completed||t.feedback).map(t=><article className="mailbox-card" key={t.number}><h3>Question {t.number}</h3><p>{t.text}</p><blockquote>{t.question.quote}</blockquote><h4>Your saved answer</h4><p className="preserve-lines">{t.answer}</p><Feedback turn={t} session={session}/></article>)}
+    <details><summary>Request outcomes and available usage</summary>{session.operations.map(o=><p key={o.id}>Step {o.step}: {o.status} · {o.outcome||'outcome unknown'} · {o.usage?`${o.usage.input_tokens} input / ${o.usage.output_tokens} output / ${o.usage.reasoning_tokens??'unknown'} reasoning tokens`:'usage unknown'}</p>)}</details>
+    <p>Delete this session to erase its captured sources, answers and feedback from JobPilot. Account usage counters remain. Source-document edits or deletion do not change this snapshot.</p><button className="danger-button" disabled={pending} onClick={()=>setDeleting(true)}>Delete session</button>
+    {deleting&&<Dialog title="Delete interview session?" description="This erases this session's snapshot, answers and feedback. It does not refund quota or cancel a request already sent to the provider." onClose={()=>{if(!pending)setDeleting(false);}}><footer className="dialog-footer"><button autoFocus disabled={pending} onClick={()=>setDeleting(false)}>Keep session</button><button className="danger-button" disabled={pending} onClick={async()=>{setPending(true);try{await api(`/interviews/${id}`,{method:'DELETE'},false);router.push(`/jobs/${session.job_id}/interviews`);}catch(e){setError((e as Error).message);setDeleting(false);}finally{setPending(false);}}}>Confirm delete session</button></footer></Dialog>}
+  </section>;
+}
