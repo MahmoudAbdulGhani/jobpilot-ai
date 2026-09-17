@@ -19,6 +19,14 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 
 
+def pytest_collection_modifyitems(items):
+    """Preservation mode must also exclude legacy schema downgrade regressions."""
+    if os.environ.get("JOBPILOT_TEST_PRESERVE_DB") == "1":
+        for item in items:
+            if "command.downgrade(" in Path(item.path).read_text(encoding="utf-8"):
+                item.add_marker(pytest.mark.skip(reason="Schema downgrade is forbidden in database preservation mode"))
+
+
 def _truncate_all_tables(database_url: str) -> None:
     """Empty every table so each test session starts from a known state.
 
@@ -68,7 +76,8 @@ def test_engine():
     config = Config(str(ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", settings.test_database_url)
     command.upgrade(config, "head")
-    _truncate_all_tables(settings.test_database_url)
+    if os.environ.get("JOBPILOT_TEST_PRESERVE_DB") != "1":
+        _truncate_all_tables(settings.test_database_url)
 
     return create_engine(
         settings.test_database_url,

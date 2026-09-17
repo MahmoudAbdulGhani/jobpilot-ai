@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_DISCOVERY_ENABLED: bool = True
+    JOBPILOT_DISCOVERY_TEST_PROVIDER: bool = False
     JOBPILOT_AI_PROVIDER: Literal["openai", "groq"] = "openai"
     JOBPILOT_AI_MODEL: str = "gpt-5-mini"
     JOBPILOT_OPENAI_API_KEY: str | None = Field(default=None, repr=False, exclude=True)

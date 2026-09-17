@@ -180,6 +180,33 @@ documented in `.env.example`. Encrypted or malformed files and documents that
 exceed these limits produce a visible failure state. Image-only/scanned PDFs
 require OCR and are reported as such; OCR is intentionally outside this milestone.
 
+### Job discovery and reviewed import
+
+Open **Discover jobs** to search JobTech JobSearch, the Swedish Public Employment
+Service's open job-ad API. No API key, paid subscription or AI call is required.
+It covers mainly Swedish listings, not the global job market. Official
+[API documentation and CC0 license](https://jobsearch.api.jobtechdev.se/) and
+[open-data access policy](https://arbetsformedlingen.se/other-languages/english-engelska/about-the-website/apis-and-open-data)
+were checked on 2026-09-17.
+
+Search by keywords, sort by relevance/newest, or use the source's **likely remote**
+phrase-matching filter. Missing location, salary, workplace information or dates
+remain unknown. Preview the plain-text listing, then explicitly import it.
+Duplicate source IDs link to your existing job, including archived jobs; another
+user's collection stays private. Import stores the reviewed snapshot and never
+refreshes it over your edits. Imported jobs use the existing fit, pack and tracking
+flows; their normal AI consent and review gates still apply.
+
+`JOBPILOT_DISCOVERY_ENABLED=true` enables discovery independently of AI.
+`JOBPILOT_DISCOVERY_TEST_PROVIDER=false` must remain false outside the guarded
+browser harness. The additive migration head is `a2b3c4d5e6f7`; on another checkout,
+run `.venv/Scripts/python.exe -m alembic upgrade head` from `backend` before use.
+See [source contract, limits and verification](docs/job-discovery.md).
+
+For backend checks that must preserve existing test data, set
+`JOBPILOT_TEST_PRESERVE_DB=1` in that test process. This skips table truncation and
+legacy downgrade tests; ordinary test transactions still roll back their own work.
+
 ### AI profile suggestions
 
 After confirming extracted CV text, choose **Suggest profile details with AI**.

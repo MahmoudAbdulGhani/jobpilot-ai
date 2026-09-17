@@ -34,7 +34,8 @@ test.afterEach(async ({ request }) => {
   createdUsers.length = 0;
 });
 
-test('connected application-pack workflow verifies PDF and DOCX exports', async ({ browser, request }) => {
+for (const imported of [false, true]) {
+test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow verifies PDF and DOCX exports`, async ({ browser, request }) => {
   const user = await bootstrapUser(request, 'pack-flow');
   const token = await accessToken(request, user);
   const auth = { Authorization: `Bearer ${token}` };
@@ -52,7 +53,10 @@ test('connected application-pack workflow verifies PDF and DOCX exports', async 
   });
   expect(profile.ok()).toBeTruthy();
 
-  const createdJob = await request.post(`${API}/jobs`, {
+  const preview = imported ? await request.get(`${API}/discovery/synthetic-100/preview`, { headers: auth }) : null;
+  const createdJob = imported ? await request.post(`${API}/discovery/import`, {
+    headers: auth, data: { preview_token: (await preview!.json()).preview_token, confirm: true },
+  }) : await request.post(`${API}/jobs`, {
     headers: auth,
     data: {
       title: 'Junior Backend Developer',
@@ -64,7 +68,8 @@ test('connected application-pack workflow verifies PDF and DOCX exports', async 
     },
   });
   expect(createdJob.ok()).toBeTruthy();
-  const job = await createdJob.json() as { id: string };
+  const createdBody = await createdJob.json();
+  const job = (imported ? createdBody.job : createdBody) as { id: string };
 
   const pdfBuffer = makePdfBuffer('Connected CV text for application-pack export verification');
   const resumeUpload = await request.post(`${API}/resumes`, {
@@ -159,3 +164,4 @@ test('connected application-pack workflow verifies PDF and DOCX exports', async 
   expect(pageErrors).toEqual([]);
   await context.close();
 });
+}

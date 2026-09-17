@@ -92,6 +92,10 @@ class SavedJobResponse(BaseModel):
     location: str | None
     description: str | None
     source_url: str | None
+    source_provider: str | None = None
+    source_external_id: str | None = None
+    source_snapshot: dict | None = None
+    imported_at: datetime | None = None
     notes: str | None
     is_archived: bool
     created_at: datetime
