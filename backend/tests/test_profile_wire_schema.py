@@ -276,3 +276,59 @@ def test_public_apply_selection_uses_title_only():
     item["value"]["job_title"] = item["value"].pop("title")
     with pytest.raises(ValidationError):
         ApplySuggestionRequest.model_validate({"selections": [item]})
+
+
+def test_canonical_sdk_request_meets_documented_structural_requirements():
+    """Check observable requirements, without claiming undocumented keyword support."""
+    import hashlib
+    from pathlib import Path
+    from app.evaluation import __main__ as evaluation
+    from app.evaluation.fixtures import cases
+    from app.services.ai_provider import ProviderFailure
+    captured = []
+
+    def transport(request):
+        captured.append(request)
+        return httpx.Response(400, json={"error": {
+            "type": "invalid_request_error", "code": "json_validate_failed"}})
+
+    with OpenAI(api_key="synthetic", base_url="https://api.groq.com/openai/v1", max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL,
+            timeout=60, max_output_tokens=1500, client=evaluation.Meter(client))
+        with pytest.raises(ProviderFailure):
+            provider.suggest(cases()[0]["source"]["cv_text"])
+    assert len(captured) == 1  # HTTP 400 is never retried or sent to another provider.
+    request = captured[0]
+    assert str(request.url) == "https://api.groq.com/openai/v1/responses"
+    retained = Path(__file__).resolve().parents[2] / "evidence/groq-profile-request-offline-20260917.json"
+    assert request.content == retained.read_bytes()
+    plan = evaluation.build_plan("groq", pilot=True, task="profile")
+    assert hashlib.sha256(request.content).hexdigest() == plan["requests"][0]["sha256"]
+    payload = json.loads(request.content)
+    assert payload["model"] == "openai/gpt-oss-20b"
+    assert payload["store"] is False and "tools" not in payload and not payload.get("stream")
+    assert payload["service_tier"] == "default"
+    assert payload["max_output_tokens"] == 1500
+    assert payload["text"]["format"]["strict"] is True
+    schema = payload["text"]["format"]["schema"]
+    objects, refs = [], []
+
+    def visit(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert set(node["required"]) == set(node["properties"])
+                assert node["additionalProperties"] is False
+                objects.append(node)
+            if "$ref" in node:
+                ref = node["$ref"]
+                assert ref.startswith("#/$defs/")
+                assert ref.removeprefix("#/$defs/") in schema["$defs"]
+                refs.append(ref)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+    visit(schema)
+    assert len(objects) == 11 and len(refs) == 15

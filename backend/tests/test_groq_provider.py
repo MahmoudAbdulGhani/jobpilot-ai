@@ -653,3 +653,27 @@ def test_profile_budget_rounds_0009195_upward(monkeypatch):
     assert calculated == Decimal("0.0009195")
     assert reported == Decimal("0.000920")
     assert reported >= calculated
+
+
+def test_retained_http_code_does_not_prove_request_schema_rejection():
+    calls = []
+
+    def transport(request):
+        calls.append(request)
+        return httpx.Response(400, json={"error": {
+            "type": "invalid_request_error", "code": "json_validate_failed",
+            "message": "private provider explanation", "failed_generation": "private output"}})
+
+    with OpenAI(api_key="synthetic", base_url="https://api.groq.com/openai/v1", max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        report = evaluation.execute(client, evaluation.build_plan("groq", pilot=True, task="profile"),
+                                    lambda report: None, stop_on_failure=True)
+    assert len(calls) == report["attempted_requests"] == 1
+    row = report["results"][0]
+    assert row["failure_category"] == "http_rejection"  # Transport outcome only.
+    assert row["provider_error_code"] == "json_validate_failed"
+    assert row["status_code"] == 400
+    assert row["output"] is None and row["usage"] is None
+    assert "validation" not in row  # No client content parse occurred.
+    assert "private" not in json.dumps(report)
+    assert report["stopped"]
