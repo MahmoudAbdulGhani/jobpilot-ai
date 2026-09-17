@@ -29,12 +29,16 @@ def test_pack_serialization_preserves_production_contract():
     assert plan["requests"][0]["input_token_estimate"] == len(diagnostic.prepared_request("pack")) + 2048
     assert plan["requests"][0]["complete_token_estimate"] <= 8000
 
-@pytest.mark.parametrize("mode", ["success", "missing_notes", "missing_nullable", "missing_letter", "truncated", "incomplete", "empty_evidence", "unsupported_quote", "http_schema", "http_generation"])
-def test_pack_diagnostic_acceptance_and_safe_capture(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("provider_name", ["groq", "openai"])
+@pytest.mark.parametrize("mode", ["success", "structural_labels", "missing_notes", "missing_nullable", "missing_letter", "truncated", "incomplete", "empty_evidence", "unsupported_quote", "http_schema", "http_generation"])
+def test_pack_diagnostic_acceptance_and_safe_capture(tmp_path, monkeypatch, mode, provider_name):
     dry, result = tmp_path / "dry.json", tmp_path / "result.json"
-    diagnostic.main(["--task", "pack", "--output", str(dry)])
+    diagnostic.main(["--provider", provider_name, "--task", "pack", "--output", str(dry)])
     plan = json.loads(dry.read_text())["plan"]
     output = DeterministicTestProvider().create_pack(cases()[0]["source"]).model_dump(mode="json")
+    if mode == "structural_labels":
+        output["cv"]["blocks"].insert(1, {"id": "contact-label", "kind": "paragraph", "text": "Contact", "evidence": []})
+        output["cover_letter"]["blocks"].insert(1, {"id": "subject", "kind": "paragraph", "text": "Application for Backend Engineer", "evidence": []})
     if mode == "missing_notes": output.pop("review_notes")
     if mode == "missing_nullable": output["cv"]["blocks"][1]["evidence"][0].pop("fact_id")
     if mode == "missing_letter": output.pop("cover_letter")
@@ -45,6 +49,10 @@ def test_pack_diagnostic_acceptance_and_safe_capture(tmp_path, monkeypatch, mode
     calls = []
     def transport(request):
         calls.append(request)
+        expected_url = "https://api.openai.com/v1/responses" if provider_name == "openai" else "https://api.groq.com/openai/v1/responses"
+        assert str(request.url) == expected_url
+        if provider_name == "openai":
+            assert json.loads(request.content)["reasoning"] == {"effort": "minimal"}
         if mode.startswith("http_"):
             return httpx.Response(400, json={"error": {"type": "invalid_request_error",
                 "code": "invalid_json_schema" if mode == "http_schema" else "json_validate_failed",
@@ -52,20 +60,31 @@ def test_pack_diagnostic_acceptance_and_safe_capture(tmp_path, monkeypatch, mode
                 "failed_generation": generation[:-10] if mode == "http_generation" else None}})
         return httpx.Response(200, json={"id": "mock", "object": "response", "created_at": 0,
             "model": "openai/gpt-oss-20b", "status": "incomplete" if mode == "incomplete" else "completed",
+            "incomplete_details": {"reason": "max_output_tokens"} if mode == "incomplete" else None,
             "output": [{"id": "msg", "type": "message", "role": "assistant", "status": "completed", "content": [
                 {"type": "output_text", "text": generation, "annotations": []}]}]})
     monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
     monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "synthetic")
+    monkeypatch.setenv("JOBPILOT_OPENAI_API_KEY", "synthetic")
     monkeypatch.setattr(diagnostic.logging, "disable", lambda *args: None)
     monkeypatch.setattr(httpx, "HTTPTransport", lambda **kwargs: httpx.MockTransport(transport))
-    code = diagnostic.main(["--task", "pack", "--live", "--max-cost-usd", str(plan["max_estimated_cost_usd"]), "--dry-report", str(dry), "--output", str(result)])
+    code = diagnostic.main(["--provider", provider_name, "--task", "pack", "--live", "--max-cost-usd", str(plan["max_estimated_cost_usd"]), "--dry-report", str(dry), "--output", str(result)])
     report = json.loads(result.read_text())
     assert len(calls) == report["actual_request_count"] == 1
-    assert (code == 0) == (mode == "success")
-    assert (report["results"][0]["status"] == "contract_pass") == (mode == "success")
+    assert (code == 0) == (mode in ("success", "structural_labels"))
+    assert (report["results"][0]["status"] == "contract_pass") == (mode in ("success", "structural_labels"))
     assert "private-token" not in result.read_text() and "secret@example.test" not in result.read_text()
+    if mode == "structural_labels":
+        row = report["results"][0]
+        assert row["structural_labels_corrected"] is True
+        normalized = json.loads(row["output_redacted"]["text"])
+        assert normalized["cv"]["blocks"][1]["kind"] == "heading"
+        assert len(normalized["cover_letter"]["blocks"]) == len(output["cover_letter"]["blocks"]) - 1
     if mode in ("missing_notes", "missing_nullable"):
         assert report["synthetic_diagnostic"]["returned_generation_local_parse"] == "failed"
+    if mode == "incomplete":
+        assert report["synthetic_diagnostic"]["provider_status"] == "incomplete"
+        assert report["synthetic_diagnostic"]["incomplete_reason"]["text"] == "max_output_tokens"
     if mode == "http_generation":
         assert report["synthetic_diagnostic"]["failed_generation_local_parse"] == "failed"
 
@@ -165,3 +184,29 @@ def test_unsupported_relationship_still_needs_semantic_review():
     prompt = json.loads(diagnostic.prepared_request("pack"))["instructions"]
     assert "does not establish that the API used Python" in prompt
     assert "semantic correctness; the user must review both drafts" in prompt
+
+
+def test_openai_comparison_uses_existing_adapter_and_same_source():
+    from pathlib import Path
+    baseline = json.loads((Path(__file__).resolve().parents[2] / "evidence/groq-pack-v2-dry-20260917.json").read_text())["request"]
+    wire = json.loads(diagnostic.prepared_request("pack", "openai"))
+    assert wire["input"] == baseline["input"]
+    assert wire["instructions"] == baseline["instructions"]
+    assert wire["model"] == "gpt-5-mini"
+    assert wire["max_output_tokens"] == 4000
+    assert wire["reasoning"] == {"effort": "minimal"}
+    assert wire["text"]["format"]["name"] == "PackProviderOutput"
+    assert wire["text"]["format"]["strict"] is True
+    plan = evaluation.build_plan("openai", pilot=True, task="pack", pack_reasoning="minimal")
+    assert plan["max_requests"] == 1 and plan["max_estimated_cost_usd"] == 0.016
+    assert plan["requests"][0]["input_token_estimate"] == len(diagnostic.prepared_request("pack", "openai")) + 2048
+
+
+def test_minimal_diagnostic_changes_only_reasoning_in_serialized_request():
+    from pathlib import Path
+    original = json.loads((Path(__file__).resolve().parents[2] /
+        "evidence/openai-pack-comparison-dry-20260917.json").read_text())["request"]
+    proposed = json.loads(diagnostic.prepared_request("pack", "openai"))
+    assert proposed.pop("reasoning") == {"effort": "minimal"}
+    assert proposed == original
+    assert "pack_reasoning" not in evaluation.build_plan("openai", pilot=True, task="pack")

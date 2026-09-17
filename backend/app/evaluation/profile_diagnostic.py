@@ -19,7 +19,7 @@ from app.evaluation import __main__ as evaluation
 from app.evaluation.fixtures import cases
 from app.evaluation.validation_diagnostics import validation_diagnostics
 from app.schemas.profile_suggestions import GroqProfileOutput
-from app.services.ai_provider import GROQ_BASE_URL, GroqResponsesProvider, ProviderFailure
+from app.services.ai_provider import GROQ_BASE_URL, GroqResponsesProvider, OpenAIResponsesProvider, ProviderFailure
 
 # Only this diagnostic retains selected body fields. It cannot take arbitrary input.
 # Unknown words, names, addresses, numbers and supplied credentials are redacted.
@@ -76,14 +76,17 @@ def usage_from(body):
 
 class SyntheticTransport(httpx.BaseTransport):
     """Guard one serialized request and capture before the SDK can lose a response."""
-    def __init__(self, inner, request_hash, secrets=(), task="profile"):
+    def __init__(self, inner, request_hash, secrets=(), task="profile", base_url=GROQ_BASE_URL):
+        if base_url not in (GROQ_BASE_URL, "https://api.openai.com/v1"):
+            raise ValueError("Unsupported diagnostic endpoint")
+        self.base_url = base_url
         self.task = task
         self.inner, self.request_hash, self.secrets = inner, request_hash, secrets
         self.count = 0
         self.details = {}
 
     def handle_request(self, request):
-        if self.count or str(request.url) != GROQ_BASE_URL + "/responses" or request.method != "POST":
+        if self.count or str(request.url) != self.base_url + "/responses" or request.method != "POST":
             raise RuntimeError("Diagnostic permits exactly one canonical request")
         if hashlib.sha256(request.content).hexdigest() != self.request_hash:
             raise RuntimeError("Diagnostic serialization changed")
@@ -173,18 +176,25 @@ class SyntheticTransport(httpx.BaseTransport):
         self.inner.close()
 
 
-def prepared_request(task="profile"):
+def prepared_request(task="profile", provider_name="groq"):
+    if provider_name not in ("groq", "openai") or (provider_name == "openai" and task != "pack"):
+        raise ValueError("OpenAI comparison is pack-only")
+    base_url = GROQ_BASE_URL if provider_name == "groq" else "https://api.openai.com/v1"
+    provider_class = evaluation.evaluation_provider(provider_name, "minimal" if provider_name == "openai" else None)
+    model = evaluation.GROQ_MODEL if provider_name == "groq" else evaluation.MODEL
+    cap = (evaluation.MAX_OUTPUT_TOKENS if provider_name == "openai" else
+           evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS if task == "profile" else evaluation.GROQ_PACK_MAX_OUTPUT_TOKENS)
     if task not in ("profile", "pack"):
         raise ValueError("Unsupported synthetic task")
     captured = []
     def capture(request):
         captured.append(request.content)
         return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
-    with OpenAI(api_key="synthetic", base_url=GROQ_BASE_URL, max_retries=0,
+    with OpenAI(api_key="synthetic", base_url=base_url, max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(capture))) as client:
         try:
-            provider = GroqResponsesProvider(api_key="unused", model=evaluation.GROQ_MODEL, timeout=60,
-                max_output_tokens=(evaluation.GROQ_PROFILE_MAX_OUTPUT_TOKENS if task == "profile" else evaluation.GROQ_PACK_MAX_OUTPUT_TOKENS), client=evaluation.Meter(client))
+            provider = provider_class(api_key="unused", model=model, timeout=60,
+                max_output_tokens=cap, client=evaluation.Meter(client))
             evaluation.dispatch(provider, task, cases()[0]["source"])
         except ProviderFailure:
             pass
@@ -194,16 +204,21 @@ def prepared_request(task="profile"):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--provider", choices=("groq", "openai"), default="groq")
     parser.add_argument("--task", choices=("profile", "pack"), default="profile")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--max-cost-usd", type=Decimal)
     parser.add_argument("--dry-report", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
-    plan = evaluation.build_plan("groq", pilot=True, task=args.task, env={})
-    if plan["tokens_per_minute"] != 8000:
+    if args.provider == "openai" and args.task != "pack":
+        parser.error("OpenAI comparison is pack-only")
+    base_url = GROQ_BASE_URL if args.provider == "groq" else "https://api.openai.com/v1"
+    plan = evaluation.build_plan(args.provider, pilot=True, task=args.task, env={},
+                                 pack_reasoning="minimal" if args.provider == "openai" else None)
+    if args.provider == "groq" and plan["tokens_per_minute"] != 8000:
         parser.error("This diagnostic requires the existing 8,000 TPM limit")
-    request = prepared_request(args.task)
+    request = prepared_request(args.task, args.provider)
     if hashlib.sha256(request).hexdigest() != plan["requests"][0]["sha256"]:
         parser.error("Prepared request differs from the plan")
     if args.live:
@@ -221,12 +236,13 @@ def main(argv=None):
         return 0
     logging.disable(logging.CRITICAL)
     config = evaluation._load_dotenv()
-    key = os.environ.get("JOBPILOT_GROQ_API_KEY") or config.get("JOBPILOT_GROQ_API_KEY")
+    key_name = "JOBPILOT_GROQ_API_KEY" if args.provider == "groq" else "JOBPILOT_OPENAI_API_KEY"
+    key = os.environ.get(key_name) or config.get(key_name)
     if not key:
-        parser.error("Groq credential unavailable")
+        parser.error("Selected provider credential unavailable")
     secrets = [key] + [v for k, v in {**config, **os.environ}.items() if isinstance(v, str) and v and
                       any(word in k.upper() for word in ("SECRET", "PASSWORD", "TOKEN", "API_KEY"))]
-    transport = SyntheticTransport(httpx.HTTPTransport(retries=0), plan["requests"][0]["sha256"], secrets, task=args.task)
+    transport = SyntheticTransport(httpx.HTTPTransport(retries=0), plan["requests"][0]["sha256"], secrets, task=args.task, base_url=base_url)
     def save(report):
         if args.task == "pack":
             for row in report.get("results", []):
@@ -247,9 +263,9 @@ def main(argv=None):
         temporary = args.output.with_suffix(".tmp")
         temporary.write_text(json.dumps(safe, indent=2), encoding="utf-8")
         temporary.replace(args.output)
-    with OpenAI(api_key=key, base_url=GROQ_BASE_URL, max_retries=0, timeout=60,
+    with OpenAI(api_key=key, base_url=base_url, max_retries=0, timeout=60,
                 http_client=httpx.Client(transport=transport, timeout=60, follow_redirects=False)) as client:
-        report = evaluation.execute(client, plan, save, scheduler=evaluation.TokenScheduler(8000), stop_on_failure=True)
+        report = evaluation.execute(client, plan, save, scheduler=evaluation.TokenScheduler(8000) if args.provider == "groq" else None, stop_on_failure=True)
     print(f"Stopped after {transport.count} HTTP attempt; see {args.output}")
     return 0 if report["results"][0]["status"] == "contract_pass" else 1
 

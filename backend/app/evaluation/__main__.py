@@ -97,8 +97,24 @@ class Planned(ProviderFailure):
     pass
 
 
+class MinimalReasoningPackDiagnostic(OpenAIResponsesProvider):
+    """Evaluation-only option; production adapters and other tasks are unchanged."""
+    def _pack_request_options(self):
+        if self.model != "gpt-5-mini":
+            raise ValueError("Minimal pack diagnostic requires gpt-5-mini")
+        return {"reasoning": {"effort": "minimal"}}
+
+
+def evaluation_provider(provider_name, pack_reasoning=None):
+    if pack_reasoning is not None:
+        if provider_name != "openai" or pack_reasoning != "minimal":
+            raise ValueError("Unsupported pack diagnostic reasoning")
+        return MinimalReasoningPackDiagnostic
+    return GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
+
+
 def request_plan(task, source, provider_name="openai", max_output_tokens=None,
-                 max_total_tokens=None):
+                 max_total_tokens=None, pack_reasoning=None):
     if max_output_tokens is None:
         max_output_tokens = MAX_OUTPUT_TOKENS
     import httpx
@@ -110,7 +126,7 @@ def request_plan(task, source, provider_name="openai", max_output_tokens=None,
         encoded = request.content
         raise Planned()
 
-    provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
+    provider_class = evaluation_provider(provider_name, pack_reasoning)
     # Capture the final SDK serialization without any network transport.
     with OfflineSerializationClient(api_key="offline-placeholder", max_retries=0,
                 http_client=httpx.Client(transport=httpx.MockTransport(capture))) as client:
@@ -146,7 +162,9 @@ def maximum_budget(amount: Decimal, precision: int = 6) -> float:
     return float(amount.quantize(Decimal(1).scaleb(-precision), rounding=ROUND_CEILING))
 
 
-def build_plan(provider_name="openai", pilot=False, env=None, task=None):
+def build_plan(provider_name="openai", pilot=False, env=None, task=None, pack_reasoning=None):
+    if pack_reasoning is not None and (provider_name != "openai" or not pilot or task != "pack" or pack_reasoning != "minimal"):
+        raise ValueError("Reasoning override is restricted to the OpenAI pack-only pilot")
     if provider_name not in {"openai", "groq"}:
         raise ValueError("Unsupported evaluation provider")
     if task is not None and task not in TASKS:
@@ -172,7 +190,7 @@ def build_plan(provider_name="openai", pilot=False, env=None, task=None):
             entries.append({"case": case["id"], "task": task, "prompt_version": version,
                             **request_plan(task, case["source"], provider_name,
                                            max_output_tokens=output_cap,
-                                           max_total_tokens=tokens_per_minute)})
+                                           max_total_tokens=tokens_per_minute, pack_reasoning=pack_reasoning)})
     if len(entries) != expected_requests:
         raise ValueError(
             "Fixture count changed; review the request and cost budget")
@@ -207,6 +225,9 @@ def build_plan(provider_name="openai", pilot=False, env=None, task=None):
         "rates_usd_per_million": rates,
         "requests": entries,
     }
+
+    if pack_reasoning is not None:
+        plan["pack_reasoning"] = pack_reasoning
 
     if groq:
         plan["tokens_per_minute"] = tokens_per_minute
@@ -386,7 +407,7 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
     max_requests = plan.get("max_requests", MAX_REQUESTS)
     output_cap = plan.get("max_output_tokens_per_request", MAX_OUTPUT_TOKENS)
     meter = Meter(client, max_requests=max_requests)
-    provider_class = GroqResponsesProvider if provider_name == "groq" else OpenAIResponsesProvider
+    provider_class = evaluation_provider(provider_name, plan.get("pack_reasoning"))
     model = plan.get("model", GROQ_MODEL if provider_name == "groq" else MODEL)
     provider = provider_class(
         api_key="injected-client", model=model, timeout=TIMEOUT,
@@ -429,6 +450,12 @@ def execute(client, plan, save, scheduler=None, stop_on_failure=False):
                 row["output"] = output.model_dump(mode="json")
                 row["status"] = "validation_failure"
                 row["checks"] = check_output(task, output, case["source"])
+                if task == "pack":
+                    # Match production's canonical document rendering, while
+                    # transport diagnostics retain the unmodified provider text.
+                    canonical = validate_generated(output, case["source"]).model_dump(mode="json")
+                    row["structural_labels_corrected"] = canonical != row["output"]
+                    row["output"] = canonical
                 row["status"] = "contract_pass"
             except Exception as error:
                 # Upstream exception strings may include credentials or payloads.

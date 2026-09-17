@@ -137,8 +137,32 @@ def response(db, pack, version=None):
     )
 
 
+def canonical_structural_labels(output: PackProviderOutput, snapshot):
+    """Canonicalize only known labels; never guess from length or factual prose.
+
+    Work on a copy so raw provider evidence remains available for diagnostics.
+    Revalidate after removing a redundant label: headings alone are not a document.
+    """
+    payload = output.model_dump(mode="json")
+    for block in payload["cv"]["blocks"]:
+        if block["kind"] == "paragraph" and block["text"] == "Contact" and not block["evidence"]:
+            block["kind"] = "heading"
+    letter = payload["cover_letter"]["blocks"]
+    title = snapshot.get("job", {}).get("title")
+    if isinstance(title, str) and title and any(
+        block["kind"] == "heading" and block["text"] == "Cover letter" for block in letter
+    ):
+        # Exact saved-job context only, redundant with the document heading.
+        # No prefix matching, whitespace folding, inferred titles or appended claims.
+        payload["cover_letter"]["blocks"] = [block for block in letter if not (
+            block["kind"] == "paragraph" and not block["evidence"]
+            and block["text"] == "Application for " + title
+        )]
+    return PackProviderOutput.model_validate(payload)
+
+
 def validate_generated(output, snapshot):
-    output = PackProviderOutput.model_validate(output)
+    output = canonical_structural_labels(PackProviderOutput.model_validate(output), snapshot)
     facts = {fact["id"] for fact in snapshot["profile_facts"]}
     for document in (output.cv, output.cover_letter):
         for block in document.blocks:
