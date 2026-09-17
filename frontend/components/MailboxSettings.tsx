@@ -24,8 +24,8 @@ function explain(error:unknown) { return error instanceof Error ? messages[error
 
 function Permissions({value,onChange,disabled}:{value:Capability[];onChange:(v:Capability[])=>void;disabled:boolean}) {
   return <fieldset disabled={disabled} className="mailbox-permissions"><legend>Optional capabilities</legend>
-    {(['send','read_replies'] as Capability[]).map(c => <label key={c}><input type="checkbox" checked={value.includes(c)} onChange={e=>onChange(e.target.checked?[...value,c]:value.filter(v=>v!==c))}/>{c==='send'?'Allow sending applications':'Allow reading replies'}</label>)}
-    <p>Reading replies requires Google’s read-only access to the whole mailbox, not just application replies. No inbox reading is implemented or started here.</p>
+    {(['send','read_replies'] as Capability[]).map(c => <label key={c}><input type="checkbox" checked={value.includes(c)} onChange={e=>onChange(e.target.checked?[...value,c]:value.filter(v=>v!==c))}/>{c==='send'?'Allow sending applications':'Enable reply tracking'}</label>)}
+    <p>Reading replies requires Google’s read-only access to the whole mailbox, not just application replies. Enabling grants mailbox-wide reading permission. Synchronization runs only when you explicitly choose Sync replies for a JobPilot application; connecting alone never scans.</p>
   </fieldset>;
 }
 
@@ -75,7 +75,7 @@ export function MailboxSettings() {
     catch(e) {setError(explain(e));setBusy(false);}
   }
   return <Shell><div className="collection-page mailbox-settings"><p className="eyebrow">Account settings</p><h1>Mailboxes</h1>
-    <p>Connect Gmail for user-approved email applications from saved jobs. Connecting never sends messages or scans your inbox. Every application requires a separate message and attachment review followed by explicit Send confirmation. Reply processing is not implemented.</p>
+    <p>Connect Gmail for user-approved email applications from saved jobs. Connecting never sends messages or scans your inbox. Every application requires a separate message and attachment review followed by explicit Send confirmation. Reply tracking is optional and requires separate reading consent plus an explicit synchronization action.</p>
     <p>Start with identity only, or select a capability before granting permission. Your Google tokens stay encrypted on the server. You can disconnect and revoke access at any time.</p>
     <p>You can also remove grants directly in <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">Google account connections</a>. Unchecking a capability disables it in JobPilot after consent; removing the Google grant requires disconnect and revoke.</p>
     {notice&&<p role="status" className="notice">{notice}</p>}{error&&<p role="alert" className="form-error">{error}</p>}

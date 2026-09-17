@@ -1,6 +1,6 @@
 # Gmail connection foundation
 
-This foundation connects a mailbox and manages consent and credentials. The OAuth interface has no mail operations. [User-approved email applications](email-applications.md) now provide a separate send-only workflow from saved jobs. Connecting, refreshing credentials and opening Settings never send messages or scan an inbox. No message-list, message-read, watch or polling operation is implemented. A capability grant is not application approval.
+This foundation connects a mailbox and manages consent and credentials. The OAuth interface has no mail operations. [User-approved email applications](email-applications.md) provide a separate send workflow; [reply synchronization](reply-synchronization.md) adds separately consented, explicitly triggered bounded reads. Connecting, refreshing credentials and opening Settings never send messages or scan an inbox. No watch or background polling is implemented. A capability grant is not application approval or a synchronization request.
 
 ## Google setup (not performed)
 

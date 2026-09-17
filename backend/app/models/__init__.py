@@ -11,8 +11,10 @@ from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.models.mailbox import MailboxConnection, MailboxOAuthState
 from app.models.email_application import EmailApplication
+from app.models.mailbox_reply import ReplySync, MailboxReply
 
 __all__ = [
+    "ReplySync", "MailboxReply",
     "EmailApplication",
     "MailboxConnection", "MailboxOAuthState",
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",

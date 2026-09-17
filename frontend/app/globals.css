@@ -80,4 +80,9 @@
 .email-review dd { margin-left: 0; white-space: pre-wrap; }
 .email-review button { margin: .5rem .8rem .5rem 0; }
 .email-confirm { display: flex; align-items: flex-start; gap: .7rem; margin: 1.5rem 0; }
+.reply-timeline { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.reply-timeline p { margin: 1rem 0; }
+.reply-timeline button { margin: .5rem .7rem .5rem 0; }
+.reply-timeline label { display: grid; gap: .5rem; }
+.reply-timeline select { padding: .7rem; max-width: 100%; font: inherit; }
 @media(min-width:881px) { .app-header { gap: 32px; } .primary-nav { min-width: 0; } }

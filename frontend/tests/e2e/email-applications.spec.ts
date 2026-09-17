@@ -17,7 +17,7 @@ function pdf() {
 
 test.afterEach(async({request})=>{for(const email of createdUsers)await cleanupUser(request,email);createdUsers.length=0;});
 
-test('approved pack to exact email review and guarded synthetic send',async({page,request})=>{
+test('approved pack to guarded send and explicit reply sync, timeline and correction',async({page,request})=>{
   const user=await bootstrapUser(request,'email-application');
   const headers={Authorization:`Bearer ${await accessToken(request,user)}`};
   expect((await request.patch(`${API}/profile`,{headers,data:{headline:'Backend engineer',skills:['Python']}})).ok()).toBeTruthy();
@@ -68,4 +68,36 @@ test('approved pack to exact email review and guarded synthetic send',async({pag
   const applications=await (await request.get(`${API}/jobs/${job.id}/applications`,{headers})).json();
   expect(applications.total).toBe(0);
   await page.reload();await expect(panel.getByText('Email status: simulated')).toBeVisible();
+  const beforeSync=await (await request.get(`${API}/jobs/${job.id}/replies`,{headers})).json();
+  expect(beforeSync.items).toHaveLength(0);
+  const denied=await request.post(`${API}/jobs/${job.id}/email-applications/${attempt.id}/replies/sync`,{headers,data:{confirm:true}});
+  expect(denied.status()).toBe(409); // Sending-only remains valid; separate read consent is required.
+  await page.goto('/settings');
+  const mailbox=page.getByRole('article',{name:'Mailbox mailbox@example.com'});
+  await mailbox.getByLabel('Enable reply tracking').check();
+  await mailbox.getByRole('button',{name:'Update permissions / reconnect'}).click();
+  await expect(page.getByText('Enabled capabilities: Reading replies, Sending applications')).toBeVisible();
+  expect((await (await request.get(`${API}/jobs/${job.id}/replies`,{headers})).json()).items).toHaveLength(0);
+  const tracked=await request.post(`${API}/jobs/${job.id}/applications`,{headers,data:{submission_date:new Date().toISOString(),method:'email',status:'Applied'}});
+  expect(tracked.ok()).toBeTruthy();const tracking=await tracked.json();
+  const other=await (await request.post(`${API}/jobs`,{headers,data:{title:'Other synthetic role',company:'Other Example'}})).json();
+  await page.goto(`/jobs/${job.id}`);
+  const timeline=page.getByRole('region',{name:'Application reply timeline',exact:true});
+  await timeline.getByRole('button',{name:'Sync replies (next bounded batch)'}).click();
+  await expect(timeline.getByText('Reply received',{exact:true})).toBeVisible();
+  await expect(timeline.getByText('Uncertain association — confirm before linking')).toBeVisible();
+  expect((await (await request.get(`${API}/jobs/${job.id}/applications/${tracking.id}`,{headers})).json()).status).toBe('Applied');
+  const matched=timeline.getByRole('article').filter({has:page.getByText('Reply received',{exact:true})});
+  await matched.getByRole('combobox').selectOption(other.id);
+  await matched.getByRole('button',{name:'Save association correction'}).click();
+  await expect(timeline.getByText('Reply received',{exact:true})).toHaveCount(0);
+  const uncertain=timeline.getByRole('article');
+  await uncertain.getByRole('button',{name:'Confirm association'}).click();
+  await expect(timeline.getByText('Reply received',{exact:true})).toBeVisible();
+  await page.locator('.application-tracking').getByRole('combobox',{name:'Status',exact:true}).selectOption('Interview');
+  await page.locator('.application-tracking').getByRole('button',{name:'Save changes',exact:true}).click();
+  await expect.poll(async()=>(await (await request.get(`${API}/jobs/${job.id}/applications/${tracking.id}`,{headers})).json()).status).toBe('Interview');
+  await page.goto(`/jobs/${other.id}`);
+  await expect(page.getByText('Reply received',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Match: user confirmed/)).toBeVisible();
 });

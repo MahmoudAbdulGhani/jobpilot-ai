@@ -12,7 +12,7 @@ describe('mailbox settings',()=>{
     expect(await screen.findByRole('button',{name:'Connect Gmail'})).not.toBeNull();
     expect(apiMock).toHaveBeenCalledTimes(1);
     expect((screen.getByLabelText('Allow sending applications') as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByLabelText('Allow reading replies') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Enable reply tracking') as HTMLInputElement).checked).toBe(false);
     expect(screen.getAllByText(/whole mailbox/).length).toBe(1);
   });
   it('shows denied consent and removes callback outcome from URL',async()=>{

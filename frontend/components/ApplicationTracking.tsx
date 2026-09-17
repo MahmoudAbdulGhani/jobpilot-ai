@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle } from '@phosphor-icons/react';
 import { api } from '../lib/api';
+import { ReplyTimeline } from './ReplyTimeline';
 import type { ApplicationEventList, ApplicationMethod, ApplicationRecord, ApplicationRecordList, ApplicationStatus } from '../lib/types';
 import type { ApplicationPack, PackPage, PackVersion, PackVersionList } from '../lib/application-packs';
 
@@ -141,6 +142,7 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
 
   return <section className="application-tracking">
     <div className="section-title"><h2>Application tracking</h2></div>
+    <button type="button" disabled={saving} onClick={()=>void load()}>Refresh saved tracking (replaces unsaved form edits)</button>
     {error && <p className="notice form-error" role="alert">{error}</p>}
     {loading && <p className="notice">Loading application…</p>}
     {!loading && !record && <p className="notice empty-state">No application record yet.</p>}
@@ -172,5 +174,6 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
       <ul>{events.items.map(item => <li key={item.id}><span><CheckCircle size={18}/>{item.status}</span><time>{new Date(item.changed_at).toLocaleDateString()}</time></li>)}</ul>
     </section>}
     {selectedPack && !selectedPack.version && <p className="notice">No approved version selected yet.</p>}
+    <ReplyTimeline jobId={job.id}/>
   </section>
 }
