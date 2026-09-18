@@ -1,5 +1,7 @@
+'use client';
+import { Shell } from '../../components/Shell';
 import { Applications } from '../../components/Applications';
 
 export default function ApplicationsPage() {
-  return <Applications />;
+  return <Shell><Applications /></Shell>;
 }

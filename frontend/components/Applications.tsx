@@ -52,7 +52,7 @@ export function Applications() {
       {data.items.map((item) => <article className="application-row" key={item.id}>
         <div className="application-main">
           <div className="application-row-top">
-            <span className="status-badge status-${item.status}">{item.status}</span>
+            <span className={`status-badge is-${item.status.toLowerCase()}`}>{item.status}</span>
             <span className="method-label">{item.method}</span>
             {item.follow_up_date && <span className="followup-label"><CalendarBlank size={16}/>{item.reminder_status === 'completed' || item.reminder_status === 'cancelled' ? `Reminder ${item.reminder_status}` : `Follow up ${new Date(item.follow_up_date).toLocaleString(undefined, {timeZone:item.reminder_timezone || 'UTC'})} (${item.reminder_timezone || 'UTC'})`}</span>}
           </div>
