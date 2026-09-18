@@ -23,10 +23,10 @@ export async function bootstrapUser(request: APIRequestContext, tag: string): Pr
 
 export async function cleanupUser(request: APIRequestContext, email: string): Promise<void> {
   const user = createdUserCredentials.get(email);
-  expect(user).toBeDefined();
+  if (!user) return;
+  createdUserCredentials.delete(email);
   const response = await request.post(`${API}/e2e/cleanup`, { data: user });
   expect(response.ok()).toBeTruthy();
-  createdUserCredentials.delete(email);
 }
 
 export async function login(page: Page, user: E2eUser): Promise<void> {

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Shell } from './Shell';
 import { api } from '../lib/api';
 
@@ -45,6 +45,10 @@ export function Discovery() {
   const [query, setQuery] = useState({ q: '', remote: false, sort: 'relevance', source:'jobtech', location:'' });
   const previewHeading = useRef<HTMLHeadingElement>(null);
 
+  useEffect(() => {
+    if (preview && !saved) previewHeading.current?.focus();
+  }, [preview, saved]);
+
   function fail(error: unknown) {
     setError(error instanceof Error ? error.message : 'Discovery is unavailable. Please try later.');
   }
@@ -61,7 +65,6 @@ export function Discovery() {
     setBusy('Loading preview…'); setError(''); setPreview(null); setSaved(null);
     try {
       setPreview(await api<Preview>(`/discovery/${encodeURIComponent(id)}/preview?source=${provider}`));
-      requestAnimationFrame(() => previewHeading.current?.focus());
     } catch (e) { fail(e); }
     finally { setBusy(''); }
   }
