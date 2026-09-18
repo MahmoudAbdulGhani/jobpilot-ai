@@ -2,6 +2,7 @@ import argparse
 import getpass
 import sys
 
+from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.services import auth_service
 from app.services.auth_service import OwnerAlreadyExistsError
@@ -26,6 +27,56 @@ def prompt_credentials() -> tuple[str, str]:
     return email, password
 
 
+def prompt_password(label: str = "New password") -> str:
+    password = getpass.getpass(f"{label} (min {MIN_PASSWORD_LENGTH} chars): ")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        print(f"Refused: password must be at least {MIN_PASSWORD_LENGTH} characters.")
+        raise SystemExit(1)
+    confirm = getpass.getpass(f"Confirm {label.lower()}: ")
+    if password != confirm:
+        print("Refused: passwords do not match.")
+        raise SystemExit(1)
+    return password
+
+
+def resolve_local_disposable_database() -> str | None:
+    """Return the disposable database URL for local-only resets, or None when
+    operating against the normal local database. Must never run in production."""
+    import os
+    import re
+    from sqlalchemy.engine import make_url
+
+    settings = get_settings()
+    if settings.ENVIRONMENT == "production":
+        print("Refused: reset-password is local-only and cannot run in production.")
+        raise SystemExit(1)
+    if settings.ENVIRONMENT == "local":
+        return None
+    raw = os.environ.get("JOBPILOT_DISPOSABLE_DATABASE_URL", "")
+    confirm = os.environ.get("JOBPILOT_DISPOSABLE_DATABASE_CONFIRM", "")
+    if not raw:
+        print("Refused: reset-password outside local mode requires an explicitly confirmed disposable test database (set JOBPILOT_DISPOSABLE_DATABASE_URL and JOBPILOT_DISPOSABLE_DATABASE_CONFIRM).")
+        raise SystemExit(1)
+    try:
+        url = make_url(raw)
+    except Exception:
+        print("Refused: JOBPILOT_DISPOSABLE_DATABASE_URL is not a valid database URL.")
+        raise SystemExit(1) from None
+    name = url.database or ""
+    protected = {"jobpilot", "jobpilot_test", settings.POSTGRES_DB, settings.POSTGRES_TEST_DB}
+    if not (
+        url.drivername == "postgresql+psycopg"
+        and url.host
+        and not url.query
+        and name not in protected
+        and re.fullmatch(r"jobpilot_disposable_[a-z0-9_]+", name)
+        and confirm == name
+    ):
+        print("Refused: reset-password requires an explicitly confirmed disposable test database (name outside protected databases).")
+        raise SystemExit(1)
+    return raw
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="jobpilot", description="JobPilot AI management commands"
@@ -37,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     recovery = subparsers.add_parser("create-recovery-account", help="Local operator: establish a verified recovery login before deleting the last account")
     recovery.add_argument("--confirm-local-recovery", action="store_true", required=True)
+    reset = subparsers.add_parser("reset-password", help="Local-only interactive password reset for one account (never echoed)")
+    reset.add_argument("--email", required=True)
     invite = subparsers.add_parser("invite", help="Create one email-bound invitation; local operator only")
     invite.add_argument("--email", required=True)
     invite.add_argument("--hours", type=int, default=24)
@@ -116,6 +169,23 @@ def main(argv: list[str] | None = None) -> int:
                 print("Refused: an owner account already exists.")
                 return 1
         print(f"Owner account created for {user.email}.")
+        return 0
+
+    if args.command == "reset-password":
+        target = resolve_local_disposable_database()
+        password = prompt_password()
+        if target is not None:
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            reset_session = sessionmaker(bind=create_engine(target, hide_parameters=True))
+        else:
+            reset_session = SessionLocal
+        with reset_session() as session:
+            user = auth_service.reset_password(session, email=args.email, password=password)
+        if user is None:
+            print("Refused: no active account found for that email. Nothing was changed.")
+            return 1
+        print(f"Password reset complete for {user.email}. Existing sessions were invalidated.")
         return 0
 
 

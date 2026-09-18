@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -52,6 +52,26 @@ def create_first_owner(session: Session, *, email: str, password: str) -> User:
     session.add(user)
     session.commit()
     session.refresh(user)
+    return user
+
+
+def reset_password(session: Session, *, email: str, password: str) -> User | None:
+    # Local-only escape hatch: reset one account password and invalidate every
+    # existing session (access tokens carry session_version; refresh rows are
+    # revoked). Never touches email, owner status, profile, jobs or other data.
+    user = session.scalar(
+        select(User).where(User.email == normalize_email(email)).with_for_update()
+    )
+    if user is None or not user.is_active:
+        return None
+    user.password_hash = hash_password(password)
+    user.session_version += 1
+    session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id)
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    session.commit()
     return user
 
 
