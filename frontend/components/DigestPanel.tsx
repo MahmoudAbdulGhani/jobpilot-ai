@@ -11,12 +11,17 @@ type DigestPreview = {
   generated_at: string; cadence: string; items: DigestItem[]; skipped_invalid: number;
   delivery: { enabled: boolean; reason: string };
 };
+type SendReceipt = {
+  sent_at: string; recipient: string; items: number; transport: string;
+  delivery: { enabled: boolean; reason: string };
+};
 
 const CADENCES = ['off', 'daily', 'weekly'];
 
 export function DigestPanel() {
   const [cadence, setCadence] = useState('off');
   const [preview, setPreview] = useState<DigestPreview | null>(null);
+  const [receipt, setReceipt] = useState<SendReceipt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -56,11 +61,27 @@ export function DigestPanel() {
     }
   }
 
+  async function sendNow() {
+    setBusy(true);
+    setError('');
+    setReceipt(null);
+    try {
+      const data = await api<SendReceipt>('/digest/send', {
+        method: 'POST', body: JSON.stringify({ confirm: true }),
+      });
+      if (data && data.sent_at) setReceipt(data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <section className="digest-panel" aria-label="Daily digest">
     <div className="section-title"><div>
       <p className="eyebrow">Digest</p>
       <h2>Daily digest</h2>
-      <p className="muted">Validated JobTech and Jobicy records with source attribution and timestamps. Delivery is disabled: no delivery provider is configured, so digests are previews you read here.</p>
+      <p className="muted">Validated JobTech and Jobicy records with source attribution and timestamps. Delivery is disabled by default; enabling SMTP delivers to the account email only.</p>
     </div></div>
     {error && <p className="notice form-error" role="alert">{error}</p>}
     <div className="digest-controls">
@@ -68,10 +89,11 @@ export function DigestPanel() {
         {CADENCES.map(item => <option key={item} value={item}>{item === 'off' ? 'Off' : item === 'daily' ? 'Daily' : 'Weekly'}</option>)}
       </select></label>
       <button className="primary-button" disabled={busy} onClick={() => void loadPreview()}>{busy ? 'Loading…' : 'Preview digest'}</button>
+      <button className="secondary-button" disabled={busy} onClick={() => void sendNow()}>{busy ? 'Sending…' : 'Send digest now'}</button>
     </div>
     {preview && <>
       <p className="muted">Generated {new Date(preview.generated_at).toLocaleString()} · cadence {preview.cadence} · {preview.skipped_invalid} invalid {preview.skipped_invalid === 1 ? 'record' : 'records'} skipped.</p>
-      <p className="notice" role="status">Delivery disabled: {preview.delivery.reason}</p>
+      <p className="notice" role="status">Delivery {preview.delivery.enabled ? 'ready' : 'disabled'}: {preview.delivery.reason}</p>
       {preview.items.length === 0 && <p className="notice empty-state">No validated listings cached yet.</p>}
       <ul className="digest-list">
         {preview.items.map(item => <li key={`${item.source}-${item.external_id}`}>
@@ -82,5 +104,6 @@ export function DigestPanel() {
         </li>)}
       </ul>
     </>}
+    {receipt && <p className="notice" role="status">Sent {new Date(receipt.sent_at).toLocaleString()} to {receipt.recipient} ({receipt.items} items via {receipt.transport}).</p>}
   </section>;
 }

@@ -339,6 +339,91 @@ def edit_or_approve(db, owner_id, job_id, pack_id, body, approve=False):
     return pack, current
 
 
+def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
+                 checks, readiness_score, body, settings):
+    """Closed-loop improvement: a readiness report produces one new draft version.
+
+    Only an approved version that is still current can be improved. The new
+    version is never approved automatically: the owner reviews it and approves
+    it through the existing per-version approval gate. Prior versions and their
+    reports stay immutable. Generation reuses the same evidence contract as
+    pack creation, so no claim can appear without valid source evidence.
+    """
+    pack = get_owned(db, owner_id, job_id, pack_id)
+    if pack.status != "ready":
+        raise PackError(409, "This pack is not ready to improve.")
+    # Same lock ordering as approval: source rows first, then the pack.
+    snap = capture(db, owner_id, job_id, pack.resume_id, lock=True)
+    pack = get_owned(db, owner_id, job_id, pack_id, lock=True)
+    payload_hash = digest({
+        "action": "improve", "report_id": str(report_id), "target_version": target_version,
+        "checks": checks, **body.model_dump(mode="json")})
+    prior = db.scalar(select(ApplicationPackOperation).where(
+        ApplicationPackOperation.pack_id == pack.id,
+        ApplicationPackOperation.key == body.idempotency_key))
+    if prior:
+        if prior.request_hash != payload_hash:
+            raise PackError(
+                409, "This request key was already used for different edits or approval.")
+        version = version_for(db, pack, prior.version_number)
+        return pack, version, version.review_notes or []
+    current = version_for(db, pack, target_version)
+    if pack.current_version != target_version:
+        raise PackError(
+            409, "The approved draft is no longer current. Reload before improving.")
+    if current.approved_at is None:
+        raise PackError(
+            409, "Approve the pack version before improving from its report.")
+    if source_hash(snap) != pack.source_hash:
+        raise PackError(
+            409, "The source content changed. Approve a fresh pack before improving.")
+    if pack.current_version >= MAX_VERSIONS:
+        raise PackError(
+            409, "This pack reached its 100-version limit. Generate a new pack.")
+    try:
+        provider = pack_provider_for(settings)
+    except SuggestionError as error:
+        raise PackError(error.status_code, error.message) from None
+    revision = {
+        "job": snap["job"],
+        "cv": current.cv or {"blocks": []},
+        "cover_letter": current.cover_letter or {"blocks": []},
+        "checks": checks,
+        "readiness_score": readiness_score,
+    }
+    try:
+        token = ai_usage.reserve(db, owner_id, settings.model_copy(update={
+            "JOBPILOT_AI_TIMEOUT_SECONDS": settings.JOBPILOT_PACK_TIMEOUT_SECONDS,
+        }), feature="pack")
+    except ai_usage.AIUsageError as error:
+        raise PackError(error.status_code, error.message) from None
+    try:
+        result = provider.improve_pack(revision)
+        output = validate_generated(result, snap)
+        failure = None
+    except PackError as error:
+        output, failure = None, error.message
+    except Exception:
+        output, failure = None, "The AI provider could not produce a supported improved draft. Retry."
+    ai_usage.release(db, owner_id, token)
+    if failure:
+        db.commit()
+        raise PackError(502, failure)
+    pack.current_version += 1
+    notes = [
+        "Human review is required: valid references do not prove a claim is correct. "
+        "Compare the improved draft with the captured CV.", *output.review_notes]
+    improved = ApplicationPackVersion(pack_id=pack.id, number=pack.current_version,
+                                      cv=store_generated(output.cv),
+                                      cover_letter=store_generated(output.cover_letter),
+                                      review_notes=notes)
+    db.add(improved)
+    db.add(ApplicationPackOperation(pack_id=pack.id, key=body.idempotency_key,
+           request_hash=payload_hash, version_number=improved.number))
+    db.commit()
+    return pack, improved, notes
+
+
 def options(db, owner_id, job_id, settings):
     owned_job(db, owner_id, job_id)
     model = settings.JOBPILOT_PACK_MODEL

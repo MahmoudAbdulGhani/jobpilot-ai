@@ -10,12 +10,27 @@ class DigestPreferences(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     cadence: str
     updated_at: datetime
+    last_sent_at: datetime | None = None
 
 
 class DigestCadenceChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cadence: DigestCadence
     confirm: Literal[True]
+
+
+class DigestSendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: Literal[True]
+
+
+class DigestSendReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sent_at: datetime
+    recipient: str
+    items: int
+    transport: str
+    delivery: DigestDelivery
 
 
 class DigestItem(BaseModel):

@@ -83,7 +83,12 @@ class Settings(BaseSettings):
     JOBPILOT_ACCOUNT_SMTP_PORT: int = 465
     JOBPILOT_ACCOUNT_SMTP_USER: str = Field(default="", repr=False)
     JOBPILOT_ACCOUNT_SMTP_PASSWORD: str = Field(default="", repr=False, exclude=True)
-
+    JOBPILOT_DIGEST_MAIL_TRANSPORT: Literal["disabled", "smtp", "test"] = "disabled"
+    JOBPILOT_DIGEST_MAIL_FROM: str = ""
+    JOBPILOT_DIGEST_SMTP_HOST: str = ""
+    JOBPILOT_DIGEST_SMTP_PORT: int = 465
+    JOBPILOT_DIGEST_SMTP_USER: str = Field(default="", repr=False)
+    JOBPILOT_DIGEST_SMTP_PASSWORD: str = Field(default="", repr=False, exclude=True)
     RESUME_STORAGE_DIR: str = str(BASE_DIR / "storage" / "resumes")
     JOBPILOT_STORAGE: Literal["local", "supabase"] = "local"
     JOBPILOT_STORAGE_URL: str = ""
@@ -216,7 +221,7 @@ class Settings(BaseSettings):
                 except ValueError: return False
                 if port not in {None, 443}: return False
                 return u.scheme == "https" and bool(u.hostname) and u.hostname not in {"localhost", "127.0.0.1"} and not u.username and not u.password and not u.query and not u.fragment and u.path in {"", "/"}
-            if self.DEBUG or any((self.E2E_TEST_MODE, self.JOBPILOT_AI_TEST_PROVIDER, self.JOBPILOT_MAILBOX_TEST_PROVIDER, self.JOBPILOT_DISCOVERY_TEST_PROVIDER, self.JOBPILOT_VOICE_TEST_PROVIDER)) or self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT == "test":
+            if self.DEBUG or any((self.E2E_TEST_MODE, self.JOBPILOT_AI_TEST_PROVIDER, self.JOBPILOT_MAILBOX_TEST_PROVIDER, self.JOBPILOT_DISCOVERY_TEST_PROVIDER, self.JOBPILOT_VOICE_TEST_PROVIDER)) or self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT == "test" or self.JOBPILOT_DIGEST_MAIL_TRANSPORT == "test":
                 raise ValueError("Production forbids debug and test providers")
             if not origin(self.JOBPILOT_APP_URL) or self.CORS_ORIGINS != [self.JOBPILOT_APP_URL.rstrip('/')]:
                 raise ValueError("Production requires one trusted HTTPS application origin")
@@ -243,6 +248,9 @@ class Settings(BaseSettings):
             if self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "disabled":
                 if self.JOBPILOT_ACCOUNT_APP_URL.rstrip('/') != self.JOBPILOT_APP_URL.rstrip('/') or not self.JOBPILOT_ACCOUNT_SMTP_HOST or not self.JOBPILOT_ACCOUNT_MAIL_FROM:
                     raise ValueError("Enabled account email requires trusted application URL and SMTP settings")
+            if self.JOBPILOT_DIGEST_MAIL_TRANSPORT == "smtp":
+                if not self.JOBPILOT_DIGEST_SMTP_HOST or not self.JOBPILOT_DIGEST_MAIL_FROM:
+                    raise ValueError("Digest SMTP requires a host and from address")
             if any((self.JOBPILOT_GOOGLE_CLIENT_ID, self.JOBPILOT_GOOGLE_CLIENT_SECRET, self.JOBPILOT_MAILBOX_ENCRYPTION_KEY)):
                 if self.JOBPILOT_GOOGLE_REDIRECT_URI != self.JOBPILOT_APP_URL.rstrip('/') + '/api/mailboxes/oauth/callback' or self.JOBPILOT_MAILBOX_SETTINGS_URL != self.JOBPILOT_APP_URL.rstrip('/') + '/settings':
                     raise ValueError("Mailbox redirects must use the trusted application origin")

@@ -18,6 +18,7 @@ venv/
 # Environment variables and secrets
 .env
 .env.*
+.env1
 !.env.example
 .secrets/
 secrets/

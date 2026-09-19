@@ -3,15 +3,22 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarBlank, ArrowSquareOut } from '@phosphor-icons/react';
 import { api } from '../lib/api';
-import type { ApplicationRecordList, ApplicationStatus } from '../lib/types';
+import type { ApplicationRecordList, ApplicationStatus, ApplicationTimeline, TimelineKind } from '../lib/types';
 
 const STATUSES: Array<ApplicationStatus | 'All'> = ['All', 'Applied', 'Interview', 'Offer', 'Accepted', 'Rejected', 'Withdrawn'];
+
+const KIND_LABEL: Record<TimelineKind, string> = {
+  submitted: 'Submitted', status: 'Status change', reply: 'Reply', followup: 'Follow-up', email: 'Email',
+};
 
 export function Applications() {
   const [data, setData] = useState<ApplicationRecordList | null>(null);
   const [status, setStatus] = useState<ApplicationStatus | 'All'>('All');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [timelines, setTimelines] = useState<Record<string, ApplicationTimeline>>({});
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [timelineError, setTimelineError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -30,6 +37,26 @@ export function Applications() {
   }, [status]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const toggleTimeline = useCallback(async (item: { id: string; job_id: string }) => {
+    const key = item.id;
+    const next = new Set(open);
+    if (next.has(key)) {
+      next.delete(key);
+      setOpen(next);
+      return;
+    }
+    setTimelineError('');
+    setOpen(new Set(next).add(key));
+    if (!timelines[key]) {
+      try {
+        const timeline = await api<ApplicationTimeline>(`/jobs/${item.job_id}/applications/${key}/timeline`);
+        setTimelines(prev => ({ ...prev, [key]: timeline }));
+      } catch (e) {
+        setTimelineError((e as Error).message);
+      }
+    }
+  }, [open, timelines]);
 
   return <section className="applications-page">
     <div className="section-title">
@@ -63,7 +90,20 @@ export function Applications() {
           </div>
           <div className="application-row-links">
             <Link className="text-button" href={`/jobs/${item.job_id}`}>Open saved job <ArrowSquareOut size={16}/></Link>
+            <button className="text-button" onClick={() => void toggleTimeline(item)}>{open.has(item.id) ? 'Hide timeline' : 'Show timeline'}</button>
           </div>
+          {timelineError && open.has(item.id) && <p className="notice form-error" role="alert">{timelineError}</p>}
+          {open.has(item.id) && <div className="application-timeline" aria-label={`Timeline for application ${item.id}`}>
+            <p className="muted">{timelines[item.id]?.narrative || 'Loading timeline…'}</p>
+            {timelines[item.id] && <ol className="timeline-list">
+              {timelines[item.id].entries.map((entry, index) => <li key={`${entry.at}-${index}`} className={`timeline-entry is-${entry.kind}`}>
+                <p className="timeline-kind">{KIND_LABEL[entry.kind]} <span className="muted">· {new Date(entry.at).toLocaleString()}</span></p>
+                <p><strong>{entry.title}</strong></p>
+                {entry.detail && <p className="muted">{entry.detail}</p>}
+                {entry.evidence.length > 0 && <ul className="muted">{entry.evidence.map((line, i) => <li key={i}>{line}</li>)}</ul>}
+              </li>)}
+            </ol>}
+          </div>}
         </div>
       </article>)}
     </div>}

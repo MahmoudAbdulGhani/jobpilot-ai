@@ -44,6 +44,7 @@ class ApplicationPackVersion(Base, TimestampMixin):
     cv: Mapped[dict[str, Any]] = mapped_column(JSON)
     cover_letter: Mapped[dict[str, Any]] = mapped_column(JSON)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_notes: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class ApplicationPackOperation(Base):

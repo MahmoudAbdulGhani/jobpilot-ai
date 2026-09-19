@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.models import ApplicationPack, ApplicationPackVersion, SavedJob
 from app.models.application_tracking import ApplicationRecord, ApplicationStatusEvent
+from app.models.email_application import EmailApplication
+from app.models.followup_suggestion import FollowupSuggestion
+from app.models.mailbox_reply import MailboxReply
 from app.services.application_pack_service import PackError
 
 STATUSES = {"Applied", "Interview", "Offer", "Accepted", "Rejected", "Withdrawn"}
@@ -197,3 +200,87 @@ def list_events(db: Session, owner_id: uuid.UUID, job_id: uuid.UUID, app_id: uui
     events = db.scalars(select(ApplicationStatusEvent).where(
         ApplicationStatusEvent.application_id == app.id).order_by(ApplicationStatusEvent.changed_at.desc()))
     return list(events)
+
+
+def get_timeline(db: Session, owner_id: uuid.UUID, job_id: uuid.UUID, app_id: uuid.UUID) -> dict:
+    """Read-only, deterministic narrative timeline of one application record.
+
+    Every entry is derived from persisted state: the record itself, recorded
+    status events, mailbox replies matched to the same job, follow-up
+    suggestions, and email-application lifecycle milestones. Nothing is
+    inferred beyond what the stored rows say.
+    """
+    from app.models.application_tracking import ApplicationStatusEvent as StatusEvent
+    from app.schemas.application_tracking import TimelineEntry
+    app = get_record(db, owner_id, job_id, app_id)
+    job = owned_job(db, owner_id, job_id)
+    entries = []
+
+    entries.append(TimelineEntry(
+        at=app.submission_date,
+        kind="submitted",
+        title=f"Application recorded via {app.method}",
+        detail=app.notes or f"Initial status: {app.status}.",
+        evidence=[f"Origin: {app.origin}", f"Method: {app.method}"],
+    ))
+
+    for event in db.scalars(select(StatusEvent).where(
+            StatusEvent.application_id == app.id).order_by(StatusEvent.changed_at.asc(), StatusEvent.id.asc())):
+        entries.append(TimelineEntry(
+            at=event.changed_at,
+            kind="status",
+            title=f"Status changed to {event.status}",
+            detail=None,
+            evidence=[],
+        ))
+
+    for reply in db.scalars(select(MailboxReply).where(
+            MailboxReply.owner_id == owner_id, MailboxReply.job_id == app.job_id)
+            .order_by(MailboxReply.received_at.asc(), MailboxReply.id.asc())):
+        entries.append(TimelineEntry(
+            at=reply.received_at,
+            kind="reply",
+            title=f"Reply received: {reply.subject}",
+            detail=reply.preview,
+            evidence=[f"From: {reply.sender}", f"Match: {reply.match_kind}"],
+        ))
+
+    for suggestion in db.scalars(select(FollowupSuggestion).where(
+            FollowupSuggestion.application_id == app.id)
+            .order_by(FollowupSuggestion.decided_at.asc(), FollowupSuggestion.created_at.asc(),
+                      FollowupSuggestion.id.asc())):
+        entries.append(TimelineEntry(
+            at=suggestion.decided_at or suggestion.created_at,
+            kind="followup",
+            title=f"Follow-up suggestion ({suggestion.kind}) {suggestion.state}",
+            detail=suggestion.reason,
+            evidence=[f"Suggested due: {suggestion.suggested_due_at.isoformat()}"
+                      if suggestion.suggested_due_at else "No suggested due date"],
+        ))
+
+    for mail in db.scalars(select(EmailApplication).where(
+            EmailApplication.application_id == app.id)
+            .order_by(EmailApplication.approved_at.asc(), EmailApplication.created_at.asc(),
+                      EmailApplication.id.asc())):
+        entries.append(TimelineEntry(
+            at=mail.approved_at or mail.dispatch_at or mail.created_at,
+            kind="email",
+            title=f"Email application {mail.status}",
+            detail=mail.outcome,
+            evidence=[f"Provider message id: {mail.provider_message_id}"]
+            if mail.provider_message_id else [],
+        ))
+
+    entries.sort(key=lambda item: (item.at, item.kind, item.title))
+    narrative = (
+        f"{app.status} application via {app.method}; "
+        f"{len(entries)} recorded events "
+        f"(replies, follow-ups and email dispatches included) for {job.title or 'this job'}."
+    )
+    return {
+        "application_id": app.id,
+        "job_id": app.job_id,
+        "narrative": narrative,
+        "entries": [TimelineEntry.model_validate(item) for item in entries],
+        "total": len(entries),
+    }

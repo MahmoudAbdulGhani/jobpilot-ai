@@ -117,3 +117,10 @@ export type ApplicationEvent = {
   created_at: string; updated_at: string;
 };
 export type ApplicationEventList = { items: ApplicationEvent[]; total: number; page: number; page_size: number };
+export type TimelineKind = 'submitted' | 'status' | 'reply' | 'followup' | 'email';
+export type TimelineEntry = {
+  at: string; kind: TimelineKind; title: string; detail: string | null; evidence: string[];
+};
+export type ApplicationTimeline = {
+  application_id: string; job_id: string; narrative: string; entries: TimelineEntry[]; total: number;
+};

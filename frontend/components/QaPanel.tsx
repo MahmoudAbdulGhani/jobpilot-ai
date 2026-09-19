@@ -4,7 +4,19 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 
 type Citation = { entity: string; id: string; field: string; excerpt: string; href: string };
-type Answer = { entity: string; question: string; matches: Citation[]; total: number; limit: number };
+type Answer = {
+  entity: string;
+  question: string;
+  source: 'ai' | 'structured';
+  answer: string;
+  citations: Citation[];
+  matches: Citation[];
+  total: number;
+  limit: number;
+  provider: string | null;
+  model: string | null;
+  reason: string | null;
+};
 const ENTITIES = ['jobs', 'applications', 'reminders', 'replies', 'interviews', 'profile', 'packs'];
 
 export function QaPanel() {
@@ -19,7 +31,7 @@ export function QaPanel() {
     setBusy(true);
     setError('');
     try {
-      const result = await api<Answer>(`/qa/ask?entity=${entity}&q=${encodeURIComponent(question)}&limit=10`);
+      const result = await api<Answer>(`/qa/answer?entity=${entity}&q=${encodeURIComponent(question)}&limit=10`);
       setAnswer(result);
     } catch (e) {
       setError((e as Error).message);
@@ -32,7 +44,7 @@ export function QaPanel() {
     <div className="section-title"><div>
       <p className="eyebrow">Read-only Q&A</p>
       <h2>Ask your journal</h2>
-      <p className="muted">Keyword search over your own data only. This never writes, sends, changes status or deletes anything. Every match cites its source.</p>
+      <p className="muted">Answers come from your own data only (AI-enabled when you consent and the provider is configured). This never writes, sends, changes status or deletes anything. Every match cites its source.</p>
     </div></div>
     {error && <p className="notice form-error" role="alert">{error}</p>}
     <div className="qa-controls">
@@ -43,6 +55,10 @@ export function QaPanel() {
       <button className="primary-button" disabled={busy || !question.trim()} onClick={() => void ask()}>{busy ? 'Searching…' : 'Ask'}</button>
     </div>
     {answer && <>
+      <div className="qa-answer">
+        <p className="source-badge">{answer.source === 'ai' ? `AI answer · ${answer.provider ?? 'AI'} · ${answer.model ?? ''}` : `Structured search${answer.reason ? ` · ${answer.reason}` : ''}`}</p>
+        {answer.answer ? <p>{answer.answer}</p> : <p className="notice empty-state">No answer text.</p>}
+      </div>
       <p className="muted">{answer.total} {answer.total === 1 ? 'match' : 'matches'} in {answer.entity} (showing up to {answer.limit}).</p>
       {answer.matches.length === 0 && <p className="notice empty-state">No matches in your {answer.entity}.</p>}
       <ul className="qa-matches">

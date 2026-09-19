@@ -31,7 +31,7 @@ def test_matrix_defaults_and_toggle(client, db_session):
         assert matrix.status_code == status.HTTP_200_OK, matrix.text
         rows = {row["domain"]: row for row in matrix.json()["rows"]}
         assert set(rows) == {"profile", "confirmed CV text", "selected job", "pack drafts",
-                             "mailbox data", "advisory outputs"}
+                             "mailbox data", "advisory outputs", "saved data for Q&A answers"}
         for row in rows.values():
             assert row["fields_used"] and row["used_for"] and row["provider"] and row["retention"]
             assert isinstance(row["allowed"], bool)
@@ -39,6 +39,7 @@ def test_matrix_defaults_and_toggle(client, db_session):
         assert rows["confirmed CV text"]["allowed"] is False
         assert rows["selected job"]["allowed"] is False
         assert rows["pack drafts"]["allowed"] is False
+        assert rows["saved data for Q&A answers"]["allowed"] is False
         # Core storage is required and shown allowed.
         assert rows["profile"]["required"] is True and rows["profile"]["allowed"] is True
 

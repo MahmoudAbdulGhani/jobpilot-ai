@@ -10,3 +10,4 @@ class PlanLimits(BaseModel):
     interview: int | None = Field(default=None, ge=0, le=10000)
     transcription: int | None = Field(default=None, ge=0, le=10000)
     speech: int | None = Field(default=None, ge=0, le=10000)
+    qa: int | None = Field(default=None, ge=0, le=10000)

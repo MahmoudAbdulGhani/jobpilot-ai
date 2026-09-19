@@ -8,7 +8,8 @@ from app.models import AccountPlan, PlanAudit, UsageReservation, User
 
 FEATURES = {"profile": "AI profile suggestions", "fit": "Job-fit analysis",
     "pack": "Application packs", "interview": "Text interview requests",
-    "transcription": "Transcription", "speech": "Spoken questions"}
+    "transcription": "Transcription", "speech": "Spoken questions",
+    "qa": "Natural-language Q&A answers"}
 
 
 class EntitlementError(Exception):

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AtsCheck(BaseModel):
@@ -36,3 +36,21 @@ class AtsReportList(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class AtsImproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(
+        min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+
+
+class AtsImproveResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    report_id: uuid.UUID
+    job_id: uuid.UUID
+    pack_id: uuid.UUID
+    approved_version: int
+    version_number: int
+    review_notes: list[str]
+    preview_checks: list[AtsCheck]
+    preview_readiness: int

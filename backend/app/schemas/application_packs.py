@@ -136,6 +136,7 @@ class PackVersionResponse(StrictModel):
     cover_letter: StoredDocument
     created_at: datetime
     approved_at: datetime | None
+    review_notes: list[str] | None = None
 
 
 class PackResponse(StrictModel):

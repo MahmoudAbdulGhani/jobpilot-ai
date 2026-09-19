@@ -14,7 +14,7 @@ const preview = {
     remote_arrangement: 'remote', test_data: true, refreshed_at: '2026-09-18T11:00:00Z',
   }],
   skipped_invalid: 1,
-  delivery: { enabled: false, reason: 'No delivery provider is configured; previews are in-app only.' },
+  delivery: { enabled: false, reason: 'Digest email delivery is disabled; previews are in-app only.' },
 };
 
 beforeEach(() => {
@@ -37,5 +37,20 @@ test('cadence saves explicitly and preview shows attribution with delivery disab
   expect(await screen.findByText('Remote Engineer')).toBeTruthy();
   expect(screen.getByText(/Source: Jobicy/)).toBeTruthy();
   expect(screen.getByText(/1 invalid record skipped\./)).toBeTruthy();
-  expect(screen.getByText(/Delivery disabled: No delivery provider is configured/)).toBeTruthy();
+  expect(screen.getByText(/Delivery disabled: Digest email delivery is disabled/)).toBeTruthy();
+});
+
+test('send digest now posts an explicit confirm and renders the receipt', async () => {
+  render(<DigestPanel />);
+  await screen.findByRole('heading', { name: 'Daily digest' });
+  apiMock.mockResolvedValueOnce({
+    sent_at: '2026-09-19T12:00:00Z', recipient: 'owner@jobpilot-test.com', items: 1,
+    transport: 'test', delivery: { enabled: true, reason: 'Test transport.' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Send digest now' }));
+  await waitFor(() => expect(apiMock).toHaveBeenCalledWith('/digest/send',
+    expect.objectContaining({ method: 'POST' })));
+  const [, postInit] = apiMock.mock.calls.find(([path, callInit]) => String(path) === '/digest/send') as [string, RequestInit];
+  expect(JSON.parse(String(postInit.body))).toEqual({ confirm: true });
+  expect(await screen.findByText(/Sent .* to owner@jobpilot-test.com \(1 items via test\)/)).toBeTruthy();
 });

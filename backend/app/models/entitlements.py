@@ -18,7 +18,7 @@ class AccountPlan(Base, TimestampMixin):
 class UsageReservation(Base):
     __tablename__ = "usage_reservations"
     __table_args__ = (Index("ix_reservation_owner_period", "owner_id", "period_start"),
-        CheckConstraint("feature IN ('profile', 'fit', 'pack', 'interview', 'transcription', 'speech')", name="feature_allowed"))
+        CheckConstraint("feature IN ('profile', 'fit', 'pack', 'interview', 'transcription', 'speech', 'qa')", name="feature_allowed"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     feature: Mapped[str] = mapped_column(String(24))

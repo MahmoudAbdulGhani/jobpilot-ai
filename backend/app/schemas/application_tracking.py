@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 ApplicationMethod = Literal["email",
                             "employer_website", "linkedin_manual", "other"]
@@ -74,6 +74,26 @@ class ApplicationStatusEventResponse(BaseModel):
     changed_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class TimelineEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    at: datetime
+    kind: Literal["submitted", "status", "reply", "followup", "email"]
+    title: str
+    detail: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ApplicationTimelineResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: uuid.UUID
+    job_id: uuid.UUID
+    narrative: str
+    entries: list[TimelineEntry]
+    total: int
 
 
 class ApplicationListResponse(BaseModel):

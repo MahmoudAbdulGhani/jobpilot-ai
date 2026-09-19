@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.routes.auth import _require_bearer_user
 from app.core.db import get_db
 from app.models import User
-from app.schemas.application_tracking import ApplicationCreate, ApplicationListResponse, ApplicationResponse, ApplicationStatusEventResponse, ApplicationUpdate
+from app.schemas.application_tracking import ApplicationCreate, ApplicationListResponse, ApplicationResponse, ApplicationStatusEventResponse, ApplicationTimelineResponse, ApplicationUpdate
 from app.services import application_tracking_service
 from app.services.application_pack_service import PackError
 
@@ -73,6 +73,15 @@ def list_events(job_id: uuid.UUID, application_id: uuid.UUID, db: Database, curr
         events = application_tracking_service.list_events(
             db, owner_id=current_user.id, job_id=job_id, app_id=application_id)
         return {"items": [ApplicationStatusEventResponse.model_validate(e) for e in events], "total": len(events), "page": page, "page_size": page_size}
+    except PackError as error:
+        raise HTTPException(error.status_code, detail=error.message) from error
+
+
+@router.get("/{application_id}/timeline", response_model=ApplicationTimelineResponse)
+def application_timeline(job_id: uuid.UUID, application_id: uuid.UUID, db: Database, current_user: CurrentUser):
+    try:
+        return application_tracking_service.get_timeline(
+            db, owner_id=current_user.id, job_id=job_id, app_id=application_id)
     except PackError as error:
         raise HTTPException(error.status_code, detail=error.message) from error
 

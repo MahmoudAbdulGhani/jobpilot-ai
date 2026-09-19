@@ -21,12 +21,17 @@ OPTIONAL_KEYS = {
     "ai_profile_suggestions": "Confirmed CV text sent to the AI provider for profile suggestions.",
     "ai_job_fit": "Saved job description and profile facts sent to the AI provider for fit analysis.",
     "ai_application_packs": "Confirmed CV text and profile facts sent to the pack provider for drafts.",
+    "ai_qa": "Retrieved field excerpts sent to the AI provider for natural-language answers.",
 }
 
 
 def _consents(db: Session, owner_id: uuid.UUID) -> dict[str, bool]:
     rows = db.scalars(select(DataUseConsent).where(DataUseConsent.owner_id == owner_id))
     return {row.key: row.allowed for row in rows}
+
+
+def is_consented(db: Session, owner_id: uuid.UUID, key: str) -> bool:
+    return bool(_consents(db, owner_id).get(key, False))
 
 
 def _ai_provider(settings: Settings) -> str:
@@ -81,6 +86,13 @@ def matrix(db: Session, owner_id: uuid.UUID, settings: Settings) -> list[dict]:
          "used_for": ["display in your journal only"],
          "provider": "local-only", "retention": "until deleted or account deletion",
          "consent_key": None, "required": True, "allowed": True, "managed_by": "always"},
+        {"domain": "saved data for Q&A answers",
+         "fields_used": ["allowlisted saved fields", "retrieved matching excerpts"],
+         "used_for": ["natural-language answers over your own data (only with consent)"],
+         "provider": _ai_provider(settings),
+         "retention": "never stored; only retrieved excerpts are sent",
+         "consent_key": "ai_qa", "required": False,
+         "allowed": consents.get("ai_qa", False), "managed_by": "toggle"},
     ]
 
 
