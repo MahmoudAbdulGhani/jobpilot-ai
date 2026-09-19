@@ -80,7 +80,7 @@ def reconcile(db, attempt, reader):
             ApplicationPack.job_id == attempt.job_id))
         application = ApplicationRecord(owner_id=attempt.owner_id, job_id=attempt.job_id,
             submission_date=attempt.dispatch_at or attempt.created_at, method="email", status="Applied",
-            pack_id=pack.id if pack else None, pack_version=attempt.snapshot["pack_version"],
+            origin="email_confirmed", pack_id=pack.id if pack else None, pack_version=attempt.snapshot["pack_version"],
             cv_snapshot=attempt.snapshot["cv"], cover_letter_snapshot=attempt.snapshot["cover_letter"],
             notes="Exact original message found in Gmail Sent during explicit synchronization. Recipient delivery/read status unknown.")
         db.add(application)

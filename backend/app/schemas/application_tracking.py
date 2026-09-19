@@ -53,6 +53,7 @@ class ApplicationResponse(BaseModel):
     method: str
     notes: str | None
     status: str
+    origin: str
     follow_up_date: datetime | None
     reminder_status: str | None
     reminder_timezone: str | None

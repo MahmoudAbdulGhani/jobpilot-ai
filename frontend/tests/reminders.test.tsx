@@ -8,11 +8,19 @@ const item={application_id:'a',job_id:'j',title:'Engineer',company:'Example',app
 describe('in-app reminders',()=>{
   beforeEach(()=>apiMock.mockReset());
   it('loads without any provider action and shows empty/error/retry states',async()=>{
-    apiMock.mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({items:[],next_cursor:null});
+    let failed = false;
+    apiMock.mockImplementation((...args: unknown[])=>{
+      // The harness may probe the mock with no arguments during teardown; ignore those.
+      const path = args[0] as string | undefined;
+      if(typeof path!=='string') return Promise.resolve({items:[],next_cursor:null});
+      if(path.startsWith('/followup-suggestions')) return Promise.resolve({items:[],total:0,page:1,page_size:20});
+      if(!failed){failed=true;return Promise.reject(new Error('Offline'));}
+      return Promise.resolve({items:[],next_cursor:null});
+    });
     render(<Reminders/>);expect(screen.getByRole('status').textContent).toContain('Loading');
     expect(await screen.findByRole('alert')).not.toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry'}));
     expect(await screen.findByText('No reminders in this view.')).not.toBeNull();
-    expect(apiMock.mock.calls.every(c=>c[0].startsWith('/reminders?')&&c.length===1)).toBe(true);
+    expect(apiMock.mock.calls.every(c=>(c[0].startsWith('/reminders?')||c[0].startsWith('/followup-suggestions'))&&c.length===1)).toBe(true);
   });
   it('sends an explicit timezone and status confirmation with retries disabled',async()=>{
     apiMock.mockResolvedValue({...item,application_status:'Rejected'});render(<ReminderEditor applicationId="a"/>);

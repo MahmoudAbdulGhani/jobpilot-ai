@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import {useCallback,useEffect,useState} from 'react';
 import {api} from '../lib/api';
+import {ReplyClassificationPanel} from './ReplyClassification';
 
 type Reply={id:string;job_id:string|null;suggested_job_id:string;match_kind:string;sender:string;subject:string;preview:string;received_at:string;corrected_at:string|null};
 type Job={id:string;title:string;company:string};
@@ -33,12 +34,13 @@ function ReplyCard({reply,jobs,reload}:{reply:Reply;jobs:Job[];reload:()=>Promis
     <h4>{reply.job_id?'Reply received':'Uncertain association — confirm before linking'}</h4>
     <p><time dateTime={reply.received_at}>{new Date(reply.received_at).toLocaleString()}</time> · {reply.sender}</p>
     <p><strong>{reply.subject}</strong></p><p className="preserve-lines">{reply.preview||'Text preview unavailable.'}</p>
-    <p className="muted">Gmail text preview; may be truncated. No attachments downloaded. Match: {reply.match_kind.replaceAll('_',' ')}. This is not an interview, rejection or offer classification.</p>
+    <p className="muted">Gmail text preview; may be truncated. No attachments downloaded. Match: {reply.match_kind.replaceAll('_',' ')}. Classification is advisory only and never changes status by itself.</p>
     <label>Associate reply with saved job<select value={jobId} onChange={e=>setJobId(e.target.value)} disabled={busy}>{jobs.map(j=><option key={j.id} value={j.id}>{j.title} — {j.company}</option>)}</select></label>
     <button disabled={busy||!jobId} onClick={()=>void associate(jobId)}>{reply.job_id?'Save association correction':'Confirm association'}</button>
     <button disabled={busy} onClick={()=>setDiscard(true)}>Dismiss and erase preview</button>
     {discard&&<p>Erase this reply preview and prevent it being imported again?<button disabled={busy} onClick={()=>void associate(null)}>Confirm erase preview</button><button onClick={()=>setDiscard(false)}>Cancel</button></p>}
     {error&&<p role="alert">{error}</p>}
+    <ReplyClassificationPanel replyId={reply.id} jobId={reply.job_id}/>
   </article>;
 }
 
@@ -71,7 +73,7 @@ export function ReplyTimeline({jobId}:{jobId:string}) {
       {data.items.filter(r=>r.job_id===jobId).map(r=><ReplyCard key={r.id} reply={r} jobs={data.jobs} reload={load}/>)}
       <h4>Uncertain matches</h4><p>Thread membership alone does not confirm an association. Sender or subject similarity never confirms one.</p>
       {data.items.filter(r=>!r.job_id).map(r=><ReplyCard key={r.id} reply={r} jobs={data.jobs} reload={load}/>)}
-      <p>Use the application tracking form to update status yourself. Synchronization never interprets a reply as an interview, rejection or offer.</p>
+      <p>Use the application tracking form, or a classified reply with explicit confirmation, to update status. Synchronization never interprets a reply as an interview, rejection or offer.</p>
     </>}
   </section>;
 }

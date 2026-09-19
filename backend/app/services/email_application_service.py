@@ -194,7 +194,7 @@ def send(db, owner, job_id, attempt_id, approval, settings):
         try:
             with db.begin_nested():
                 application = ApplicationRecord(owner_id=owner, job_id=job_id, submission_date=mailbox.now(),
-                    method="email", status="Applied", pack_id=uuid.UUID(snap["pack_id"]), pack_version=snap["pack_version"],
+                    method="email", status="Applied", origin="email_confirmed", pack_id=uuid.UUID(snap["pack_id"]), pack_version=snap["pack_version"],
                     cv_snapshot=snap["cv"], cover_letter_snapshot=snap["cover_letter"],
                     notes="Gmail accepted the user-approved email. Recipient delivery and reading are unverified.")
                 db.add(application)

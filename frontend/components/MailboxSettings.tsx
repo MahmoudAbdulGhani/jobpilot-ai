@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Shell } from './Shell';
 import { api } from '../lib/api';
 import { AccountDataSettings } from './AccountDataSettings';
+import { PrivacyMatrix } from './PrivacyMatrix';
 
 type Capability = 'send' | 'read_replies';
 type Mailbox = {id:string;email:string;provider:string;capabilities:Capability[];status:string;expires_at:string|null};
@@ -88,5 +89,6 @@ export function MailboxSettings() {
       <section className="mailbox-card"><h2>Connect a Gmail mailbox</h2><Permissions value={capabilities} onChange={setCapabilities} disabled={busy||!data.available}/><button className="primary-button" disabled={busy||!data.available} onClick={connect}>{busy?'Opening consent…':'Connect Gmail'}</button></section>
     </>}
     <AccountDataSettings />
+    <PrivacyMatrix/>
   </div></Shell>;
 }

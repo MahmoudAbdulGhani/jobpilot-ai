@@ -29,7 +29,7 @@ test('connected career journal workflow', async ({ browser, request }) => {
   page.on('pageerror', error => pageErrors.push(error.message));
   await login(page, primary);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Saved jobs' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Saved jobs', exact: true })).toBeVisible();
   await createJob(page, 'Junior Backend Developer');
   await page.reload();
   await page.getByRole('link', { name: /Junior Backend Developer/ }).click();
@@ -88,7 +88,7 @@ test('connected application tracking record reload edit status history delete fl
   const page = await context.newPage();
   await login(page, user);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Saved jobs' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Saved jobs', exact: true })).toBeVisible();
 
   await createJob(page, 'Application Tracking Job');
   await page.reload();

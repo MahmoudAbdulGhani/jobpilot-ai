@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Shell } from './Shell';
+import { DigestPanel } from './DigestPanel';
 import { api } from '../lib/api';
 
 export type DiscoveredJob = {
@@ -121,5 +122,6 @@ export function Discovery() {
       <div className="pagination"><button disabled={!!busy || results.offset === 0} onClick={() => search(Math.max(0, results.offset - 20))}>Previous results</button><span>Page {Math.floor(results.offset / 20) + 1}</span><button disabled={!!busy || results.next_offset === null} onClick={() => search(results.next_offset!)}>Next results</button></div>
       {results.total > 2000 && <p>Only the first 2,000 matches are available here. Refine your search.</p>}
     </section>}
+    <DigestPanel/>
   </div></Shell>;
 }

@@ -54,6 +54,7 @@ export function Applications() {
           <div className="application-row-top">
             <span className={`status-badge is-${item.status.toLowerCase()}`}>{item.status}</span>
             <span className="method-label">{item.method}</span>
+            <span className="origin-label" title={item.origin === 'email_confirmed' ? 'Created from a Gmail message you approved and synchronized' : 'Recorded by hand; no email was sent for this record'}>{item.origin === 'email_confirmed' ? 'Email-confirmed' : 'Manual record'}</span>
             {item.follow_up_date && <span className="followup-label"><CalendarBlank size={16}/>{item.reminder_status === 'completed' || item.reminder_status === 'cancelled' ? `Reminder ${item.reminder_status}` : `Follow up ${new Date(item.follow_up_date).toLocaleString(undefined, {timeZone:item.reminder_timezone || 'UTC'})} (${item.reminder_timezone || 'UTC'})`}</span>}
           </div>
           <div className="application-row-meta">

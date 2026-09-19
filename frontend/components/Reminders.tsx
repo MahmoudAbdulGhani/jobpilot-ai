@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { FollowupSuggestions } from './FollowupSuggestions';
 
 type Reminder = {application_id:string; job_id:string; title:string; company:string; application_status:string; due_at:string|null; timezone:string; status:string; revision:number; overdue:boolean; reply_received:boolean};
 type Page = {items:Reminder[]; next_cursor:string|null};
@@ -52,6 +53,7 @@ export function Reminders() {
     {data?.items.length===0 && <p>No reminders in this view.</p>}
     {data?.items.map(item=><article className="mailbox-card" key={item.application_id}><Link href={`/jobs/${item.job_id}`}>{item.title} · {item.company}</Link><Due item={item}/></article>)}
     {data?.next_cursor && <button disabled={pending} onClick={()=>void load(data.next_cursor!)}>Load more reminders</button>}
+    <FollowupSuggestions/>
   </section>;
 }
 

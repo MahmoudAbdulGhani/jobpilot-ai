@@ -9,39 +9,40 @@ const job: DiscoveredJob = { source: 'jobtech', external_id: '123', title: 'Back
 const results = { items: [job], total: 1, offset: 0, next_offset: null };
 
 describe('reviewed discovery', () => {
-  beforeEach(() => apiMock.mockReset());
+  beforeEach(() => {apiMock.mockReset();apiMock.mockImplementation((path:string)=>Promise.resolve(path.startsWith('/digest/')?(path==='/digest/preferences'?{cadence:'off'}:{generated_at:'',cadence:'off',items:[],skipped_invalid:0,delivery:{enabled:false,reason:'test'}}):{items:[],total:0,offset:0,next_offset:null}));});
   it('discloses Swedish coverage and approximate remote matching without worldwide eligibility', () => {
     render(<Discovery />);
     expect(screen.getByText(/Primarily Swedish coverage/)).not.toBeNull();
     expect(screen.getByLabelText('Approximate remote matches (source phrase matching)')).not.toBeNull();
     expect(screen.getByText(/does not mean worldwide eligibility/)).not.toBeNull();
     expect(screen.getByText(/residency and work-authorization requirements/)).not.toBeNull();
-    expect(apiMock).not.toHaveBeenCalled();
+    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledWith('/digest/preferences');
   });
   it('requires search, preview and explicit import and escapes source text', async () => {
-    apiMock.mockResolvedValueOnce(results).mockResolvedValueOnce({job, preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'}).mockResolvedValueOnce({job:{id:'saved-1'},already_saved:false});
+    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce(results).mockResolvedValueOnce({job, preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'}).mockResolvedValueOnce({job:{id:'saved-1'},already_saved:false});
     const {container} = render(<Discovery />);
-    expect(apiMock).not.toHaveBeenCalled();
+    expect(apiMock).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByLabelText('Keywords'), {target:{value:'Python'}});
     fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
     fireEvent.click(await screen.findByRole('button',{name:'Preview job'}));
     expect(await screen.findByText('<script>unsafe()</script>')).not.toBeNull();
     expect(container.querySelector('script')).toBeNull();
-    expect(apiMock).toHaveBeenCalledTimes(2);
+    expect(apiMock).toHaveBeenCalledTimes(3);
     expect(screen.getAllByText(/Not supplied/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button',{name:'Import this job into saved jobs'}));
     expect((await screen.findByRole('link',{name:'Open saved job'})).getAttribute('href')).toBe('/jobs/saved-1');
     expect(apiMock).toHaveBeenLastCalledWith('/discovery/import', {method:'POST',body:JSON.stringify({preview_token:'signed',confirm:true})});
   });
   it('links duplicates instead of overwriting them', async () => {
-    apiMock.mockResolvedValueOnce({...results,items:[{...job,existing_job_id:'existing'}]});
+    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce({...results,items:[{...job,existing_job_id:'existing'}]});
     render(<Discovery />);fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
     expect((await screen.findByRole('link',{name:/Already saved/})).getAttribute('href')).toBe('/jobs/existing');
     expect(screen.queryByRole('button',{name:'Preview job'})).toBeNull();
   });
   it('separates Jobicy remote arrangement from source eligibility and warns without merging', async () => {
     const remote={...job,source:'jobicy',source_url:'https://jobicy.com/jobs/123-backend',workplace_model:'Remote (Jobicy listing)',applicant_region:'EMEA',possible_duplicate_ids:['other-source']};
-    apiMock.mockResolvedValueOnce({...results,items:[remote]}).mockResolvedValueOnce({job:remote,preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'});
+    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce({...results,items:[remote]}).mockResolvedValueOnce({job:remote,preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'});
     render(<Discovery/>);
     fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobicy'}});
     fireEvent.change(screen.getByLabelText('Applicant region text (Jobicy cache)'),{target:{value:'EMEA'}});
@@ -49,7 +50,7 @@ describe('reviewed discovery', () => {
     expect(await screen.findByText('EMEA')).not.toBeNull();
     expect(screen.getByText(/Possible cross-source match/)).not.toBeNull();
     expect(screen.getByRole('link',{name:'View on Jobicy'}).getAttribute('href')).toBe(remote.source_url);
-    expect(apiMock.mock.calls[0][0]).toContain('source=jobicy&location=EMEA');
+    expect(apiMock.mock.calls[1][0]).toContain('source=jobicy&location=EMEA');
     fireEvent.click(screen.getByRole('button',{name:'Preview job'}));
     expect(await screen.findByRole('button',{name:'Import this job into saved jobs'})).not.toBeNull();
     expect(apiMock).toHaveBeenLastCalledWith('/discovery/123/preview?source=jobicy');
@@ -64,7 +65,7 @@ describe('reviewed discovery', () => {
     expect(await screen.findByText('No matching jobs')).not.toBeNull();
   });
   it.each(['Rate limit reached. Wait before searching again.','JobTech is unavailable. Please try later.','The preview is invalid or expired. Preview the listing again.'])('shows safe failures: %s', async message => {
-    apiMock.mockRejectedValueOnce(new Error(message));
+    apiMock.mockResolvedValueOnce({cadence:'off'}).mockRejectedValueOnce(new Error(message));
     render(<Discovery />);fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
     expect((await screen.findByRole('alert')).textContent).toBe(message);
     await waitFor(() => expect(screen.getByRole('button',{name:'Search JobTech'}).hasAttribute('disabled')).toBe(false));

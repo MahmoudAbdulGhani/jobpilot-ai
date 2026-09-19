@@ -23,7 +23,15 @@ from app.api.routes.interview_voice import router as interview_voice_router
 from app.api.routes.usage import router as usage_router
 from app.api.routes.reminders import router as reminders_router
 from app.api.routes.replies import router as replies_router
+from app.api.routes.reply_classification import router as reply_classification_router
+from app.api.routes.followup_suggestions import router as followup_suggestions_router
+from app.api.routes.insights import router as insights_router
+from app.api.routes.privacy import router as privacy_router
+from app.api.routes.qa import router as qa_router
+from app.api.routes.digest import router as digest_router
 from app.api.routes.job_fit import router as job_fit_router
+from app.api.routes.rankings import router as rankings_router
+from app.api.routes.ats import router as ats_router
 from app.api.routes.profile import router as profile_router
 from app.api.routes.profile_suggestions import router as profile_suggestions_router
 from app.api.routes.resumes import router as resumes_router
@@ -67,12 +75,20 @@ def create_application() -> FastAPI:
     application.include_router(mailboxes_router, prefix=settings.API_PREFIX)
     application.include_router(email_applications_router, prefix=settings.API_PREFIX)
     application.include_router(replies_router, prefix=settings.API_PREFIX)
+    application.include_router(reply_classification_router, prefix=settings.API_PREFIX)
+    application.include_router(followup_suggestions_router, prefix=settings.API_PREFIX)
+    application.include_router(insights_router, prefix=settings.API_PREFIX)
+    application.include_router(privacy_router, prefix=settings.API_PREFIX)
+    application.include_router(qa_router, prefix=settings.API_PREFIX)
+    application.include_router(digest_router, prefix=settings.API_PREFIX)
     application.include_router(reminders_router, prefix=settings.API_PREFIX)
     application.include_router(interviews_router, prefix=settings.API_PREFIX)
     application.include_router(interview_voice_router, prefix=settings.API_PREFIX)
     application.include_router(usage_router, prefix=settings.API_PREFIX)
     application.add_middleware(ScrubMailboxCallback)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
+    application.include_router(rankings_router, prefix=settings.API_PREFIX)
+    application.include_router(ats_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)
     application.include_router(
         profile_suggestions_router, prefix=settings.API_PREFIX)

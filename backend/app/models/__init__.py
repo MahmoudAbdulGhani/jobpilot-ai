@@ -9,6 +9,8 @@ from app.models.candidate_profile import CandidateProfile
 from app.models.refresh_token import RefreshToken
 from app.models.profile_suggestion import ProfileSuggestionSet
 from app.models.job_fit_analysis import JobFitAnalysis
+from app.models.job_ranking import JobRanking
+from app.models.ats_report import AtsReport
 from app.models.resume import Resume
 from app.models.resume_extraction import ResumeExtraction
 from app.models.saved_job import SavedJob
@@ -16,12 +18,20 @@ from app.models.user import User
 from app.models.mailbox import MailboxConnection, MailboxOAuthState
 from app.models.email_application import EmailApplication
 from app.models.mailbox_reply import ReplySync, MailboxReply
+from app.models.reply_classification import ReplyClassification
+from app.models.followup_suggestion import FollowupSuggestion
+from app.models.data_use_consent import DataUseConsent
+from app.models.digest_preference import DigestPreference
 
 __all__ = [
     "AccountPlan", "UsageReservation", "PlanAudit",
     "InterviewVoiceOperation",
     "InterviewSession", "InterviewOperation",
     "ReplySync", "MailboxReply",
+    "ReplyClassification",
+    "FollowupSuggestion",
+    "DataUseConsent",
+    "DigestPreference",
     "EmailApplication",
     "MailboxConnection", "MailboxOAuthState",
     "AIUsage", "ApplicationPack", "ApplicationPackVersion", "ApplicationPackOperation",
@@ -30,6 +40,8 @@ __all__ = [
     "ResumeExtraction",
     "ProfileSuggestionSet",
     "JobFitAnalysis",
+    "JobRanking",
+    "AtsReport",
 ]
 from app.models.interview_voice import InterviewVoiceOperation
 from app.models.entitlements import AccountPlan, UsageReservation, PlanAudit

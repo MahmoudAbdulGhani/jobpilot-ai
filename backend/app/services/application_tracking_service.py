@@ -98,6 +98,7 @@ def create_application(db: Session, owner_id: uuid.UUID, payload) -> Application
         method=payload.method,
         notes=payload.notes,
         status=payload.status,
+        origin="manual",
         follow_up_date=payload.follow_up_date,
         pack_id=payload.pack_id,
         pack_version=payload.pack_version or (

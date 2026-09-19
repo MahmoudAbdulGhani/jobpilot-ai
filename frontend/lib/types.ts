@@ -57,11 +57,56 @@ export type JobFitAnalysis = {
 };
 export type JobFitAnalysisList = {items:JobFitAnalysis[];total:number;page:number;page_size:number};
 
+export type RankEvidence = { job_quote: string; profile_fact: string };
+export type RankReason = { text: string; evidence: RankEvidence };
+export type RankItem = {
+  job_id: string; title: string; company: string; score: number;
+  reasons: RankReason[]; missing_skills: string[]; risks: string[]; recommended_action: string;
+};
+export type RankRun = {
+  id: string; job_count: number; top_score: number | null; profile_hash: string;
+  engine_version: string; is_stale: boolean; items: RankItem[] | null;
+  created_at: string; updated_at: string;
+};
+export type RankRunList = { items: RankRun[]; total: number; page: number; page_size: number };
+export type AtsCheck = { id: string; label: string; status: string; detail: string; evidence: string[] };
+export type AtsReport = {
+  id: string; job_id: string; pack_id: string; pack_version: number;
+  checks: AtsCheck[]; readiness_score: number; report_version: string;
+  created_at: string; updated_at: string;
+};
+export type ReplyClassification = {
+  id: string; reply_id: string; category: string; confidence: number;
+  evidence_excerpt: string; uncertainty: string; suggested_status: string | null;
+  status_applied: boolean; applied_status: string | null;
+  created_at: string; updated_at: string;
+};
+export type FollowupSuggestion = {
+  id: string; application_id: string; job_id: string | null; job_title: string | null;
+  company: string | null; kind: string; suggested_due_at: string | null;
+  draft_message: string | null; reason: string; state: string; decided_at: string | null;
+  created_at: string; updated_at: string;
+};
+export type FollowupSuggestionList = { items: FollowupSuggestion[]; total: number; page: number; page_size: number };
+export type InsightLink = { label: string; href: string };
+export type Insights = {
+  fit_gaps: { job_id: string; job_title: string; assessment: string; requirement: string; link: InsightLink }[];
+  fit_counts: Record<string, number>;
+  applications: { job_id: string; job_title: string; status: string; origin: string; link: InsightLink }[];
+  application_counts: Record<string, number>;
+  replies: { reply_id: string; job_id: string | null; sender_domain: string; excerpt: string; link: InsightLink | null }[];
+  reply_counts: Record<string, number>;
+  reminders: { application_id: string; job_id: string; job_title: string; due_at: string | null; overdue: boolean; link: InsightLink }[];
+  reminder_counts: { overdue: number; upcoming: number };
+  interviews: { session_id: string; job_id: string; status: string; link: InsightLink }[];
+  interview_counts: Record<string, number>;
+};
 export type ApplicationMethod = 'email'|'employer_website'|'linkedin_manual'|'other';
 export type ApplicationStatus = 'Applied'|'Interview'|'Offer'|'Accepted'|'Rejected'|'Withdrawn';
 export type ApplicationRecord = {
   id: string; owner_id: string; job_id: string; submission_date: string;
   method: ApplicationMethod; notes: string | null; status: ApplicationStatus;
+  origin: 'manual' | 'email_confirmed';
   follow_up_date: string | null; reminder_status?: string | null; reminder_timezone?: string | null; pack_id: string | null; pack_version: number | null;
   cv_snapshot: unknown | null; cover_letter_snapshot: unknown | null;
   created_at: string; updated_at: string;

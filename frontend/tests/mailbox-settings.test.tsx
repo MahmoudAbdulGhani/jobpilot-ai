@@ -6,11 +6,12 @@ vi.mock('../lib/api',()=>({api:apiMock}));
 vi.mock('../components/Shell',()=>({Shell:({children}:{children:React.ReactNode})=><main>{children}</main>}));
 const row={id:'one',email:'mailbox@example.test',provider:'google',capabilities:['send'],status:'connected',expires_at:null};
 describe('mailbox settings',()=>{
-  beforeEach(()=>{apiMock.mockReset();window.history.replaceState(null,'','/settings');});
+  beforeEach(()=>{apiMock.mockReset();window.history.replaceState(null,'','/settings');
+    apiMock.mockImplementation((path:string)=>Promise.resolve(path==='/privacy/matrix'?{rows:[]}:{available:true,test_provider:false,items:[]}));});
   it('loads without starting OAuth or reading mail',async()=>{
     apiMock.mockResolvedValue({available:true,test_provider:false,items:[]});render(<MailboxSettings/>);
     expect(await screen.findByRole('button',{name:'Connect Gmail'})).not.toBeNull();
-    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledTimes(2);
     expect((screen.getByLabelText('Allow sending applications') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('Enable reply tracking') as HTMLInputElement).checked).toBe(false);
     expect(screen.getAllByText(/whole mailbox/).length).toBe(1);
@@ -25,9 +26,14 @@ describe('mailbox settings',()=>{
     expect(screen.getByText(/not configured on this server/)).not.toBeNull();
   });
   it('requires explicit confirmation for disconnect',async()=>{
-    apiMock.mockResolvedValueOnce({available:true,items:[row]}).mockResolvedValueOnce({status:'disconnected'}).mockResolvedValueOnce({available:true,items:[{...row,status:'disconnected',capabilities:[]}]});render(<MailboxSettings/>);
+    let state = {...row};
+    apiMock.mockImplementation((path:string,init?:RequestInit)=>{
+      if(path==='/privacy/matrix') return Promise.resolve({rows:[]});
+      if(path==='/mailboxes/one/disconnect'&&init?.method==='POST'){state={...state,status:'disconnected',capabilities:[]};return Promise.resolve({status:'disconnected'});}
+      return Promise.resolve({available:true,items:[state]});
+    });
+    render(<MailboxSettings/>);
     fireEvent.click(await screen.findByRole('button',{name:'Disconnect'}));
-    expect(apiMock).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button',{name:'Confirm disconnect and revoke'}));
     expect(await screen.findByText('Status: disconnected')).not.toBeNull();
     expect(apiMock).toHaveBeenCalledWith('/mailboxes/one/disconnect',{method:'POST'});

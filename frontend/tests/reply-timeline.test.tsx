@@ -7,7 +7,7 @@ const reply={id:'reply',job_id:'job',suggested_job_id:'job',match_kind:'reply_he
 const data={items:[],jobs:[{id:'job',title:'Engineer',company:'Example'},{id:'other',title:'Other role',company:'Other'}],attempts:[{attempt_id:'attempt',provider:'google-test',send_status:'simulated',sync:null}]};
 
 describe('reply timeline',()=>{
-  beforeEach(()=>apiMock.mockReset());
+  beforeEach(()=>{apiMock.mockReset();apiMock.mockImplementation((path:string)=>Promise.resolve(path.includes('/classification')?null:data));});
   it('loads saved data without scanning and requires explicit sync action',async()=>{
     apiMock.mockResolvedValue(data);render(<ReplyTimeline jobId="job"/>);
     const button=await screen.findByRole('button',{name:'Sync replies (next bounded batch)'});
@@ -20,7 +20,7 @@ describe('reply timeline',()=>{
     const {container}=render(<ReplyTimeline jobId="job"/>);
     expect(await screen.findByText('Reply received')).not.toBeNull();
     expect(screen.getByText('Uncertain association — confirm before linking')).not.toBeNull();
-    expect(container.querySelector('img')).toBeNull();expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('img')).toBeNull();expect(apiMock).toHaveBeenCalledTimes(3);
   });
   it('allows an explicit association correction to another owned job',async()=>{
     apiMock.mockResolvedValue({...data,items:[reply]});render(<ReplyTimeline jobId="job"/>);
@@ -31,7 +31,7 @@ describe('reply timeline',()=>{
   it('requires confirmation before erasing a preview',async()=>{
     apiMock.mockResolvedValue({...data,items:[reply]});render(<ReplyTimeline jobId="job"/>);
     fireEvent.click(await screen.findByRole('button',{name:'Dismiss and erase preview'}));
-    expect(apiMock).toHaveBeenCalledTimes(1);
+    expect(apiMock).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole('button',{name:'Confirm erase preview'}));
     await waitFor(()=>expect(apiMock).toHaveBeenCalledWith('/replies/reply/association',{method:'PATCH',body:'{"job_id":null,"confirm":true}'},false));
   });

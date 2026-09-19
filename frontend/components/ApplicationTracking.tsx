@@ -144,6 +144,7 @@ export function ApplicationTracking({ job }: { job: { id: string } }) {
     {error && <p className="notice form-error" role="alert">{error}</p>}
     {loading && <p className="notice">Loading application…</p>}
     {!loading && !record && <p className="notice empty-state">No application record yet.</p>}
+    {record && <p className="origin-note">{record.origin === 'email_confirmed' ? 'Email-confirmed record: created from a Gmail message you approved and synchronized.' : 'Manual record: recorded by hand. No email was sent for this record.'}</p>}
     <form className="tracking-form" onSubmit={createOrUpdate}>
       <div className="tracking-grid">
         <label><span>Submission date</span><input type="date" value={submission} onChange={e => setSubmission(e.target.value)} required /></label>

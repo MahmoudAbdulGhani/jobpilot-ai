@@ -483,6 +483,11 @@ job and reviewed CV or approved pack. Sessions snapshot their sources, save answ
 for resumption and provide evidence-linked AI guidance. Optional [voice practice](docs/voice-interview-practice.md)
 adds explicit recording, editable transcript review and labelled spoken questions;
 speech is disabled by default and the full text workflow remains available.
+Deterministic, provider-free [AI advisory capabilities](docs/ai-advisory.md)
+cover cross-job ranking, ATS/readiness reports, reply classification, follow-up
+suggestions, unified insights, privacy controls, read-only Q&A and a daily
+digest preview. Manual application records stay `manual`; email-created records
+are `email_confirmed`, and no email is ever claimed for a manual record.
 
 1. Backend foundation (config, database, auth)
 2. Jobs and application tracking
