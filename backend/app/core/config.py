@@ -120,6 +120,11 @@ class Settings(BaseSettings):
     JOBPILOT_AI_MAX_REQUESTS_PER_USER: int = 20
     JOBPILOT_AI_TEST_PROVIDER: bool = False
 
+    # Temporary diagnostic mode: when True, the production validator collects
+    # all failures instead of raising on the first one. The entry point prints
+    # the failing setting name and validation category, never the value.
+    JOBPILOT_CONFIG_DIAGNOSTIC: bool = False
+
     JOBPILOT_PLAN_LIMITS: dict[str, PlanLimits] = {
         "free": PlanLimits(), "legacy": PlanLimits(),
         "invited_beta": PlanLimits(total=100), "paid": PlanLimits(total=200)}
@@ -207,53 +212,154 @@ class Settings(BaseSettings):
             raise ValueError("token lifetimes must be positive")
         return value
 
+    _production_failures: list[dict] = []
+
     @model_validator(mode="after")
     def validate_production_cookie_security(self) -> "Settings":
-        if self.ENVIRONMENT == "production" and not self.AUTH_COOKIE_SECURE:
-            raise ValueError(
-                "AUTH_COOKIE_SECURE must be true when ENVIRONMENT is production"
+        if self.ENVIRONMENT != "production":
+            return self
+
+        import re
+
+        def origin(value):
+            u = urlsplit(value)
+            try:
+                port = u.port
+            except ValueError:
+                return False
+            if port not in {None, 443}:
+                return False
+            return (
+                u.scheme == "https"
+                and bool(u.hostname)
+                and u.hostname not in {"localhost", "127.0.0.1"}
+                and not u.username
+                and not u.password
+                and not u.query
+                and not u.fragment
+                and u.path in {"", "/"}
             )
-        if self.ENVIRONMENT == "production":
-            import re
-            def origin(value):
-                u = urlsplit(value)
-                try: port = u.port
-                except ValueError: return False
-                if port not in {None, 443}: return False
-                return u.scheme == "https" and bool(u.hostname) and u.hostname not in {"localhost", "127.0.0.1"} and not u.username and not u.password and not u.query and not u.fragment and u.path in {"", "/"}
-            if self.DEBUG or any((self.E2E_TEST_MODE, self.JOBPILOT_AI_TEST_PROVIDER, self.JOBPILOT_MAILBOX_TEST_PROVIDER, self.JOBPILOT_DISCOVERY_TEST_PROVIDER, self.JOBPILOT_VOICE_TEST_PROVIDER)) or self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT == "test" or self.JOBPILOT_DIGEST_MAIL_TRANSPORT == "test":
-                raise ValueError("Production forbids debug and test providers")
-            if not origin(self.JOBPILOT_APP_URL) or self.CORS_ORIGINS != [self.JOBPILOT_APP_URL.rstrip('/')]:
-                raise ValueError("Production requires one trusted HTTPS application origin")
-            if not self.ALLOWED_HOSTS or any(not re.fullmatch(r"[a-zA-Z0-9.-]+", h) or h in {"localhost", "127.0.0.1", "testserver"} for h in self.ALLOWED_HOSTS):
-                raise ValueError("Production requires explicit allowed hostnames")
-            if urlsplit(self.JOBPILOT_APP_URL).hostname not in self.ALLOWED_HOSTS:
-                raise ValueError("Allowed hosts must include the application hostname")
-            if self.POSTGRES_HOST in {"localhost", "127.0.0.1", ""} or self.POSTGRES_DB == self.POSTGRES_TEST_DB:
-                raise ValueError("Production requires a distinct deployment database target")
-            if self.JOBPILOT_PROXY_IPS:
-                from ipaddress import ip_network
-                try:
-                    for entry in self.JOBPILOT_PROXY_IPS.split(','):
-                        network = ip_network(entry.strip())
-                        if network.prefixlen < (8 if network.version == 4 else 32): raise ValueError()
-                except ValueError:
-                    raise ValueError("Proxy trust must contain explicit IP addresses or networks") from None
-            if not self.POSTGRES_PASSWORD or self.POSTGRES_SSLMODE != "verify-full" or not self.POSTGRES_SSLROOTCERT or not Path(self.POSTGRES_SSLROOTCERT).is_file():
-                raise ValueError("Production database requires credentials and verify-full TLS with a CA file")
-            if len(set(self.SECRET_KEY)) < 12 or any(word in self.SECRET_KEY.lower() for word in ('change-me', 'changeme', 'example', 'test-secret')):
-                raise ValueError("Production requires a randomly generated signing secret")
-            if self.JOBPILOT_STORAGE != "supabase" or not origin(self.JOBPILOT_STORAGE_URL) or not self.JOBPILOT_STORAGE_KEY or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.JOBPILOT_STORAGE_BUCKET):
-                raise ValueError("Production requires configured private object storage")
-            if self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "disabled":
-                if self.JOBPILOT_ACCOUNT_APP_URL.rstrip('/') != self.JOBPILOT_APP_URL.rstrip('/') or not self.JOBPILOT_ACCOUNT_SMTP_HOST or not self.JOBPILOT_ACCOUNT_MAIL_FROM:
-                    raise ValueError("Enabled account email requires trusted application URL and SMTP settings")
-            if self.JOBPILOT_DIGEST_MAIL_TRANSPORT == "smtp":
-                if not self.JOBPILOT_DIGEST_SMTP_HOST or not self.JOBPILOT_DIGEST_MAIL_FROM:
-                    raise ValueError("Digest SMTP requires a host and from address")
-            if any((self.JOBPILOT_GOOGLE_CLIENT_ID, self.JOBPILOT_GOOGLE_CLIENT_SECRET, self.JOBPILOT_MAILBOX_ENCRYPTION_KEY)):
-                if self.JOBPILOT_GOOGLE_REDIRECT_URI != self.JOBPILOT_APP_URL.rstrip('/') + '/api/mailboxes/oauth/callback' or self.JOBPILOT_MAILBOX_SETTINGS_URL != self.JOBPILOT_APP_URL.rstrip('/') + '/settings':
-                    raise ValueError("Mailbox redirects must use the trusted application origin")
+
+        failures: list[dict] = []
+
+        def _check(setting, category, ok, message=""):
+            if not ok:
+                failures.append({"setting": setting, "category": category, "message": message})
+
+        # --- cookie ---
+        _check("AUTH_COOKIE_SECURE", "cookie_security",
+               self.AUTH_COOKIE_SECURE,
+               "AUTH_COOKIE_SECURE must be true when ENVIRONMENT is production")
+
+        # --- test providers / debug ---
+        _check("DEBUG", "forbidden_flags", not self.DEBUG)
+        _check("E2E_TEST_MODE", "forbidden_flags", not self.E2E_TEST_MODE)
+        _check("JOBPILOT_AI_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_AI_TEST_PROVIDER)
+        _check("JOBPILOT_MAILBOX_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_MAILBOX_TEST_PROVIDER)
+        _check("JOBPILOT_DISCOVERY_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_DISCOVERY_TEST_PROVIDER)
+        _check("JOBPILOT_VOICE_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_VOICE_TEST_PROVIDER)
+        _check("JOBPILOT_ACCOUNT_MAIL_TRANSPORT", "forbidden_flags",
+               self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "test")
+        _check("JOBPILOT_DIGEST_MAIL_TRANSPORT", "forbidden_flags",
+               self.JOBPILOT_DIGEST_MAIL_TRANSPORT != "test")
+
+        # --- origins / hosts ---
+        _check("JOBPILOT_APP_URL", "app_origin",
+               origin(self.JOBPILOT_APP_URL) and self.CORS_ORIGINS == [self.JOBPILOT_APP_URL.rstrip('/')],
+               "JOBPILOT_APP_URL must be a valid HTTPS origin and match CORS_ORIGINS")
+        _check("ALLOWED_HOSTS", "allowed_hosts",
+               self.ALLOWED_HOSTS
+               and all(
+                   re.fullmatch(r"[a-zA-Z0-9.-]+", h) and h not in {"localhost", "127.0.0.1", "testserver"}
+                   for h in self.ALLOWED_HOSTS
+               ),
+               "ALLOWED_HOSTS must contain explicit hostnames, no localhost/testserver")
+        hostname = urlsplit(self.JOBPILOT_APP_URL).hostname
+        _check("JOBPILOT_APP_URL", "allowed_hosts",
+               hostname in self.ALLOWED_HOSTS,
+               "JOBPILOT_APP_URL hostname must appear in ALLOWED_HOSTS")
+
+        # --- database ---
+        _check("POSTGRES_HOST", "database_target",
+               self.POSTGRES_HOST not in {"localhost", "127.0.0.1", ""},
+               "POSTGRES_HOST must not be localhost or empty in production")
+        _check("POSTGRES_DB", "database_target",
+               self.POSTGRES_DB != self.POSTGRES_TEST_DB,
+               "POSTGRES_DB must differ from POSTGRES_TEST_DB")
+        _check("POSTGRES_PASSWORD", "database_tls",
+               bool(self.POSTGRES_PASSWORD))
+        _check("POSTGRES_SSLMODE", "database_tls",
+               self.POSTGRES_SSLMODE == "verify-full",
+               "POSTGRES_SSLMODE must be verify-full in production")
+        _check("POSTGRES_SSLROOTCERT", "database_tls",
+               bool(self.POSTGRES_SSLROOTCERT) and Path(self.POSTGRES_SSLROOTCERT).is_file(),
+               "POSTGRES_SSLROOTCERT must point to an existing CA file on disk")
+
+        # --- proxy ---
+        if self.JOBPILOT_PROXY_IPS:
+            from ipaddress import ip_network
+            proxy_ok = True
+            try:
+                for entry in self.JOBPILOT_PROXY_IPS.split(","):
+                    network = ip_network(entry.strip())
+                    if network.prefixlen < (8 if network.version == 4 else 32):
+                        proxy_ok = False
+            except ValueError:
+                proxy_ok = False
+            _check("JOBPILOT_PROXY_IPS", "proxy_trust", proxy_ok,
+                   "JOBPILOT_PROXY_IPS must contain explicit IP addresses or CIDR networks")
+
+        # --- secret key strength ---
+        _check("SECRET_KEY", "secret_key",
+               len(set(self.SECRET_KEY)) >= 12
+               and not any(w in self.SECRET_KEY.lower() for w in ("change-me", "changeme", "example", "test-secret")),
+               "SECRET_KEY must have >= 12 distinct characters and no weak words")
+
+        # --- storage ---
+        _check("JOBPILOT_STORAGE", "object_storage",
+               self.JOBPILOT_STORAGE == "supabase",
+               "JOBPILOT_STORAGE must be supabase in production")
+        _check("JOBPILOT_STORAGE_URL", "object_storage",
+               origin(self.JOBPILOT_STORAGE_URL),
+               "JOBPILOT_STORAGE_URL must be a valid HTTPS origin")
+        _check("JOBPILOT_STORAGE_KEY", "object_storage",
+               bool(self.JOBPILOT_STORAGE_KEY),
+               "JOBPILOT_STORAGE_KEY must be non-empty")
+        _check("JOBPILOT_STORAGE_BUCKET", "object_storage",
+               bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.JOBPILOT_STORAGE_BUCKET)),
+               "JOBPILOT_STORAGE_BUCKET must match [a-z0-9][a-z0-9-]{0,62}")
+
+        # --- account email ---
+        if self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "disabled":
+            _check("JOBPILOT_ACCOUNT_MAIL_TRANSPORT", "account_email",
+                   self.JOBPILOT_ACCOUNT_APP_URL.rstrip("/") == self.JOBPILOT_APP_URL.rstrip("/")
+                   and bool(self.JOBPILOT_ACCOUNT_SMTP_HOST)
+                   and bool(self.JOBPILOT_ACCOUNT_MAIL_FROM),
+                   "Account email requires matching APP_URL, SMTP host, and sender")
+
+        # --- digest smtp ---
+        if self.JOBPILOT_DIGEST_MAIL_TRANSPORT == "smtp":
+            _check("JOBPILOT_DIGEST_SMTP_HOST", "digest_smtp",
+                   bool(self.JOBPILOT_DIGEST_SMTP_HOST) and bool(self.JOBPILOT_DIGEST_MAIL_FROM),
+                   "Digest SMTP requires a host and from address")
+
+        # --- gmail / mailbox redirects ---
+        if any((self.JOBPILOT_GOOGLE_CLIENT_ID, self.JOBPILOT_GOOGLE_CLIENT_SECRET, self.JOBPILOT_MAILBOX_ENCRYPTION_KEY)):
+            base = self.JOBPILOT_APP_URL.rstrip("/")
+            _check("JOBPILOT_GOOGLE_REDIRECT_URI", "mailbox_redirects",
+                   self.JOBPILOT_GOOGLE_REDIRECT_URI == base + "/api/mailboxes/oauth/callback",
+                   "JOBPILOT_GOOGLE_REDIRECT_URI must use the trusted application origin")
+            _check("JOBPILOT_MAILBOX_SETTINGS_URL", "mailbox_redirects",
+                   self.JOBPILOT_MAILBOX_SETTINGS_URL == base + "/settings",
+                   "JOBPILOT_MAILBOX_SETTINGS_URL must use the trusted application origin")
+
+        if self.JOBPILOT_CONFIG_DIAGNOSTIC:
+            self._production_failures = failures
+            return self
+
+        if failures:
+            first = failures[0]
+            raise ValueError(f"{first['category']}: {first['message']}")
         return self
 
     @field_validator("CORS_ORIGINS", "ALLOWED_HOSTS", mode="before")

@@ -497,7 +497,7 @@ class TestAuthenticationConfiguration:
             Settings(**self.base_kwargs(REFRESH_TOKEN_EXPIRE_DAYS=-1))
 
     def test_secure_cookie_alone_is_not_complete_production_configuration(self):
-        with pytest.raises(ValidationError, match="trusted HTTPS application origin"):
+        with pytest.raises(ValidationError, match="JOBPILOT_APP_URL must be a valid HTTPS origin"):
             Settings(**self.base_kwargs())
 
 
