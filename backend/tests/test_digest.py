@@ -140,3 +140,20 @@ def test_digest_send_via_test_transport_marks_last_sent(client, db_session):
         client.app.dependency_overrides.pop(get_db, None)
         digest_delivery.test_messages.clear()
         db_session.rollback()
+
+
+def test_digest_send_receipt_importable_and_constructible():
+    """Regression: DigestDelivery must be defined before DigestSendReceipt."""
+    from datetime import datetime, timezone
+    from app.schemas.digest import DigestSendReceipt, DigestDelivery
+
+    receipt = DigestSendReceipt(
+        sent_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        recipient="test@example.com",
+        items=3,
+        transport="smtp",
+        delivery=DigestDelivery(enabled=True, reason="ok"),
+    )
+    assert receipt.transport == "smtp"
+    assert receipt.delivery.enabled is True
+    assert receipt.delivery.reason == "ok"

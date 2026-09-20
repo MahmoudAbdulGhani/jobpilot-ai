@@ -24,6 +24,12 @@ class DigestSendRequest(BaseModel):
     confirm: Literal[True]
 
 
+class DigestDelivery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    reason: str
+
+
 class DigestSendReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sent_at: datetime
@@ -48,12 +54,6 @@ class DigestItem(BaseModel):
     remote_arrangement: str
     test_data: bool
     refreshed_at: datetime | None
-
-
-class DigestDelivery(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool
-    reason: str
 
 
 class DigestPreview(BaseModel):
