@@ -205,7 +205,8 @@ def test_non_production_skips_checks():
 # ------------------------------------------------------------------
 # 7. Production entry point diagnostic report
 # ------------------------------------------------------------------
-def test_production_diagnostic_report_prints_json(tmp_path, monkeypatch):
+def test_production_diagnostic_report_connectivity_fail(tmp_path, monkeypatch, capsys):
+    """Diagnostic reports connectivity failure for unreachable host."""
     ca = tmp_path / "ca.pem"
     ca.write_text("synthetic-ca")
     env = {
@@ -235,6 +236,18 @@ def test_production_diagnostic_report_prints_json(tmp_path, monkeypatch):
         _diagnostic_report()
     assert exc_info.value.code == 1
 
+    captured = capsys.readouterr()
+    import json
+    report = json.loads(captured.out)
+    assert report["status"] == "config_diagnostic"
+    categories = [s["category"] for s in report["steps"]]
+    assert "settings" in categories
+    assert "config_validation" in categories
+    assert "connectivity" in categories
+
+    fail_steps = [s for s in report["steps"] if s["status"] == "fail"]
+    assert any(s["category"] == "connectivity" for s in fail_steps)
+
     get_settings.cache_clear()
 
 
@@ -248,5 +261,44 @@ def test_production_diagnostic_report_silent_when_disabled(monkeypatch, capsys):
     _diagnostic_report()
     captured = capsys.readouterr()
     assert "config_diagnostic" not in captured.out
+
+    get_settings.cache_clear()
+
+
+def test_diagnostic_report_covers_app_import_step(tmp_path, monkeypatch, capsys):
+    """Even when connectivity fails, app_import step is attempted."""
+    ca = tmp_path / "ca.pem"
+    ca.write_text("synthetic-ca")
+    env = {
+        "ENVIRONMENT": "production",
+        "JOBPILOT_CONFIG_DIAGNOSTIC": "true",
+        "SECRET_KEY": "aB3!cD4@eF5#gH6$iJ7%kL8^mN9&oP0*",
+        "AUTH_COOKIE_SECURE": "true",
+        "JOBPILOT_APP_URL": "https://app.example.com",
+        "CORS_ORIGINS": "https://app.example.com",
+        "ALLOWED_HOSTS": "app.example.com",
+        "POSTGRES_HOST": "db.example.com",
+        "POSTGRES_USER": "synthetic",
+        "POSTGRES_PASSWORD": "synthetic-db",
+        "POSTGRES_SSLMODE": "disable",
+        "POSTGRES_SSLROOTCERT": str(ca),
+        "JOBPILOT_STORAGE": "supabase",
+        "JOBPILOT_STORAGE_URL": "https://xyz.supabase.co",
+        "JOBPILOT_STORAGE_BUCKET": "private-resumes",
+        "JOBPILOT_STORAGE_KEY": "key",
+    }
+    monkeypatch.setattr(os, "environ", env)
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+
+    from app.production import _diagnostic_report
+    with pytest.raises(SystemExit):
+        _diagnostic_report()
+
+    captured = capsys.readouterr()
+    import json
+    report = json.loads(captured.out)
+    categories = [s["category"] for s in report["steps"]]
+    assert "app_import" in categories
 
     get_settings.cache_clear()
