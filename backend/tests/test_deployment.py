@@ -92,6 +92,65 @@ def test_object_bytes_private_download_owner_isolation_and_delete(monkeypatch,db
     assert not objects
 
 
+@pytest.mark.parametrize('extension, file_bytes, expected_content_type', [
+    ('pdf', b'%PDF-1.4\n%%EOF', 'application/pdf'),
+    ('docx', None, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+])
+def test_upload_sets_correct_content_type_for_supabase(monkeypatch, db_session, extension, file_bytes, expected_content_type):
+    captured_headers = {}
+    objects = {}
+
+    def handler(request):
+        if '/bucket/' in request.url.path:
+            return httpx.Response(200, json={'public': False})
+        captured_headers['content-type'] = request.headers.get('content-type', '')
+        key = request.url.path
+        if request.method == 'POST':
+            objects[key] = request.content
+            return httpx.Response(200, json={})
+        if request.method == 'DELETE':
+            objects.pop(key, None)
+            return httpx.Response(200, json={})
+        return httpx.Response(200, content=objects[key]) if key in objects else httpx.Response(404)
+
+    store(monkeypatch, handler)
+
+    if extension == 'docx':
+        import io, zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zf:
+            zf.writestr('[Content_Types].xml',
+                '<?xml version="1.0"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                '</Types>')
+            zf.writestr('word/document.xml',
+                '<?xml version="1.0"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:body><w:p><w:r><w:t>test</w:t></w:r></w:p></w:body>'
+                '</w:document>')
+        file_bytes = buf.getvalue()
+
+    user = User(email=f'ct-{uuid.uuid4()}@example.com', password_hash=hash_password('pw'))
+    db_session.add(user)
+    db_session.commit()
+
+    app = create_application()
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/api/resumes',
+            headers={'Authorization': 'Bearer ' + create_access_token(user.id)},
+            files={'file': (f'cv.{extension}', file_bytes, expected_content_type)},
+        )
+        assert response.status_code == 201
+
+    assert captured_headers.get('content-type') == expected_content_type
+
+
 @pytest.mark.parametrize('response', [httpx.Response(200,json={'public':True}),httpx.Response(403,text='secret-provider-body'),httpx.Response(200,json={})])
 def test_public_or_unknown_bucket_refused(monkeypatch,response):
     calls=[]

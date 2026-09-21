@@ -32,12 +32,12 @@ def ensure_storage_dir() -> Path:
     return root
 
 
-def write_bytes(storage_id: uuid.UUID, data: bytes) -> None:
+def write_bytes(storage_id: uuid.UUID, data: bytes, content_type: str = "application/octet-stream") -> None:
     """Atomically write resume bytes. The destination is derived only from the
     server-generated storage id, never from submitted filenames."""
     store = object_store()
     if store:
-        store.write(storage_id, data)
+        store.write(storage_id, data, content_type=content_type)
         return
     storage_id = uuid.UUID(str(storage_id))
     root = ensure_storage_dir()

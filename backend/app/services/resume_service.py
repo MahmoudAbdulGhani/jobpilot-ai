@@ -17,6 +17,7 @@ def create_resume(
     file_extension: str,
     size_bytes: int,
     data: bytes,
+    content_type: str = "application/octet-stream",
 ) -> Resume:
     resume = Resume(
         owner_id=owner_id,
@@ -29,7 +30,7 @@ def create_resume(
     session.flush()
     resume_id = resume.id
     try:
-        resume_store.write_bytes(resume_id, data)
+        resume_store.write_bytes(resume_id, data, content_type=content_type)
         session.commit()
     except Exception:
         session.rollback()

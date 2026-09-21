@@ -118,6 +118,7 @@ async def upload_resume(
         file_extension=extension,
         size_bytes=total,
         data=data,
+        content_type=resume_validation.media_type(extension),
     )
 
 

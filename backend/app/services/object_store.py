@@ -147,14 +147,14 @@ class SupabaseStore:
             raise StorageUnavailable(category=cat, operation="read", http_status=response.status_code)
         return response.content
 
-    def write(self, storage_id, data):
+    def write(self, storage_id, data, content_type="application/octet-stream"):
         if len(data) > self.settings.RESUME_MAX_SIZE_MB * 1024 * 1024:
             log.warning("storage_write category=file_too_large size=%d limit=%d",
                         len(data), self.settings.RESUME_MAX_SIZE_MB * 1024 * 1024)
             raise StorageUnavailable(category="file_too_large", operation="write", http_status=None)
         self.private()
         response = self.request('POST', self.path(storage_id), content=data,
-                                headers={'Content-Type': 'application/octet-stream', 'x-upsert': 'false'})
+                                headers={'Content-Type': content_type, 'x-upsert': 'false'})
         if response.status_code not in {200, 201}:
             if response.status_code == 400:
                 try:
