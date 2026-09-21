@@ -276,6 +276,55 @@ def test_storage_failure_handler_logs_correlated_warning(monkeypatch, db_session
     assert bucket_name not in log_text, 'bucket name leaked in handler log'
     assert 'Bearer' not in log_text.split('event=')[0] if 'event=' in log_text else True
 
+    body = response.json()
+    assert body == {
+        'detail': 'Private document storage is unavailable',
+        'code': 'storage_unavailable',
+        'operation': body['operation'],
+    }
+    assert body['operation'] in ('bucket_check', 'write', 'read', 'delete', 'GET', 'POST', 'DELETE', 'unknown')
+    assert secret_key not in str(body), 'storage key leaked in response'
+    assert bucket_name not in str(body), 'bucket name leaked in response'
+
+
+@pytest.mark.parametrize('handler_factory, expected_operation', [
+    (lambda sk: lambda r: (_ for _ in ()).throw(httpx.ConnectError('refused')), 'GET'),
+    (lambda sk: (lambda r: httpx.Response(404)), 'bucket_check'),
+    (lambda sk: (lambda r: httpx.Response(401)), 'bucket_check'),
+    (lambda sk: (lambda r: (httpx.Response(200, json={'public': True}))), 'bucket_check'),
+    (lambda sk: (lambda r: httpx.Response(500) if '/bucket/' not in r.url.path else httpx.Response(200, json={'public': False})), 'write'),
+    (lambda sk: (lambda r: httpx.Response(403) if '/bucket/' not in r.url.path else httpx.Response(200, json={'public': False})), 'write'),
+])
+def test_storage_503_response_shape(monkeypatch, db_session, handler_factory, expected_operation):
+    secret_key = 'shape-test-key-abc'
+    s = get_settings().model_copy(update={
+        'JOBPILOT_STORAGE': 'supabase',
+        'JOBPILOT_STORAGE_URL': 'https://project.supabase.co',
+        'JOBPILOT_STORAGE_BUCKET': 'test-bucket',
+        'JOBPILOT_STORAGE_KEY': secret_key,
+    })
+    provider = SupabaseStore(s, transport=httpx.MockTransport(handler_factory(secret_key)))
+    monkeypatch.setattr(resume_store, 'object_store', lambda: provider)
+
+    user = User(email=f'shape-{uuid.uuid4()}@example.com', password_hash=hash_password('pw'))
+    db_session.add(user); db_session.commit()
+
+    app = create_application()
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post('/api/resumes',
+            headers={'Authorization': 'Bearer ' + create_access_token(user.id)},
+            files={'file': ('cv.pdf', b'%PDF-1.4\n%%EOF', 'application/pdf')})
+
+    assert response.status_code == 503
+    body = response.json()
+    assert set(body.keys()) == {'detail', 'code', 'operation'}
+    assert body['detail'] == 'Private document storage is unavailable'
+    assert body['code'] == 'storage_unavailable'
+    assert body['operation'] == expected_operation
+    assert secret_key not in str(body)
+
 
 def test_production_startup_error_does_not_print_environment_secrets():
     import os, subprocess, sys

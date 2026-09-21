@@ -61,12 +61,16 @@ def create_application() -> FastAPI:
         return await request_validation_exception_handler(request, error)
     @application.exception_handler(StorageUnavailable)
     async def unavailable_storage(request, error):
-        request_id = getattr(error, "request_id", None) or str(_uuid.uuid4())
+        operation = getattr(error, "operation", None) or "unknown"
         log.warning("event=resume_upload_storage_failure request_id=%s exception_type=%s operation=%s",
-                     request_id,
+                     str(_uuid.uuid4()),
                      type(error).__name__,
-                     getattr(error, "operation", "storage"))
-        return JSONResponse(status_code=503, content={"detail":"Private document storage is unavailable; try again later"})
+                     operation)
+        return JSONResponse(status_code=503, content={
+            "detail": "Private document storage is unavailable",
+            "code": "storage_unavailable",
+            "operation": operation,
+        })
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
