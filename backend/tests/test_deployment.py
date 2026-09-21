@@ -165,6 +165,72 @@ def test_storage_failures_do_not_redirect_retry_or_expose_bodies(monkeypatch,sta
     assert len(calls)==2 and 'credential' not in str(error.value)
 
 
+def test_storage_diagnostic_logs_never_expose_secrets(monkeypatch, caplog):
+    secret_key = 'super-secret-storage-key-abc123xyz'
+    bucket_name = 'my-private-bucket'
+    s = get_settings().model_copy(update={
+        'JOBPILOT_STORAGE': 'supabase',
+        'JOBPILOT_STORAGE_URL': 'https://project.supabase.co',
+        'JOBPILOT_STORAGE_BUCKET': bucket_name,
+        'JOBPILOT_STORAGE_KEY': secret_key,
+    })
+
+    def bucket_not_found(r):
+        return httpx.Response(404, text='bucket not found')
+
+    def auth_error(r):
+        return httpx.Response(401, text='invalid apikey: ' + secret_key)
+
+    def server_error(r):
+        if '/bucket/' in r.url.path:
+            return httpx.Response(200, json={'public': False})
+        return httpx.Response(500, text='internal error with creds')
+
+    def timeout_error(r):
+        if '/bucket/' in r.url.path:
+            return httpx.Response(200, json={'public': False})
+        raise httpx.TimeoutException('connection to ' + secret_key + ' timed out')
+
+    def public_bucket(r):
+        return httpx.Response(200, json={'public': True})
+
+    forbidden_body = r'{"message":" forbidden","hint":"check storage key ' + secret_key + '"}'
+    def forbidden_on_write(r):
+        if '/bucket/' in r.url.path:
+            return httpx.Response(200, json={'public': False})
+        return httpx.Response(403, text=forbidden_body)
+
+    for handler, op_label in [
+        (bucket_not_found, 'bucket_404'),
+        (auth_error, 'bucket_auth_error'),
+        (server_error, 'write_500'),
+        (timeout_error, 'read_timeout'),
+        (public_bucket, 'public_bucket'),
+        (forbidden_on_write, 'write_403'),
+    ]:
+        provider = SupabaseStore(s, transport=httpx.MockTransport(handler))
+        caplog.clear()
+        with caplog.at_level('WARNING', logger='app.services.object_store'):
+            with pytest.raises(StorageUnavailable):
+                if op_label == 'write_500' or op_label == 'write_403':
+                    provider.write(uuid.uuid4(), b'test-data')
+                else:
+                    provider.read(uuid.uuid4())
+        log_text = caplog.text
+        assert secret_key not in log_text, f'{op_label}: secret key leaked into logs'
+        assert bucket_name not in log_text, f'{op_label}: bucket name leaked into logs'
+        assert 'Bearer ' not in log_text, f'{op_label}: Bearer token leaked into logs'
+        assert 'apikey' not in log_text.lower() or 'category' in log_text.lower(), (
+            f'{op_label}: apikey header value leaked into logs'
+        )
+        assert 'storage_request' in log_text or 'storage_bucket_check' in log_text or 'storage_write' in log_text or 'storage_read' in log_text or 'storage_delete' in log_text, (
+            f'{op_label}: expected diagnostic log line missing'
+        )
+        for line in log_text.splitlines():
+            if 'storage_' in line:
+                assert 'category=' in line, f'{op_label}: log line missing category field'
+
+
 def test_production_startup_error_does_not_print_environment_secrets():
     import os, subprocess, sys
     env={**os.environ,'ENVIRONMENT':'production','SECRET_KEY':'startup-secret-marker',

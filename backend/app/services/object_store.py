@@ -76,8 +76,8 @@ class SupabaseStore:
                         if len(content) > limit:
                             raise StorageUnavailable(category="response_too_large")
                     status = response.status_code
-                    log.info("storage_request method=%s path=%s status=%d category=%s",
-                             method, safe_path, status, _categorize(status))
+                    log.warning("storage_request method=%s path=%s status=%d category=%s",
+                                method, safe_path, status, _categorize(status))
                     return httpx.Response(status, content=bytes(content))
         except StorageUnavailable:
             raise
