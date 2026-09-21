@@ -7,6 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.core.operations import RequestSafety
 from app.services.object_store import StorageUnavailable
+import logging
+import uuid as _uuid
+
+log = logging.getLogger(__name__)
 
 from app.api.routes.application_packs import router as application_packs_router
 from app.api.routes.application_tracking import router as application_tracking_router
@@ -57,6 +61,11 @@ def create_application() -> FastAPI:
         return await request_validation_exception_handler(request, error)
     @application.exception_handler(StorageUnavailable)
     async def unavailable_storage(request, error):
+        request_id = getattr(error, "request_id", None) or str(_uuid.uuid4())
+        log.warning("event=resume_upload_storage_failure request_id=%s exception_type=%s operation=%s",
+                     request_id,
+                     type(error).__name__,
+                     getattr(error, "operation", "storage"))
         return JSONResponse(status_code=503, content={"detail":"Private document storage is unavailable; try again later"})
     application.add_middleware(
         CORSMiddleware,

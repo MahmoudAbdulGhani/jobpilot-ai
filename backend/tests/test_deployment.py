@@ -231,6 +231,52 @@ def test_storage_diagnostic_logs_never_expose_secrets(monkeypatch, caplog):
                 assert 'category=' in line, f'{op_label}: log line missing category field'
 
 
+def test_storage_failure_handler_logs_correlated_warning(monkeypatch, db_session, caplog):
+    secret_key = 'handler-test-secret-key-98765'
+    bucket_name = 'handler-test-bucket'
+    s = get_settings().model_copy(update={
+        'JOBPILOT_STORAGE': 'supabase',
+        'JOBPILOT_STORAGE_URL': 'https://project.supabase.co',
+        'JOBPILOT_STORAGE_BUCKET': bucket_name,
+        'JOBPILOT_STORAGE_KEY': secret_key,
+    })
+
+    def failing_handler(request):
+        if '/bucket/' in request.url.path:
+            return httpx.Response(404, text='not found')
+        return httpx.Response(500)
+
+    provider = SupabaseStore(s, transport=httpx.MockTransport(failing_handler))
+    monkeypatch.setattr(resume_store, 'object_store', lambda: provider)
+
+    user = User(email=f'handler-{uuid.uuid4()}@example.com', password_hash=hash_password('synthetic'))
+    db_session.add(user)
+    db_session.commit()
+
+    app = create_application()
+    app.dependency_overrides[get_db] = lambda: db_session
+    token = create_access_token(user.id)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        caplog.clear()
+        with caplog.at_level('WARNING', logger='app.main'):
+            response = client.post(
+                '/api/resumes',
+                headers={'Authorization': f'Bearer {token}'},
+                files={'file': ('cv.pdf', b'%PDF-1.4\n%%EOF', 'application/pdf')},
+            )
+        assert response.status_code == 503
+
+    log_text = caplog.text
+    assert 'event=resume_upload_storage_failure' in log_text
+    assert 'request_id=' in log_text
+    assert 'exception_type=StorageUnavailable' in log_text
+    assert 'operation=' in log_text
+    assert secret_key not in log_text, 'storage key leaked in handler log'
+    assert bucket_name not in log_text, 'bucket name leaked in handler log'
+    assert 'Bearer' not in log_text.split('event=')[0] if 'event=' in log_text else True
+
+
 def test_production_startup_error_does_not_print_environment_secrets():
     import os, subprocess, sys
     env={**os.environ,'ENVIRONMENT':'production','SECRET_KEY':'startup-secret-marker',
