@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_QA_STRUCTURED_FALLBACK: bool = False
     JOBPILOT_GOOGLE_CLIENT_ID: str = Field(default="", repr=False, exclude=True)
     JOBPILOT_GOOGLE_CLIENT_SECRET: str = Field(default="", repr=False, exclude=True)
     JOBPILOT_GOOGLE_REDIRECT_URI: str = ""

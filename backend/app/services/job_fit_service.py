@@ -94,6 +94,8 @@ def is_outdated(record: JobFitAnalysis, job: SavedJob | None, profile: Candidate
 
 
 def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, settings: Settings) -> JobFitAnalysis:
+    from app.services.privacy_service import require_consent
+    require_consent(session, owner_id, "ai_job_fit")
     profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id))
     if not (job.description or "").strip():
         raise JobFitError(409, "Save a job description before analyzing fit.")
@@ -137,7 +139,15 @@ def generate(session: Session, *, owner_id: uuid.UUID, job: SavedJob, key: str, 
         session.rollback()
         raise JobFitError(409, "A fit analysis request with this key already exists.") from error
     from app.services.ai_usage import dispatch_guard
-    dispatch_guard(session, owner_id)
+    try:
+        dispatch_guard(session, owner_id)
+        require_consent(session, owner_id, "ai_job_fit")
+    except Exception:
+        record.status = "failed"
+        record.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
+        ai_usage.release(session, owner_id, token)
+        session.commit()
+        raise
     try:
         output = ai_usage.bounded_call(lambda: provider.analyze(snapshot["description"], facts), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         result = validate_output(output, snapshot["description"], facts)

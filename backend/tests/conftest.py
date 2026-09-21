@@ -5,6 +5,8 @@ os.environ.setdefault("SECRET_KEY", "unit-test-secret-key-with-at-least-32-chars
 from pathlib import Path
 
 import pytest
+import socket
+import smtplib
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -16,6 +18,20 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import assert_is_test_database
 from app.main import create_application
+
+
+@pytest.fixture(autouse=True)
+def offline_network_only(monkeypatch):
+    original = socket.socket.connect
+    def connect(sock, address):
+        if isinstance(address, tuple) and address[0] not in {"127.0.0.1", "::1", "localhost"}:
+            raise AssertionError("External network calls are forbidden in tests")
+        return original(sock, address)
+    def smtp(*args, **kwargs):
+        raise AssertionError("Real SMTP is forbidden in tests")
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(smtplib.SMTP, "connect", smtp)
+    monkeypatch.setattr(smtplib.SMTP_SSL, "connect", smtp)
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
@@ -75,6 +91,27 @@ def disposable_engine():
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(create_application())
+
+
+@pytest.fixture()
+def cli_disposable_database(db_session, monkeypatch):
+    """Authorize CLI behavior tests without opening a second database connection.
+
+    The resolver still validates the same disposable URL/confirmation contract
+    used by operators. The engine factory is bound to the test transaction so
+    assertions and rollback remain isolated to the current test.
+    """
+    name = "jobpilot_disposable_cli_tests"
+    url = f"postgresql+psycopg://test:test@127.0.0.1:5432/{name}"
+    settings = get_settings()
+    monkeypatch.setattr(
+        "app.cli.get_settings",
+        lambda: settings.model_copy(update={"ENVIRONMENT": "test"}),
+    )
+    monkeypatch.setenv("JOBPILOT_DISPOSABLE_DATABASE_URL", url)
+    monkeypatch.setenv("JOBPILOT_DISPOSABLE_DATABASE_CONFIRM", name)
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *args, **kwargs: db_session.get_bind())
+    return url
 
 
 @pytest.fixture(scope="session")

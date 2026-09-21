@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
+import pytest
 from fastapi import status
 from sqlalchemy import select
 
@@ -10,6 +11,7 @@ from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.models import (ApplicationPack, ApplicationPackVersion, CandidateProfile,
                         Resume, ResumeExtraction, SavedJob, User)
+from consent_helpers import grant_consent
 
 TEST_PASSWORD = "ats-test-password"
 NOW = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
@@ -160,7 +162,8 @@ def seed_source(db_session, owner, job):
     return resume
 
 
-def test_ats_improve_closed_loop(client, db_session):
+@pytest.mark.parametrize("revoke_at_dispatch", [False, True])
+def test_ats_improve_closed_loop(client, db_session, monkeypatch, revoke_at_dispatch):
     owner = make_user(db_session, "ats-improve-owner@jobpilot-test.com")
     other = make_user(db_session, "ats-improve-foreign@jobpilot-test.com")
     job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
@@ -177,6 +180,7 @@ def test_ats_improve_closed_loop(client, db_session):
         "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
     })
     caller = start(client, db_session, owner)
+    grant_consent(db_session, owner.id, "ai_application_packs")
     try:
         client.app.dependency_overrides[get_settings] = lambda: test_settings
         opened = caller.post(f"/api/jobs/{job.id}/application-packs",
@@ -198,8 +202,25 @@ def test_ats_improve_closed_loop(client, db_session):
         assert report.status_code == status.HTTP_201_CREATED, report.text
         report_id = report.json()["id"]
 
+        if revoke_at_dispatch:
+            from app.services import application_pack_service, ai_usage
+            from unittest.mock import Mock
+            original = ai_usage.reserve
+            def revoke(*args, **kwargs):
+                token = original(*args, **kwargs)
+                grant_consent(db_session, owner.id, "ai_application_packs", allowed=False)
+                return token
+            provider = Mock()
+            monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda _: provider)
+            monkeypatch.setattr(ai_usage, "reserve", revoke)
         improved = caller.post(f"/api/jobs/{job.id}/packs/{pack_id}/ats-reports/{report_id}/improve",
                                json={"idempotency_key": "improve-0001"}, headers=auth(owner))
+        if revoke_at_dispatch:
+            assert improved.status_code == 403, improved.text
+            provider.improve_pack.assert_not_called()
+            versions = caller.get(f"/api/jobs/{job.id}/application-packs/{pack_id}/versions", headers=auth(owner)).json()["items"]
+            assert len(versions) == 1 and versions[0]["approved_at"]
+            return
         assert improved.status_code == status.HTTP_201_CREATED, improved.text
         body = improved.json()
         assert body["report_id"] == report_id
@@ -307,4 +328,145 @@ def test_ats_report_guards(client, db_session):
                               json={"pack_version": 99}, headers=auth(owner))
         assert missing.status_code == status.HTTP_404_NOT_FOUND, missing.text
     finally:
+        client.app.dependency_overrides.pop(get_db, None)
+
+
+def test_generated_pack_without_consent_never_calls_provider(client, db_session, monkeypatch):
+    from app.services import application_pack_service
+    owner = make_user(db_session, "ats-no-consent@jobpilot-test.com")
+    job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
+                   description=DESCRIPTION)
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    resume = seed_source(db_session, owner, job)
+    test_settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True, "JOBPILOT_AI_TEST_PROVIDER": True,
+        "E2E_TEST_MODE": True, "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
+    })
+    def forbidden(*a): pytest.fail("Pack provider must not be called without consent")
+    monkeypatch.setattr(application_pack_service, "pack_provider_for", forbidden)
+    caller = start(client, db_session, owner)
+    try:
+        client.app.dependency_overrides[get_settings] = lambda: test_settings
+        response = caller.post(f"/api/jobs/{job.id}/application-packs",
+                               json={"resume_id": str(resume.id), "idempotency_key": "pack-no-consent"},
+                               headers=auth(owner))
+        assert response.status_code == status.HTTP_403_FORBIDDEN, response.text
+        assert "consent" in response.json()["detail"].casefold()
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+        client.app.dependency_overrides.pop(get_db, None)
+
+
+def test_pack_consent_revoked_after_reservation_finalizes_idempotently(client, db_session, monkeypatch):
+    from unittest.mock import Mock
+    from sqlalchemy import select
+    from app.models import AIUsage, ApplicationPack, UsageReservation
+    from app.services import application_pack_service, ai_usage
+
+    owner = make_user(db_session, "pack-consent-race@jobpilot-test.com")
+    job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
+                   description=DESCRIPTION)
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    resume = seed_source(db_session, owner, job)
+    grant_consent(db_session, owner.id, "ai_application_packs")
+    test_settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True, "JOBPILOT_AI_TEST_PROVIDER": True,
+        "E2E_TEST_MODE": True, "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
+    })
+    caller = start(client, db_session, owner)
+    original_reserve = ai_usage.reserve
+    original_provider_for = application_pack_service.pack_provider_for
+    provider = Mock()
+    provider.name, provider.model = "must-not-run", "must-not-run"
+
+    def revoke_after_reservation(*args, **kwargs):
+        token = original_reserve(*args, **kwargs)
+        grant_consent(db_session, owner.id, "ai_application_packs", allowed=False)
+        return token
+
+    monkeypatch.setattr(ai_usage, "reserve", revoke_after_reservation)
+    monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda _: provider)
+    payload = {"resume_id": str(resume.id), "idempotency_key": "pack-consent-race"}
+    try:
+        client.app.dependency_overrides[get_settings] = lambda: test_settings
+        denied = caller.post(f"/api/jobs/{job.id}/application-packs",
+                             json=payload, headers=auth(owner))
+        assert denied.status_code == 403
+        provider.create_pack.assert_not_called()
+
+        pack = db_session.scalar(select(ApplicationPack).where(
+            ApplicationPack.idempotency_key == payload["idempotency_key"]))
+        assert pack.status == "failed" and "cancelled" in pack.outcome_message
+        usage = db_session.get(AIUsage, owner.id)
+        assert usage.active_token is None and usage.active_until is None
+        released = db_session.scalar(select(UsageReservation).where(
+            UsageReservation.owner_id == owner.id))
+        assert released.released_at is not None
+
+        grant_consent(db_session, owner.id, "ai_application_packs")
+        same = caller.post(f"/api/jobs/{job.id}/application-packs",
+                           json=payload, headers=auth(owner))
+        assert same.status_code == 200 and same.json()["id"] == str(pack.id)
+        provider.create_pack.assert_not_called()
+
+        monkeypatch.setattr(ai_usage, "reserve", original_reserve)
+        monkeypatch.setattr(application_pack_service, "pack_provider_for", original_provider_for)
+        fresh = caller.post(f"/api/jobs/{job.id}/application-packs",
+                            json={**payload, "idempotency_key": "pack-consent-race-retry"},
+                            headers=auth(owner))
+        assert fresh.status_code == 200 and fresh.json()["status"] == "ready"
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+        client.app.dependency_overrides.pop(get_db, None)
+
+
+def test_unsupported_draft_is_never_ready_and_approval_still_409(client, db_session, monkeypatch):
+    from app.services.ai_provider import DeterministicTestProvider
+    from app.schemas.application_packs import PackProviderOutput
+    from app.services import application_pack_service
+    owner = make_user(db_session, "ats-unsupported@jobpilot-test.com")
+    job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
+                   description=DESCRIPTION)
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    resume = seed_source(db_session, owner, job)
+    grant_consent(db_session, owner.id, "ai_application_packs")
+
+    class Unsupported(DeterministicTestProvider):
+        def create_pack(self, source):
+            output = super().create_pack(source).model_dump(mode="json")
+            output["cover_letter"]["blocks"][1].update(
+                text="I built the booking API using Python and PostgreSQL.",
+                evidence=[{"fact_id": f"fact-{n}", "cv_quote": None} for n in (2, 3, 4)])
+            return PackProviderOutput.model_validate(output)
+
+    monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda settings: Unsupported())
+    test_settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True, "JOBPILOT_AI_TEST_PROVIDER": True,
+        "E2E_TEST_MODE": True, "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
+    })
+    caller = start(client, db_session, owner)
+    try:
+        client.app.dependency_overrides[get_settings] = lambda: test_settings
+        opened = caller.post(f"/api/jobs/{job.id}/application-packs",
+                             json={"resume_id": str(resume.id), "idempotency_key": "pack-unsupported"},
+                             headers=auth(owner))
+        assert opened.status_code == status.HTTP_200_OK, opened.text
+        body = opened.json()
+        assert body["status"] == "failed"
+        assert body["current_version"] == 0
+        assert "not supported" in body["outcome_message"]
+        ids = caller.get(f"/api/jobs/{job.id}/application-packs", headers=auth(owner)).json()["items"]
+        pack_id = next(item["id"] for item in ids if item["status"] == "failed")
+        blocked = caller.post(f"/api/jobs/{job.id}/application-packs/{pack_id}/approve",
+                              json={"expected_version": 1, "idempotency_key": "approve-unsupported"},
+                              headers=auth(owner))
+        assert blocked.status_code == status.HTTP_409_CONFLICT, blocked.text
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
         client.app.dependency_overrides.pop(get_db, None)

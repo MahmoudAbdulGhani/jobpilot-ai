@@ -64,11 +64,14 @@ def provider_for(settings: Settings):
 
 
 def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list[dict], bool]:
+    from app.services.evidence_validation import supported_claim, value_text
     accepted: list[dict] = []
     partial = output.partial
     seen: set[str] = set()
     for suggestion in output.suggestions:
-        if suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence):
+        if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
+                or not supported_claim(value_text(suggestion.value), [e.quote for e in suggestion.evidence],
+                                       single_passage=suggestion.field in {"experience", "education"})):
             partial = True
             continue
         try:
@@ -87,6 +90,8 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
 
 
 def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings) -> ProfileSuggestionSet:
+    from app.services.privacy_service import require_consent
+    require_consent(session, owner_id, "ai_profile_suggestions")
     extraction = session.scalar(select(ResumeExtraction).where(ResumeExtraction.resume_id == resume.id))
     if extraction is None or extraction.status != "succeeded" or extraction.reviewed_at is None:
         raise SuggestionError(409, "Confirm the extracted CV text before requesting suggestions.")
@@ -117,7 +122,15 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     session.commit()
     session.refresh(record)
     from app.services.ai_usage import dispatch_guard
-    dispatch_guard(session, owner_id)
+    try:
+        dispatch_guard(session, owner_id)
+        require_consent(session, owner_id, "ai_profile_suggestions")
+    except Exception:
+        record.status = "failed"
+        record.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
+        ai_usage.release(session, owner_id, token)
+        session.commit()
+        raise
     try:
         output = ai_usage.bounded_call(lambda: provider.suggest(source), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         suggestions, partial = validate_output(output, source)

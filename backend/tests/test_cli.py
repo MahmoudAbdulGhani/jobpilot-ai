@@ -138,7 +138,7 @@ class TestResetPasswordCli:
         monkeypatch.setattr("app.cli.SessionLocal", session_factory(db_session))
         monkeypatch.setattr(getpass, "getpass", lambda *args: self.NEW_PASSWORD)
 
-    def test_resets_password_and_invalidates_sessions(self, db_session, monkeypatch):
+    def test_resets_password_and_invalidates_sessions(self, db_session, monkeypatch, cli_disposable_database):
         user = self.make_user(db_session)
         self.patch_cli(db_session, monkeypatch)
 
@@ -154,7 +154,7 @@ class TestResetPasswordCli:
         assert len(tokens) == 2
         assert all(token.revoked_at is not None for token in tokens)
 
-    def test_only_password_fields_change(self, db_session, monkeypatch):
+    def test_only_password_fields_change(self, db_session, monkeypatch, cli_disposable_database):
         user = self.make_user(db_session)
         original_email = user.email
         self.patch_cli(db_session, monkeypatch)
@@ -166,12 +166,12 @@ class TestResetPasswordCli:
         assert user.email_verified is True
         assert db_session.scalar(select(func.count(User.id))) == 1
 
-    def test_unknown_email_refused(self, db_session, monkeypatch):
+    def test_unknown_email_refused(self, db_session, monkeypatch, cli_disposable_database):
         self.patch_cli(db_session, monkeypatch)
         assert main(["reset-password", "--email", "missing@jobpilot-test.com"]) == 1
         assert db_session.scalar(select(func.count(User.id))) == 0
 
-    def test_inactive_user_refused(self, db_session, monkeypatch):
+    def test_inactive_user_refused(self, db_session, monkeypatch, cli_disposable_database):
         user = User(email="inactive@jobpilot-test.com", password_hash=hash_password(TEST_PASSWORD), is_active=False)
         db_session.add(user)
         db_session.commit()

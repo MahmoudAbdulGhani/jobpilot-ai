@@ -42,4 +42,4 @@ def send_digest(body: DigestSendRequest, db: Database, current_user: CurrentUser
                 settings: SettingsDep, response: Response):
     response.headers["Cache-Control"] = "no-store"
     _ = body.confirm
-    return service.send(db, current_user.id, settings)
+    return service.send(db, current_user.id, settings, body.preview_token)

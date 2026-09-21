@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 DigestCadence = Literal["off", "daily", "weekly"]
 
@@ -22,6 +22,7 @@ class DigestCadenceChange(BaseModel):
 class DigestSendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirm: Literal[True]
+    preview_token: str = Field(min_length=1, max_length=4096)
 
 
 class DigestDelivery(BaseModel):
@@ -63,3 +64,7 @@ class DigestPreview(BaseModel):
     items: list[DigestItem]
     skipped_invalid: int
     delivery: DigestDelivery
+    recipient: str
+    subject: str
+    body: str
+    preview_token: str

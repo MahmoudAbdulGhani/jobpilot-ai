@@ -8,6 +8,7 @@ type DigestItem = {
   applicant_region: string | null; remote_arrangement: string; test_data: boolean; refreshed_at: string | null;
 };
 type DigestPreview = {
+  recipient: string; subject: string; body: string; preview_token: string;
   generated_at: string; cadence: string; items: DigestItem[]; skipped_invalid: number;
   delivery: { enabled: boolean; reason: string };
 };
@@ -62,14 +63,16 @@ export function DigestPanel() {
   }
 
   async function sendNow() {
+    if (!preview) return;
     setBusy(true);
     setError('');
     setReceipt(null);
     try {
       const data = await api<SendReceipt>('/digest/send', {
-        method: 'POST', body: JSON.stringify({ confirm: true }),
+        method: 'POST', body: JSON.stringify({ confirm: true, preview_token: preview.preview_token }),
       });
       if (data && data.sent_at) setReceipt(data);
+      setPreview(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -81,7 +84,7 @@ export function DigestPanel() {
     <div className="section-title"><div>
       <p className="eyebrow">Digest</p>
       <h2>Daily digest</h2>
-      <p className="muted">Validated JobTech and Jobicy records with source attribution and timestamps. Delivery is disabled by default; enabling SMTP delivers to the account email only.</p>
+      <p className="muted">Fresh Jobicy catalog records with source attribution. Review the exact email before sending. Scheduled delivery is not enabled.</p>
     </div></div>
     {error && <p className="notice form-error" role="alert">{error}</p>}
     <div className="digest-controls">
@@ -89,9 +92,10 @@ export function DigestPanel() {
         {CADENCES.map(item => <option key={item} value={item}>{item === 'off' ? 'Off' : item === 'daily' ? 'Daily' : 'Weekly'}</option>)}
       </select></label>
       <button className="primary-button" disabled={busy} onClick={() => void loadPreview()}>{busy ? 'Loading…' : 'Preview digest'}</button>
-      <button className="secondary-button" disabled={busy} onClick={() => void sendNow()}>{busy ? 'Sending…' : 'Send digest now'}</button>
+      <button className="secondary-button" disabled={busy || !preview?.delivery.enabled || !preview?.preview_token} onClick={() => void sendNow()}>{busy ? 'Sending…' : 'Approve and send reviewed digest'}</button>
     </div>
     {preview && <>
+      <p>To: {preview.recipient}</p><p>Subject: {preview.subject}</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{preview.body}</pre>
       <p className="muted">Generated {new Date(preview.generated_at).toLocaleString()} · cadence {preview.cadence} · {preview.skipped_invalid} invalid {preview.skipped_invalid === 1 ? 'record' : 'records'} skipped.</p>
       <p className="notice" role="status">Delivery {preview.delivery.enabled ? 'ready' : 'disabled'}: {preview.delivery.reason}</p>
       {preview.items.length === 0 && <p className="notice empty-state">No validated listings cached yet.</p>}

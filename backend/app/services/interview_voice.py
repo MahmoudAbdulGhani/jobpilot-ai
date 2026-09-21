@@ -44,6 +44,8 @@ def public(row):
 
 
 def run(db, owner, session_id, request_key, question_number, consent, kind, settings, audio=b""):
+    from app.services.privacy_service import require_consent
+    require_consent(db, owner, "ai_voice")
     if consent is not True:
         raise PackError(422, "Explicit external speech-processing consent is required")
     config = configuration(settings)
@@ -86,7 +88,14 @@ def run(db, owner, session_id, request_key, question_number, consent, kind, sett
         expires_at=now()+timedelta(minutes=settings.JOBPILOT_VOICE_TRANSCRIPT_MINUTES))
     db.add(row); db.commit()  # Claim and quota survive worker interruption.
     op_id = row.id
-    ai_usage.dispatch_guard(db, owner)
+    try:
+        ai_usage.dispatch_guard(db, owner)
+        require_consent(db, owner, "ai_voice")
+    except Exception:
+        row.status, row.outcome = "failed", "consent_or_account_denied"
+        ai_usage.release(db, owner, token)
+        db.commit()
+        raise
     result, failure = None, None
     try:
         provider = provider_for(settings)

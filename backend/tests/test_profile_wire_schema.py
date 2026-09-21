@@ -233,8 +233,9 @@ def test_provider_evidence_constraints(evidence):
 def test_mapped_experience_preserves_evidence_validation():
     from app.services.profile_suggestion_service import validate_output
     item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
+    item["evidence"] = [{"quote": "Engineer Synthetic"}]
     output = ProviderWireSuggestionOutput.model_validate({"suggestions": [item]}).to_domain()
-    accepted, partial = validate_output(output, "Synthetic evidence")
+    accepted, partial = validate_output(output, "Engineer Synthetic")
     assert not partial and accepted[0]["value"]["title"] == "Engineer"
     assert validate_output(output, "Different source") == ([], True)
 

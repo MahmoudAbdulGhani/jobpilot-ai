@@ -182,8 +182,9 @@ def canonical_structural_labels(output: PackProviderOutput, snapshot):
 
 
 def validate_generated(output, snapshot):
+    from app.services.evidence_validation import supported_claim
     output = canonical_structural_labels(PackProviderOutput.model_validate(output), snapshot)
-    facts = {fact["id"] for fact in snapshot["profile_facts"]}
+    facts = {fact["id"]: fact["value"] for fact in snapshot["profile_facts"]}
     for document in (output.cv, output.cover_letter):
         for block in document.blocks:
             if block.kind == "heading" and block.text not in HEADINGS:
@@ -202,6 +203,11 @@ def validate_generated(output, snapshot):
                 if evidence.cv_quote is not None and (not evidence.cv_quote.strip() or evidence.cv_quote not in snapshot["cv_text"]):
                     raise PackError(
                         502, "The generated document included an unsupported CV passage.")
+            if block.kind != "heading":
+                passages = [passage for e in block.evidence
+                            for passage in (facts.get(e.fact_id), e.cv_quote) if passage]
+                if not supported_claim(block.text, passages):
+                    raise PackError(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
     return output
 
 
@@ -210,6 +216,8 @@ def store_generated(document):
 
 
 def generate(db, owner_id, job_id, body, settings):
+    from app.services.privacy_service import require_consent
+    require_consent(db, owner_id, "ai_application_packs")
     snapshot = capture(db, owner_id, job_id, body.resume_id)
     hashed = source_hash(snapshot)
     # Serialize duplicate requests and shared AI usage before recording a claim.
@@ -249,7 +257,15 @@ def generate(db, owner_id, job_id, body, settings):
                            model=provider.model, prompt_version=PROMPT_VERSION, deadline=now + timedelta(seconds=settings.JOBPILOT_PACK_TIMEOUT_SECONDS + 10))
     db.add(pack)
     db.commit()
-    ai_usage.dispatch_guard(db, owner_id)
+    try:
+        ai_usage.dispatch_guard(db, owner_id)
+        require_consent(db, owner_id, "ai_application_packs")
+    except Exception:
+        pack.status = "failed"
+        pack.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
+        ai_usage.release(db, owner_id, token)
+        db.commit()
+        raise
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
@@ -349,6 +365,8 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
     reports stay immutable. Generation reuses the same evidence contract as
     pack creation, so no claim can appear without valid source evidence.
     """
+    from app.services.privacy_service import require_consent
+    require_consent(db, owner_id, "ai_application_packs")
     pack = get_owned(db, owner_id, job_id, pack_id)
     if pack.status != "ready":
         raise PackError(409, "This pack is not ready to improve.")
@@ -398,7 +416,14 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
     except ai_usage.AIUsageError as error:
         raise PackError(error.status_code, error.message) from None
     try:
-        result = provider.improve_pack(revision)
+        ai_usage.dispatch_guard(db, owner_id)
+        require_consent(db, owner_id, "ai_application_packs")
+    except Exception:
+        ai_usage.release(db, owner_id, token)
+        db.commit()
+        raise
+    try:
+        result = ai_usage.bounded_call(lambda: provider.improve_pack(revision), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
         output = validate_generated(result, snap)
         failure = None
     except PackError as error:

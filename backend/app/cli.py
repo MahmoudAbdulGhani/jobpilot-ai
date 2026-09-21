@@ -182,10 +182,11 @@ def main(argv: list[str] | None = None) -> int:
             reset_session = SessionLocal
         with reset_session() as session:
             user = auth_service.reset_password(session, email=args.email, password=password)
-        if user is None:
-            print("Refused: no active account found for that email. Nothing was changed.")
-            return 1
-        print(f"Password reset complete for {user.email}. Existing sessions were invalidated.")
+            if user is None:
+                print("Refused: no active account found for that email. Nothing was changed.")
+                return 1
+            reset_email = user.email
+        print(f"Password reset complete for {reset_email}. Existing sessions were invalidated.")
         return 0
 
 

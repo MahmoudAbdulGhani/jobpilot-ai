@@ -6,6 +6,8 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 vi.mock('../lib/api', () => ({ api: apiMock }));
 
 const preview = {
+  recipient: 'owner@jobpilot-test.com', subject: 'Reviewed digest',
+  body: 'The exact reviewed message', preview_token: 'review-token',
   generated_at: '2026-09-18T12:00:00Z', cadence: 'daily',
   items: [{
     source: 'Jobicy', external_id: 'ext-1', title: 'Remote Engineer', company: 'Example Co',
@@ -40,17 +42,27 @@ test('cadence saves explicitly and preview shows attribution with delivery disab
   expect(screen.getByText(/Delivery disabled: Digest email delivery is disabled/)).toBeTruthy();
 });
 
-test('send digest now posts an explicit confirm and renders the receipt', async () => {
+test('send requires review and posts the exact preview token with approval', async () => {
   render(<DigestPanel />);
   await screen.findByRole('heading', { name: 'Daily digest' });
+  const send = screen.getByRole('button', { name: 'Approve and send reviewed digest' }) as HTMLButtonElement;
+  expect(send.disabled).toBe(true);
+  fireEvent.click(send);
+  expect(apiMock.mock.calls.some(([path]) => path === '/digest/send')).toBe(false);
+  apiMock.mockResolvedValueOnce({ ...preview, delivery: { enabled: true, reason: 'Test transport.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview digest' }));
+  expect(await screen.findByText('The exact reviewed message')).toBeTruthy();
+  expect(screen.getByText('To: owner@jobpilot-test.com')).toBeTruthy();
+  expect(screen.getByText('Subject: Reviewed digest')).toBeTruthy();
   apiMock.mockResolvedValueOnce({
     sent_at: '2026-09-19T12:00:00Z', recipient: 'owner@jobpilot-test.com', items: 1,
     transport: 'test', delivery: { enabled: true, reason: 'Test transport.' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Send digest now' }));
+  fireEvent.click(send);
   await waitFor(() => expect(apiMock).toHaveBeenCalledWith('/digest/send',
     expect.objectContaining({ method: 'POST' })));
-  const [, postInit] = apiMock.mock.calls.find(([path, callInit]) => String(path) === '/digest/send') as [string, RequestInit];
-  expect(JSON.parse(String(postInit.body))).toEqual({ confirm: true });
+  const [, postInit] = apiMock.mock.calls.find(([path]) => String(path) === '/digest/send') as [string, RequestInit];
+  expect(JSON.parse(String(postInit.body))).toEqual({ confirm: true, preview_token: 'review-token' });
   expect(await screen.findByText(/Sent .* to owner@jobpilot-test.com \(1 items via test\)/)).toBeTruthy();
+  expect(send.disabled).toBe(true);
 });

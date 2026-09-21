@@ -4,8 +4,8 @@ The matrix states, per data domain, which fields are used, for what purpose,
 which provider (if any) receives them, how long they are retained, and the
 owner's consent state. Optional AI uses default to denied; core storage rows
 are required and cannot be toggled. New advisory features (ranking, readiness,
-classification, suggestions, insights, Q&A, digest) are local-only and never
-send data to a provider.
+classification, suggestions, insights, digest) are local-only. The optional
+AI Q&A branch sends retrieved excerpts only with stored consent.
 """
 import uuid
 
@@ -22,6 +22,8 @@ OPTIONAL_KEYS = {
     "ai_job_fit": "Saved job description and profile facts sent to the AI provider for fit analysis.",
     "ai_application_packs": "Confirmed CV text and profile facts sent to the pack provider for drafts.",
     "ai_qa": "Retrieved field excerpts sent to the AI provider for natural-language answers.",
+    "ai_interview": "Selected interview evidence and answers sent for practice feedback.",
+    "ai_voice": "Selected question text or recorded audio sent for speech processing.",
 }
 
 
@@ -31,7 +33,13 @@ def _consents(db: Session, owner_id: uuid.UUID) -> dict[str, bool]:
 
 
 def is_consented(db: Session, owner_id: uuid.UUID, key: str) -> bool:
-    return bool(_consents(db, owner_id).get(key, False))
+    return db.scalar(select(DataUseConsent.allowed).where(
+        DataUseConsent.owner_id == owner_id, DataUseConsent.key == key)) is True
+
+
+def require_consent(db: Session, owner_id: uuid.UUID, key: str) -> None:
+    if key not in OPTIONAL_KEYS or not is_consented(db, owner_id, key):
+        raise HTTPException(403, "AI data-use consent is required. Review Privacy settings before continuing.")
 
 
 def _ai_provider(settings: Settings) -> str:
@@ -47,6 +55,15 @@ def matrix(db: Session, owner_id: uuid.UUID, settings: Settings) -> list[dict]:
     pack_provider = ("disabled (packs off)" if not settings.JOBPILOT_AI_ENABLED
                      else f"{settings.JOBPILOT_PACK_PROVIDER}/{settings.JOBPILOT_PACK_MODEL}")
     return [
+        {"domain": label, "fields_used": fields, "used_for": [OPTIONAL_KEYS[key]],
+         "provider": provider, "retention": retention, "consent_key": key,
+         "required": False, "allowed": consents.get(key, False), "managed_by": "toggle"}
+        for key, label, fields, provider, retention in [
+            ("ai_interview", "interview practice", ["selected evidence", "answers"],
+             f"{settings.JOBPILOT_INTERVIEW_PROVIDER}/{settings.JOBPILOT_INTERVIEW_MODEL}", "until session or account deletion"),
+            ("ai_voice", "voice practice", ["recorded audio", "selected question text"],
+             settings.JOBPILOT_VOICE_PROVIDER, "audio is not persisted; transcripts expire")]
+    ] + [
         {"domain": "profile", "fields_used": ["headline", "location", "skills", "experience",
                                               "education", "languages", "target roles",
                                               "remote preference", "work authorization"],

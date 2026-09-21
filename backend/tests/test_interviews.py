@@ -7,6 +7,7 @@ from threading import Event
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from openai import OpenAI
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from app.services import interview_service as service
 from app.services.ai_provider import ProviderFailure
 from app.services.application_pack_service import PackError
 from app.services.interview_provider import (TestInterviewProvider as Synthetic, OpenAIInterviewProvider, InterviewResult, request_bytes)
+from consent_helpers import grant_consent
 from test_email_applications import seed, settings as mailbox_settings
 
 
@@ -59,6 +61,7 @@ def begin(db,data,settings,**changes):
 
 
 def advance(db,data,row,settings):
+    grant_consent(db,data.owner.id,'ai_interview')
     body=Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True)
     return service.advance(db,data.owner.id,row.id,body,settings),body
 
@@ -129,6 +132,7 @@ def test_api_owner_isolation_and_resume(client,db_session,data,settings):
     client.app.dependency_overrides[get_db]=lambda:db_session
     client.app.dependency_overrides[get_settings]=lambda:settings
     row,_=begin(db_session,data,settings)
+    grant_consent(db_session,data.other.id,'ai_interview')  # Other is consented: isolation must still hold.
     h=lambda user:{'Authorization':'Bearer '+create_access_token(user.id)}
     try:
         for method,path,body in [('get',f'/interviews/{row.id}',None),('delete',f'/interviews/{row.id}',None),
@@ -279,6 +283,7 @@ def test_concurrent_submissions_dispatch_once_and_delete_during_call(test_engine
     monkeypatch.setattr(service,'provider_for',lambda *a:Slow())
     with Session(test_engine,expire_on_commit=False) as db:
         data=sources(db,settings);owner,other=data.owner.id,data.other.id
+        grant_consent(db,owner,'ai_interview')
         row,_=begin(db,data,settings);id=row.id;body=Advance(request_key=uuid.uuid4(),revision=0,confirm=True)
     def dispatch():
         with Session(test_engine,expire_on_commit=False) as db:
@@ -298,3 +303,88 @@ def test_concurrent_submissions_dispatch_once_and_delete_during_call(test_engine
         finish.set()
         with Session(test_engine) as db:
             db.execute(delete(User).where(User.id.in_([owner,other])));db.commit()
+
+
+def test_advance_without_consent_never_calls_provider(db_session,data,settings,monkeypatch):
+    row,_=begin(db_session,data,settings)
+    def forbidden(db,*a):
+        pytest.fail('Interview provider must not be called without consent')
+    monkeypatch.setattr(service,'provider_for',forbidden)
+    deny=Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True)
+    with pytest.raises(HTTPException) as error:
+        service.advance(db_session,data.owner.id,row.id,deny,settings)
+    assert error.value.status_code==403
+    assert 'consent' in str(error.value.detail).casefold()
+    assert db_session.get(AIUsage,data.owner.id) is None
+    assert db_session.scalar(select(func.count()).select_from(InterviewOperation).where(InterviewOperation.session_id==row.id))==0
+
+
+def test_consent_is_owner_scoped(db_session,data,settings,monkeypatch):
+    row,_=begin(db_session,data,settings)
+    calls=[]
+    class Recorder(Synthetic):
+        def practice(self,payload):
+            calls.append(payload);return super().practice(payload)
+    monkeypatch.setattr(service,'provider_for',lambda *a:Recorder())
+    grant_consent(db_session,data.other.id,'ai_interview')  # Only the other user is consented.
+    with pytest.raises(HTTPException) as error:
+        service.advance(db_session,data.owner.id,row.id,Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True),settings)
+    assert error.value.status_code==403
+    assert calls==[]  # The other user's consent must not enable the owner.
+    with pytest.raises(PackError) as error:
+        service.advance(db_session,data.other.id,row.id,Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True),settings)
+    assert error.value.status_code==404  # Ownership still gates the consented foreign user.
+    assert calls==[]
+
+
+def test_revoked_consent_blocks_dispatch(db_session,data,settings,monkeypatch):
+    row,_=begin(db_session,data,settings)
+    calls=[]
+    class Recorder(Synthetic):
+        def practice(self,payload):
+            calls.append(payload);return super().practice(payload)
+    monkeypatch.setattr(service,'provider_for',lambda *a:Recorder())
+    row,_=advance(db_session,data,row,settings)
+    assert len(calls)==1 and db_session.get(AIUsage,data.owner.id).requests==1
+    grant_consent(db_session,data.owner.id,'ai_interview',allowed=False)  # Revoked mid-session.
+    with pytest.raises(HTTPException) as error:
+        service.advance(db_session,data.owner.id,row.id,Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True),settings)
+    assert error.value.status_code==403
+    assert len(calls)==1  # No further provider call after revocation.
+
+
+def test_consent_revoked_after_interview_reservation_finalizes_operation(db_session,data,settings,monkeypatch):
+    from app.models import UsageReservation
+    row,_=begin(db_session,data,settings)
+    grant_consent(db_session,data.owner.id,'ai_interview')
+    calls=[]
+    class Recorder(Synthetic):
+        def practice(self,payload):
+            calls.append(payload);return super().practice(payload)
+    monkeypatch.setattr(service,'provider_for',lambda *a:Recorder())
+    original=service.ai_usage.reserve;reserved={}
+    def revoke_after_reservation(*args,**kwargs):
+        token=original(*args,**kwargs);reserved['token']=token
+        grant_consent(db_session,data.owner.id,'ai_interview',allowed=False)
+        return token
+    monkeypatch.setattr(service.ai_usage,'reserve',revoke_after_reservation)
+    body=Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True)
+    with pytest.raises(HTTPException) as error:
+        service.advance(db_session,data.owner.id,row.id,body,settings)
+    assert error.value.status_code==403 and calls==[]
+    db_session.refresh(row)
+    operation=db_session.scalar(select(InterviewOperation).where(
+        InterviewOperation.session_id==row.id,InterviewOperation.request_key==body.request_key))
+    assert row.status=='interrupted' and row.active_operation is None
+    assert operation.status=='failed' and operation.outcome=='consent_or_account_denied'
+    usage=db_session.get(AIUsage,data.owner.id)
+    assert usage.active_token is None and usage.active_until is None
+    assert db_session.get(UsageReservation,reserved['token']).released_at is not None
+
+    grant_consent(db_session,data.owner.id,'ai_interview')
+    assert service.advance(db_session,data.owner.id,row.id,body,settings).id==row.id
+    assert calls==[]  # Same request key returns the denied operation without redispatch.
+    monkeypatch.setattr(service.ai_usage,'reserve',original)
+    retry=Advance(request_key=uuid.uuid4(),revision=row.revision,confirm=True)
+    completed=service.advance(db_session,data.owner.id,row.id,retry,settings)
+    assert completed.status=='ready' and len(calls)==1

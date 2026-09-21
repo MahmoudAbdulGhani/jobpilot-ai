@@ -266,6 +266,7 @@ def test_account_deletion_during_mocked_ai_cannot_recreate_results(test_engine, 
     from app.services.interview_provider import TestInterviewProvider as Synthetic
     from app.schemas.interviews import Advance
     from test_interviews import sources, begin
+    from consent_helpers import grant_consent
     entered, finish = Event(), Event()
     calls=[]
     class Slow(Synthetic):
@@ -278,6 +279,7 @@ def test_account_deletion_during_mocked_ai_cannot_recreate_results(test_engine, 
     with Session(test_engine,expire_on_commit=False) as db:
         fixture=sources(db,s);owner,other=fixture.owner.id,fixture.other.id
         fixture.owner.password_hash=hash_password(PASSWORD);db.commit()
+        grant_consent(db,owner,'ai_interview')
         row,_=begin(db,fixture,s);identifier=row.id
     def dispatch():
         with Session(test_engine,expire_on_commit=False) as db:

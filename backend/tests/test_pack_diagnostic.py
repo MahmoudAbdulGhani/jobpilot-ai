@@ -173,14 +173,16 @@ def test_separate_exact_excerpts_and_saved_fact_reference_pass_without_repair():
 
 
 def test_unsupported_relationship_still_needs_semantic_review():
-    from app.services.application_pack_service import validate_generated
+    from app.services.application_pack_service import validate_generated, PackError
     source = cases()[0]["source"]
     output = DeterministicTestProvider().create_pack(source).model_dump(mode="json")
-    # Deliberately document the boundary: valid references cannot prove a join.
+    # Fail-closed: valid references cannot prove a join. The draft is rejected
+    # so it is never ready, and the user must review the source first.
     output["cover_letter"]["blocks"][1].update(
         text="I built the booking API using Python and PostgreSQL.",
         evidence=[{"fact_id": f"fact-{n}", "cv_quote": None} for n in (2, 3, 4)])
-    assert validate_generated(output, source)
+    with pytest.raises(PackError, match="not supported by its cited evidence"):
+        validate_generated(output, source)
     prompt = json.loads(diagnostic.prepared_request("pack"))["instructions"]
     assert "does not establish that the API used Python" in prompt
     assert "semantic correctness; the user must review both drafts" in prompt

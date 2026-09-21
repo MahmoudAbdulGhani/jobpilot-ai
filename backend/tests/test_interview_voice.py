@@ -19,6 +19,7 @@ from app.models import AIUsage, InterviewSession, InterviewVoiceOperation, User
 from app.services import interview_voice as voice, interview_service, account_data
 from app.services.application_pack_service import PackError
 from app.services.speech_provider import OpenAISpeechProvider, SyntheticSpeechProvider, SpeechFailure, SpeechResult, validate_recording
+from consent_helpers import grant_consent
 from test_email_applications import settings as mailbox_settings
 from test_interviews import settings as interview_settings, sources, begin, advance, answer
 
@@ -45,6 +46,9 @@ def data(db_session,settings):
     data=sources(db_session,settings);data.session,_=begin(db_session,data,settings)
     data.session,_=advance(db_session,data,data.session,settings)
     data.session=answer(db_session,data,data.session,'Previously saved text answer.')
+    # Voice consent for both users: ownership (not consent) must gate foreign access.
+    grant_consent(db_session,data.owner.id,'ai_voice')
+    grant_consent(db_session,data.other.id,'ai_voice')
     return data
 
 
@@ -203,6 +207,7 @@ def test_concurrent_once_and_deleted_session_no_late_write(test_engine,settings,
     with Session(test_engine,expire_on_commit=False) as db:
         data=sources(db,settings);owner,other=data.owner.id,data.other.id
         data.session,_=begin(db,data,settings);data.session,_=advance(db,data,data.session,settings)
+        grant_consent(db,owner,'ai_voice')
         session_id=data.session.id;key=uuid.uuid4()
     def dispatch():
         with Session(test_engine,expire_on_commit=False) as db:
@@ -262,3 +267,66 @@ def test_offline_plan_and_independent_defaults(settings):
         assert provider.client.max_retries==0
         assert str(provider.client.base_url)=='https://api.openai.com/v1/'
     finally:provider.client.close()
+
+
+def test_voice_without_consent_never_calls_provider(db_session,data,settings,monkeypatch):
+    from fastapi import HTTPException
+    grant_consent(db_session,data.owner.id,'ai_voice',allowed=False)  # Revoke the fixture grant.
+    def forbidden(*a):pytest.fail('Speech provider must not be called without consent')
+    monkeypatch.setattr(voice,'provider_for',forbidden)
+    with pytest.raises(HTTPException) as error:
+        run(db_session,data,settings)
+    assert error.value.status_code==403
+    assert db_session.get(AIUsage,data.owner.id).requests==1  # Only the interview advance; no voice op.
+    assert db_session.scalar(select(InterviewVoiceOperation.id).where(InterviewVoiceOperation.owner_id==data.owner.id)) is None
+
+
+def test_revoked_voice_consent_blocks_further_speech(db_session,data,settings,monkeypatch):
+    from fastapi import HTTPException
+    calls=[]
+    class Recorder(SyntheticSpeechProvider):
+        def transcribe(self,audio):calls.append(1);return super().transcribe(audio)
+    monkeypatch.setattr(voice,'provider_for',lambda s:Recorder())
+    first=run(db_session,data,settings)
+    assert first['status']=='succeeded' and len(calls)==1
+    grant_consent(db_session,data.owner.id,'ai_voice',allowed=False)  # Revoked mid-session.
+    with pytest.raises(HTTPException) as error:
+        run(db_session,data,settings,key=uuid.uuid4())
+    assert error.value.status_code==403
+    assert len(calls)==1  # No further speech request after revocation.
+
+
+def test_consent_revoked_after_voice_reservation_finalizes_receipt(db_session,data,settings,monkeypatch):
+    from fastapi import HTTPException
+    from app.models import UsageReservation
+    original_reserve=voice.ai_usage.reserve
+    original_provider_for=voice.provider_for
+    reserved={}
+    provider_calls=[]
+    def revoke_after_reservation(*args,**kwargs):
+        token=original_reserve(*args,**kwargs);reserved['token']=token
+        grant_consent(db_session,data.owner.id,'ai_voice',allowed=False)
+        return token
+    def forbidden_provider(*args):
+        provider_calls.append(1)
+        return SyntheticSpeechProvider()
+    monkeypatch.setattr(voice.ai_usage,'reserve',revoke_after_reservation)
+    monkeypatch.setattr(voice,'provider_for',forbidden_provider)
+    key=uuid.uuid4()
+    with pytest.raises(HTTPException) as error:
+        run(db_session,data,settings,key=key)
+    assert error.value.status_code==403 and provider_calls==[]
+    receipt=db_session.scalar(select(InterviewVoiceOperation).where(
+        InterviewVoiceOperation.owner_id==data.owner.id,
+        InterviewVoiceOperation.request_key==key))
+    assert receipt.status=='failed' and receipt.outcome=='consent_or_account_denied'
+    usage=db_session.get(AIUsage,data.owner.id)
+    assert usage.active_token is None and usage.active_until is None
+    assert db_session.get(UsageReservation,reserved['token']).released_at is not None
+
+    grant_consent(db_session,data.owner.id,'ai_voice')
+    assert run(db_session,data,settings,key=key)['status']=='failed'
+    assert provider_calls==[]  # Same key returns the terminal receipt without redispatch.
+    monkeypatch.setattr(voice.ai_usage,'reserve',original_reserve)
+    monkeypatch.setattr(voice,'provider_for',original_provider_for)
+    assert run(db_session,data,settings,key=uuid.uuid4())['status']=='succeeded'

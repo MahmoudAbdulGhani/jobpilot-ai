@@ -159,48 +159,59 @@ def _structured_answer(entity: str, matches: list[dict], total: int, limit: int,
 
 
 def answer(db: Session, owner_id: uuid.UUID, entity: str, question: str, limit: int, settings: Settings) -> QaAiAnswer:
-    """AI-gated natural-language answer with an always-safe structured fallback."""
+    """Owner-scoped answer; only explicitly configured structured fallback.
+    Consent gates the live AI provider only: when AI is disabled there is no
+    provider call, so the AI-disabled fallback never requires consent."""
     retrieved = ask(db, owner_id, entity, question, limit)
     matches: list[QaCitation] = [QaCitation.model_validate(item) for item in retrieved["matches"]]
     total, question_text = retrieved["total"], retrieved["question"]
-    if not settings.JOBPILOT_AI_ENABLED or settings.ENVIRONMENT == "production":
-        fallback = _structured_answer(entity, retrieved["matches"], total, limit, "AI features are disabled in this environment.")
+    def unavailable():
+        if not settings.JOBPILOT_QA_STRUCTURED_FALLBACK:
+            raise HTTPException(503, "AI answers are unavailable. You can use keyword search instead.")
+        fallback = _structured_answer(entity, retrieved["matches"], total, limit,
+                                      "AI unavailable; showing keyword search, not an AI answer.")
         fallback.question = question_text
         return fallback
-    if not privacy_service.is_consented(db, owner_id, "ai_qa"):
-        fallback = _structured_answer(entity, retrieved["matches"], total, limit, "Consent for AI answers is not granted; showing the structured search.")
-        fallback.question = question_text
-        return fallback
+
+    if not settings.JOBPILOT_AI_ENABLED:
+        return unavailable()
+
+    privacy_service.require_consent(db, owner_id, "ai_qa")
 
     sendable = [m.model_dump(mode="json") for m in matches[:MAX_CITATIONS_TO_PROVIDER]]
     try:
         provider = _provider_for(settings)
-    except SuggestionError as error:
-        fallback = _structured_answer(entity, retrieved["matches"], total, limit, f"AI provider unavailable: {error.message}")
-        fallback.question = question_text
-        return fallback
+    except SuggestionError:
+        return unavailable()
 
     token = None
     try:
         token = ai_usage.reserve(db, owner_id, settings, feature="qa")
-        output = provider.answer(question_text, sendable)
+        db.commit()
+        ai_usage.dispatch_guard(db, owner_id)
+        privacy_service.require_consent(db, owner_id, "ai_qa")
+        output = ai_usage.bounded_call(lambda: provider.answer(question_text, sendable), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         allowed = {tuple(m.model_dump(mode="json").values()) for m in matches[:MAX_CITATIONS_TO_PROVIDER]}
         citations: list[QaCitation] = []
         for citation in output.citations:
             if tuple(citation.model_dump(mode="json").values()) not in allowed:
                 raise ProviderFailure("The AI provider cited fields outside the retrieved allowlist.")
             citations.append(citation)
+        if not citations:
+            raise ProviderFailure("An AI answer must cite retrieved evidence.")
+        from app.services.evidence_validation import supported_claim
+        if not supported_claim(output.answer, [citation.excerpt for citation in citations]):
+            raise ProviderFailure("The AI answer contains unsupported claims.")
         return QaAiAnswer(entity=entity, question=question_text, source="ai",
                           answer=output.answer, citations=citations,
                           matches=[QaCitation.model_validate(m) for m in matches],
                           total=total, limit=limit, provider=provider.name,
                           model=provider.model, reason=None)
-    except ProviderFailure as error:
-        fallback = _structured_answer(entity, retrieved["matches"], total, limit, f"AI provider unavailable: {error}. Showing the structured search.")
-        fallback.question = question_text
-        return fallback
+    except ProviderFailure:
+        return unavailable()
     except ai_usage.AIUsageError as error:
         raise HTTPException(error.status_code, detail=error.message) from error
     finally:
         if token:
             ai_usage.release(db, owner_id, token)
+            db.commit()

@@ -16,6 +16,7 @@ from app.schemas.plans import PlanLimits
 from app.services import ai_usage, entitlements as service, account_data, interview_service, interview_voice, profile_suggestion_service, job_fit_service, application_pack_service
 from app.services.ai_provider import ProviderFailure
 from app.services.application_pack_service import PackError
+from consent_helpers import grant_consent
 from test_email_applications import settings as mailbox_settings
 from test_interviews import settings as interview_settings, sources, begin, advance
 
@@ -158,6 +159,7 @@ def test_owner_scoped_usage_api_and_unmetered_data(client,db_session,data,settin
 
 def test_failure_and_unknown_outcomes_remain_reserved(db_session,data,settings,monkeypatch):
     settings=configured(settings,total=1)
+    grant_consent(db_session,data.owner.id,'ai_profile_suggestions')
     class Broken:
         name='synthetic';model='synthetic'
         def suggest(self,source):raise ProviderFailure('Synthetic failure')
@@ -181,6 +183,10 @@ def test_all_actual_dispatch_paths_enforce_feature_entitlement(db_session,data,s
     if feature in {'interview','transcription','speech'}:
         row,_=begin(db_session,data,settings)
         if feature!='interview':row,_=advance(db_session,data,row,settings)
+    # Consent first: the entitlement gate (not the consent gate) must block.
+    consent_key={'profile':'ai_profile_suggestions','fit':'ai_job_fit','pack':'ai_application_packs',
+        'transcription':'ai_voice','speech':'ai_voice'}.get(feature)
+    if consent_key is not None:grant_consent(db_session,data.owner.id,consent_key)
     settings=configured(settings,**{feature:0})
     with pytest.raises((profile_suggestion_service.SuggestionError,job_fit_service.JobFitError,PackError)) as error:
         if feature=='profile':profile_suggestion_service.generate(db_session,owner_id=data.owner.id,resume=data.resume,settings=settings)

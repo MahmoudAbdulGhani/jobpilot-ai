@@ -11,6 +11,7 @@ from app.models import CandidateProfile, SavedJob, User
 from app.schemas.job_fit import CandidateFact, ProviderJobFitOutput
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
 from app.services import job_fit_service
+from consent_helpers import grant_consent
 
 
 @pytest.fixture()
@@ -48,6 +49,7 @@ def sources(db, owner):
 
 def test_prerequisites_and_disabled_do_not_call_provider(fit_client, fit_users, db_session, monkeypatch):
     owner, _ = fit_users
+    grant_consent(db_session, owner.id, "ai_job_fit")
     job = SavedJob(owner_id=owner.id, title="Engineer", company="Acme", description=None)
     db_session.add(job); db_session.commit()
     response = fit_client.post(f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json={"idempotency_key": "missing-description"})
@@ -61,6 +63,7 @@ def test_prerequisites_and_disabled_do_not_call_provider(fit_client, fit_users, 
 
 def test_generate_persist_idempotency_staleness_and_no_mutation(fit_client, fit_users, db_session, monkeypatch):
     owner, _ = fit_users
+    grant_consent(db_session, owner.id, "ai_job_fit")
     profile, job = sources(db_session, owner)
     enable_fake(monkeypatch)
     payload = {"idempotency_key": "same-request-123"}
@@ -84,6 +87,7 @@ def test_generate_persist_idempotency_staleness_and_no_mutation(fit_client, fit_
 
 def test_history_delete_ownership_and_cross_parent(fit_client, fit_users, db_session, monkeypatch):
     owner, stranger = fit_users
+    grant_consent(db_session, owner.id, "ai_job_fit")
     _, job = sources(db_session, owner)
     other = SavedJob(owner_id=owner.id, title="Other", company="Acme", description="Python")
     db_session.add(other); db_session.commit(); enable_fake(monkeypatch)
@@ -126,3 +130,81 @@ def test_provider_incomplete_is_generic():
     provider = OpenAIResponsesProvider(api_key="unused", model="model", timeout=3, max_output_tokens=99, client=client)
     with pytest.raises(ProviderFailure, match="incomplete"):
         provider.analyze("Python", [])
+
+
+def test_fit_without_consent_never_calls_provider(fit_client, fit_users, db_session, monkeypatch):
+    from sqlalchemy import func, select
+    from app.models import JobFitAnalysis
+    owner, _ = fit_users
+    _, job = sources(db_session, owner)
+    enable_fake(monkeypatch)
+    def forbidden(*a): pytest.fail("Fit provider must not be called without consent")
+    monkeypatch.setattr(job_fit_service, "provider_for", forbidden)
+    response = fit_client.post(f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json={"idempotency_key": "denied-fit"})
+    assert response.status_code == 403
+    assert db_session.scalar(select(func.count()).select_from(JobFitAnalysis).where(JobFitAnalysis.owner_id == owner.id)) == 0
+
+
+def test_fit_consent_revoked_between_dispatches(fit_client, fit_users, db_session, monkeypatch):
+    owner, _ = fit_users
+    _, job = sources(db_session, owner)
+    enable_fake(monkeypatch)
+    grant_consent(db_session, owner.id, "ai_job_fit")
+    first = fit_client.post(f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json={"idempotency_key": "granted-fit"})
+    assert first.status_code == 200
+    grant_consent(db_session, owner.id, "ai_job_fit", allowed=False)  # Revoked between dispatches.
+    second = fit_client.post(f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json={"idempotency_key": "revoked-fit"})
+    assert second.status_code == 403
+
+
+def test_fit_consent_revoked_after_reservation_finalizes_idempotently(
+    fit_client, fit_users, db_session, monkeypatch
+):
+    from unittest.mock import Mock
+    from sqlalchemy import select
+    from app.models import AIUsage, JobFitAnalysis, UsageReservation
+    from app.services import ai_usage
+
+    owner, _ = fit_users
+    _, job = sources(db_session, owner)
+    enable_fake(monkeypatch)
+    grant_consent(db_session, owner.id, "ai_job_fit")
+    original_reserve = ai_usage.reserve
+    original_provider_for = job_fit_service.provider_for
+    provider = Mock()
+    provider.name, provider.model = "must-not-run", "must-not-run"
+
+    def revoke_after_reservation(*args, **kwargs):
+        token = original_reserve(*args, **kwargs)
+        grant_consent(db_session, owner.id, "ai_job_fit", allowed=False)
+        return token
+
+    monkeypatch.setattr(ai_usage, "reserve", revoke_after_reservation)
+    monkeypatch.setattr(job_fit_service, "provider_for", lambda _: provider)
+    payload = {"idempotency_key": "fit-consent-race"}
+    denied = fit_client.post(
+        f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json=payload)
+    assert denied.status_code == 403
+    provider.analyze.assert_not_called()
+
+    record = db_session.scalar(select(JobFitAnalysis).where(
+        JobFitAnalysis.idempotency_key == payload["idempotency_key"]))
+    assert record.status == "failed" and "cancelled" in record.outcome_message
+    usage = db_session.get(AIUsage, owner.id)
+    assert usage.active_token is None and usage.active_until is None
+    released = db_session.scalar(select(UsageReservation).where(
+        UsageReservation.owner_id == owner.id))
+    assert released.released_at is not None
+
+    grant_consent(db_session, owner.id, "ai_job_fit")
+    same = fit_client.post(
+        f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner), json=payload)
+    assert same.status_code == 200 and same.json()["id"] == str(record.id)
+    provider.analyze.assert_not_called()
+
+    monkeypatch.setattr(ai_usage, "reserve", original_reserve)
+    monkeypatch.setattr(job_fit_service, "provider_for", original_provider_for)
+    fresh = fit_client.post(
+        f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner),
+        json={"idempotency_key": "fit-consent-race-retry"})
+    assert fresh.status_code == 200 and fresh.json()["status"] == "ready"

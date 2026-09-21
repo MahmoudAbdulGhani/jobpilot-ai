@@ -145,9 +145,7 @@ class DeterministicTestProvider:
             except Exception as error:
                 raise ProviderFailure("The provider returned citations outside the allowlist.") from error
             return ProviderQaOutput(
-                answer=(f"The deterministic test provider found {len(citations)} matching saved "
-                        f"field(s). Each citation below is a verbatim excerpt from your own data; "
-                        f"no additional facts are inferred."),
+                answer="\n".join(citation.excerpt for citation in validated),
                 citations=validated,
                 notes=["Bounded test provider: answers are a citation index only."])
 

@@ -13,6 +13,7 @@ from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProviderSuggestionOutput
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
 from app.services import profile_suggestion_service
+from consent_helpers import grant_consent
 from tests.test_resume_extraction import pdf_bytes
 
 
@@ -56,8 +57,9 @@ def enable_fake(monkeypatch):
         monkeypatch.setattr(settings, name, value)
 
 
-def test_ai_disabled_and_unconfirmed_are_rejected(suggestion_client, suggestion_users, monkeypatch):
+def test_ai_disabled_and_unconfirmed_are_rejected(suggestion_client, suggestion_users, db_session, monkeypatch):
     owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
     resume_id = confirmed_resume(suggestion_client, owner)
     response = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
     assert response.status_code == 503
@@ -71,6 +73,7 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
     suggestion_client, suggestion_users, db_session, monkeypatch
 ):
     owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
     resume_id = confirmed_resume(suggestion_client, owner)
     generated = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
@@ -81,13 +84,13 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
     assert suggestion_client.get("/api/profile", headers=headers(owner)).status_code == 404
 
     selection = body["suggestions"][0]
-    selection["value"] = "Reviewed Senior Engineer"
+    selection["value"] = "Senior Engineer"
     applied = suggestion_client.post(
         f"/api/profile-suggestions/{body['id']}/apply",
         headers=headers(owner), json={"selections": [selection]},
     )
     assert applied.status_code == 200
-    assert suggestion_client.get("/api/profile", headers=headers(owner)).json()["headline"] == "Reviewed Senior Engineer"
+    assert suggestion_client.get("/api/profile", headers=headers(owner)).json()["headline"] == "Senior Engineer"
     repeated = suggestion_client.post(
         f"/api/profile-suggestions/{body['id']}/apply",
         headers=headers(owner), json={"selections": [selection]},
@@ -102,13 +105,14 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
     assert profile.ai_provenance["headline"]["source_available"] is True
     suggestion_client.delete(f"/api/resumes/{resume_id}", headers=headers(owner))
     db_session.refresh(profile)
-    assert profile.headline == "Reviewed Senior Engineer"
+    assert profile.headline == "Senior Engineer"
     assert profile.ai_provenance["headline"]["source_available"] is False
     assert "evidence" not in profile.ai_provenance["headline"]
 
 
-def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_users, monkeypatch):
+def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_users, db_session, monkeypatch):
     owner, other = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
     resume_id = confirmed_resume(suggestion_client, owner)
     body = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)).json()
@@ -175,7 +179,7 @@ def test_plain_string_structured_values_fail_at_provider_boundary():
 
 def test_typed_structured_values_validate_with_source_evidence():
     source = ("Engineer at Cedar Demo, 2021-2024. "
-              "BSc Computer Science at Example University. Fluent French.")
+              "BSc Computer Science at Example University. Fluent French (professional).")
     output = ProviderSuggestionOutput.model_validate({"suggestions": [
         {"id": "exp-1", "field": "experience",
          "value": {"title": "Engineer", "organization": "Cedar Demo", "period": "2021-2024"},
@@ -185,7 +189,7 @@ def test_typed_structured_values_validate_with_source_evidence():
          "evidence": [{"quote": "BSc Computer Science at Example University"}]},
         {"id": "lang-1", "field": "languages",
          "value": {"name": "French", "proficiency": "professional"},
-         "evidence": [{"quote": "Fluent French"}]},
+         "evidence": [{"quote": "Fluent French (professional)"}]},
     ]})
     accepted, partial = profile_suggestion_service.validate_output(output, source)
     assert [item["field"] for item in accepted] == ["experience", "education", "languages"]
@@ -280,9 +284,10 @@ def test_wire_compaction_never_weakens_local_parse():
 
 
 def test_apply_rejects_out_of_contract_and_unsecured_values_without_profile_change(
-    suggestion_client, suggestion_users, monkeypatch
+    suggestion_client, suggestion_users, db_session, monkeypatch
 ):
     owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
     resume_id = confirmed_resume(suggestion_client, owner)
     body = suggestion_client.post(
@@ -312,8 +317,9 @@ def test_apply_rejects_out_of_contract_and_unsecured_values_without_profile_chan
     assert suggestion_client.get("/api/profile", headers=headers(owner)).status_code == 404
 
 
-def test_stale_profile_blocks_apply(suggestion_client, suggestion_users, monkeypatch):
+def test_stale_profile_blocks_apply(suggestion_client, suggestion_users, db_session, monkeypatch):
     owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
     resume_id = confirmed_resume(suggestion_client, owner)
     body = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)).json()
@@ -324,3 +330,76 @@ def test_stale_profile_blocks_apply(suggestion_client, suggestion_users, monkeyp
     )
     assert response.status_code == 409
     assert suggestion_client.get("/api/profile", headers=headers(owner)).json()["headline"] == "Manual edit"
+
+
+def test_profile_suggestions_without_consent_never_calls_provider(suggestion_client, suggestion_users, db_session, monkeypatch):
+    from sqlalchemy import func, select
+    from app.models import ProfileSuggestionSet
+    owner, _ = suggestion_users
+    enable_fake(monkeypatch)
+    def forbidden(*a): pytest.fail("Suggestions provider must not be called without consent")
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", forbidden)
+    resume_id = confirmed_resume(suggestion_client, owner)
+    response = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert response.status_code == 403
+    assert db_session.scalar(select(func.count()).select_from(ProfileSuggestionSet).where(ProfileSuggestionSet.owner_id == owner.id)) == 0
+
+
+def test_profile_suggestions_consent_revoked_between_dispatches(suggestion_client, suggestion_users, db_session, monkeypatch):
+    owner, _ = suggestion_users
+    enable_fake(monkeypatch)
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    first = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert first.status_code == 200
+    grant_consent(db_session, owner.id, "ai_profile_suggestions", allowed=False)  # Revoked before the next dispatch.
+    second = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert second.status_code == 403
+
+
+def test_profile_consent_revoked_after_reservation_cancels_and_allows_retry(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    from unittest.mock import Mock
+    from sqlalchemy import select
+    from app.models import AIUsage, ProfileSuggestionSet, UsageReservation
+    from app.services import ai_usage
+
+    owner, _ = suggestion_users
+    enable_fake(monkeypatch)
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    original_reserve = ai_usage.reserve
+    original_provider_for = profile_suggestion_service.provider_for
+    provider = Mock()
+    provider.name, provider.model = "must-not-run", "must-not-run"
+
+    def revoke_after_reservation(*args, **kwargs):
+        token = original_reserve(*args, **kwargs)
+        grant_consent(db_session, owner.id, "ai_profile_suggestions", allowed=False)
+        return token
+
+    monkeypatch.setattr(ai_usage, "reserve", revoke_after_reservation)
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda _: provider)
+    denied = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert denied.status_code == 403
+    provider.suggest.assert_not_called()
+
+    record = db_session.scalar(select(ProfileSuggestionSet).where(
+        ProfileSuggestionSet.owner_id == owner.id))
+    assert record.status == "failed" and "cancelled" in record.outcome_message
+    usage = db_session.get(AIUsage, owner.id)
+    reservation = db_session.get(UsageReservation, usage.active_token) if usage.active_token else None
+    assert usage.active_token is None and usage.active_until is None
+    assert reservation is None
+    released = db_session.scalar(select(UsageReservation).where(
+        UsageReservation.owner_id == owner.id))
+    assert released.released_at is not None
+
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    monkeypatch.setattr(ai_usage, "reserve", original_reserve)
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", original_provider_for)
+    retried = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert retried.status_code == 200 and retried.json()["status"] == "ready"

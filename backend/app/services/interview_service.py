@@ -236,6 +236,8 @@ def validate_output(raw, payload):
 
 
 def advance(db, owner, id, body, settings):
+    from app.services.privacy_service import require_consent
+    require_consent(db, owner, "ai_interview")
     owner_lock(db, owner)
     row = owned(db, owner, id, True)
     hashed = digest(body.model_dump(mode="json"))
@@ -272,7 +274,15 @@ def advance(db, owner, id, body, settings):
     row.revision += 1
     op_id, timeout = operation.id, row.configuration["timeout"]
     db.commit()  # Saved answers and dispatch claim precede network I/O.
-    ai_usage.dispatch_guard(db, owner)
+    try:
+        ai_usage.dispatch_guard(db, owner)
+        require_consent(db, owner, "ai_interview")
+    except Exception:
+        row.status, row.active_operation = "interrupted", None
+        operation.status, operation.outcome = "failed", "consent_or_account_denied"
+        ai_usage.release(db, owner, token)
+        db.commit()
+        raise
     result, output, failure = None, None, None
     try:
         result = ai_usage.bounded_call(lambda: provider.practice(payload), timeout)
