@@ -22,6 +22,18 @@ def now():
     return datetime.now(timezone.utc)
 
 
+def is_plan_admin(db, owner, settings):
+    """Case-insensitive check: does the owner's email appear in JOBPILOT_PLAN_ADMIN_EMAILS?"""
+    admin_emails = settings.JOBPILOT_PLAN_ADMIN_EMAILS
+    if not admin_emails:
+        return False
+    email = db.scalar(select(User.email).where(User.id == owner))
+    if email is None:
+        return False
+    normalized = email.strip().lower()
+    return any(normalized == e.strip().lower() for e in admin_emails)
+
+
 def period(at):
     at = at.astimezone(timezone.utc)
     start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -58,15 +70,19 @@ def reserve(db, owner, token, feature, settings):
     # existing aggregate counter/lease commit in the same dispatch transaction.
     if feature not in FEATURES:
         raise EntitlementError(422, "A supported metered feature is required")
-    at = now(); start, _ = period(at)
-    _, total, allowances, _ = policy(db, owner, settings, at)
-    used, counts = consumption(db, owner, start)
-    if used >= total:
-        raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
-    if allowances[feature] == 0:
-        raise EntitlementError(403, "This feature is unavailable on your current plan. Billing is not available.")
-    if counts.get(feature, 0) >= allowances[feature]:
-        raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
+    admin = is_plan_admin(db, owner, settings)
+    if not admin:
+        at = now(); start, _ = period(at)
+        _, total, allowances, _ = policy(db, owner, settings, at)
+        used, counts = consumption(db, owner, start)
+        if used >= total:
+            raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
+        if allowances[feature] == 0:
+            raise EntitlementError(403, "This feature is unavailable on your current plan. Billing is not available.")
+        if counts.get(feature, 0) >= allowances[feature]:
+            raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
+    else:
+        at = now(); start, _ = period(at)
     db.add(UsageReservation(id=token, owner_id=owner, feature=feature, period_start=start, created_at=at))
 
 
@@ -89,20 +105,25 @@ def provider_available(settings, feature):
 
 def snapshot(db, owner, settings):
     at = now(); start, end = period(at)
+    admin = is_plan_admin(db, owner, settings)
     name, total, allowances, row = policy(db, owner, settings, at)
     used, counts = consumption(db, owner, start)
     features = {}
     for feature, label in FEATURES.items():
-        remaining = max(0, min(allowances[feature]-counts.get(feature, 0), total-used))
-        state = "unavailable" if not provider_available(settings, feature) else "not_in_plan" if allowances[feature] == 0 else "exhausted" if remaining == 0 else "available"
+        if admin:
+            remaining = 999999
+            state = "unavailable" if not provider_available(settings, feature) else "admin"
+        else:
+            remaining = max(0, min(allowances[feature]-counts.get(feature, 0), total-used))
+            state = "unavailable" if not provider_available(settings, feature) else "not_in_plan" if allowances[feature] == 0 else "exhausted" if remaining == 0 else "available"
         features[feature] = {"label": label, "allowance": allowances[feature], "consumed": counts.get(feature, 0),
             "remaining": remaining, "state": state, "unit": "one bounded provider-request reservation"}
     return {"plan": name, "base_plan": row.base_plan if row else "free",
         "beta_expires_at": row.beta_expires_at if row else None,
         "beta_revoked_at": row.beta_revoked_at if row else None,
         "period_start": start, "reset_at": end, "reset_timezone": "UTC",
-        "total": {"allowance": total, "consumed": used, "remaining": max(0, total-used)},
-        "features": features, "billing_available": False,
+        "total": {"allowance": total, "consumed": used, "remaining": 999999 if admin else max(0, total-used)},
+        "features": features, "admin": admin, "billing_available": False,
         "proposed_monthly_price_usd": str(settings.JOBPILOT_PROPOSED_MONTHLY_PRICE_USD),
         "price_note": "Business hypothesis only; no subscription or checkout is available.",
         "history_note": "Monthly accounting starts with the entitlement rollout; historical per-feature usage is not reconstructed."}

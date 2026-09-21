@@ -13,6 +13,7 @@ export function UsageDetails(){
     <button className="secondary-button" disabled={usage?.loading} onClick={()=>void usage?.refresh()}>Refresh usage</button>
     {data&&<>
       <h2>{({free:'Free access',legacy:'Existing-user continuity',invited_beta:'Invited beta'} as Record<string,string>)[data.plan]||'Access plan'}</h2>
+      {data.admin&&<p className="admin-badge">Administrator — quotas bypassed for this account.</p>}
       {data.plan==='legacy'&&<p>Your continuity access has no automatic expiry. The migration preserved existing access.</p>}
       {data.beta_expires_at&&<p>Beta grant expiry: {new Date(data.beta_expires_at).toLocaleString()}. {data.beta_revoked_at?'This grant was revoked.':data.plan!=='invited_beta'?'This grant is inactive; base-plan allowances apply.':'On expiry, access returns to your base plan; saved data remains available.'}</p>}
       <p>Current period: {new Date(data.period_start).toISOString()} · Resets {new Date(data.reset_at).toISOString()} at 00:00 UTC.</p>

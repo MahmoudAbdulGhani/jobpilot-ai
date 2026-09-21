@@ -109,7 +109,7 @@
 .interview-snapshot { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); overflow-wrap: anywhere; }
 .interview-page select:focus-visible, .interview-page summary:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
 /* Owner-scoped plan balances; scroll rather than squeeze columns on narrow screens. */
-.usage-table{overflow-x:auto;margin-block:24px}.usage-table table{width:100%;border-collapse:collapse;text-align:left}.usage-table th,.usage-table td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}.usage-table caption{text-align:left;font-weight:650;padding-bottom:12px}
+.usage-table{overflow-x:auto;margin-block:24px}.usage-table table{width:100%;border-collapse:collapse;text-align:left}.usage-table th,.usage-table td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}.usage-table caption{text-align:left;font-weight:650;padding-bottom:12px}.admin-badge{padding:10px 14px;margin-block:12px;background:var(--forest);color:var(--paper);border-radius:6px;font-weight:600;font-size:15px}
 
 /* ============================================================
    Design system polish: Applications page, tracking, consistent

@@ -282,3 +282,126 @@ def test_exhausted_quota_does_not_block_private_export_or_deletion(db_session,da
     assert exported['id']
     receipt=account_data.request_deletion(db_session,data.owner.id,PASSWORD,'DELETE MY ACCOUNT')
     assert receipt['id'] and not db_session.get(User,data.owner.id).is_active
+
+
+# ── Administrator entitlement bypass tests ──────────────────────────
+
+
+def test_is_plan_admin_case_insensitive(db_session, data, settings):
+    """Admin email match is case-insensitive."""
+    email = data.owner.email  # e.g. "owner@example.com"
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [email.upper()]})
+    assert service.is_plan_admin(db_session, data.owner.id, admin_settings)
+
+
+def test_is_plan_admin_empty_list(db_session, data, settings):
+    """Empty admin list means nobody is admin."""
+    assert not service.is_plan_admin(db_session, data.owner.id, settings)
+
+
+def test_is_plan_admin_not_listed(db_session, data, settings):
+    """Email not in the list is not admin."""
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": ["other@example.com"]})
+    assert not service.is_plan_admin(db_session, data.owner.id, admin_settings)
+
+
+def test_admin_bypasses_total_quota(db_session, data, settings):
+    """Admin can reserve beyond the normal total limit."""
+    settings = configured(settings, total=1)
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    charge(db_session, data.owner.id, settings)
+    # Non-admin would get 429
+    with pytest.raises(ai_usage.AIUsageError) as error:
+        ai_usage.reserve(db_session, data.owner.id, settings, feature="profile")
+    assert error.value.status_code == 429
+    db_session.rollback()
+    # Admin succeeds
+    token = ai_usage.reserve(db_session, data.owner.id, admin_settings, feature="profile")
+    ai_usage.release(db_session, data.owner.id, token)
+    db_session.commit()
+
+
+def test_admin_bypasses_per_feature_quota(db_session, data, settings):
+    """Admin can reserve beyond per-feature allowance."""
+    settings = configured(settings, total=10, profile=1)
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    charge(db_session, data.owner.id, settings, "profile")
+    # Non-admin would get 429 on profile
+    with pytest.raises(ai_usage.AIUsageError) as error:
+        ai_usage.reserve(db_session, data.owner.id, settings, feature="profile")
+    assert error.value.status_code == 429
+    db_session.rollback()
+    # Admin succeeds
+    token = ai_usage.reserve(db_session, data.owner.id, admin_settings, feature="profile")
+    ai_usage.release(db_session, data.owner.id, token)
+    db_session.commit()
+
+
+def test_admin_bypasses_disabled_feature(db_session, data, settings):
+    """Admin can use a feature set to 0 allowance."""
+    settings = configured(settings, total=10, speech=0)
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    # Non-admin gets 403
+    with pytest.raises(ai_usage.AIUsageError) as error:
+        ai_usage.reserve(db_session, data.owner.id, settings, feature="speech")
+    assert error.value.status_code == 403
+    db_session.rollback()
+    # Admin succeeds
+    token = ai_usage.reserve(db_session, data.owner.id, admin_settings, feature="speech")
+    ai_usage.release(db_session, data.owner.id, token)
+    db_session.commit()
+
+
+@pytest.mark.parametrize("feature", ["profile", "fit", "pack", "interview", "transcription", "speech", "qa"])
+def test_admin_bypasses_every_metered_feature(db_session, data, settings, feature):
+    """Admin bypass works for all 7 metered features via the reserve() path."""
+    settings = configured(settings, total=1, **{feature: 0})
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    # Non-admin gets 403 or 429
+    with pytest.raises(ai_usage.AIUsageError) as error:
+        ai_usage.reserve(db_session, data.owner.id, settings, feature=feature)
+    assert error.value.status_code in (403, 429)
+    db_session.rollback()
+    # Admin succeeds
+    token = ai_usage.reserve(db_session, data.owner.id, admin_settings, feature=feature)
+    ai_usage.release(db_session, data.owner.id, token)
+    db_session.commit()
+
+
+def test_admin_snapshot_reports_admin_flag(db_session, data, settings):
+    """Snapshot includes admin=True and unlimited remaining for admins."""
+    settings = configured(settings, total=1)
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    snap = service.snapshot(db_session, data.owner.id, admin_settings)
+    assert snap["admin"] is True
+    assert snap["total"]["remaining"] == 999999
+    for feature, info in snap["features"].items():
+        if info["state"] != "unavailable":
+            assert info["state"] == "admin"
+            assert info["remaining"] == 999999
+
+
+def test_non_admin_snapshot_reports_admin_false(db_session, data, settings):
+    """Non-admin snapshot has admin=False and normal remaining."""
+    settings = configured(settings, total=5)
+    snap = service.snapshot(db_session, data.owner.id, settings)
+    assert snap["admin"] is False
+    assert snap["total"]["remaining"] == 5
+
+
+def test_owner_email_not_automatic_admin(db_session, data, settings):
+    """Owner is not admin unless their email is explicitly listed."""
+    assert not service.is_plan_admin(db_session, data.owner.id, settings)
+    snap = service.snapshot(db_session, data.owner.id, settings)
+    assert snap["admin"] is False
+
+
+def test_admin_beta_grant_still_works(db_session, data, settings):
+    """Admin bypass for quotas does not break beta-grant/revoke."""
+    key = uuid.uuid4()
+    admin_settings = settings.model_copy(update={"JOBPILOT_PLAN_ADMIN_EMAILS": [data.owner.email]})
+    audit = grant(db_session, data, admin_settings, request_key=key)
+    assert audit.id
+    assert service.snapshot(db_session, data.other.id, admin_settings)["plan"] == "invited_beta"
+    # Revoke also works
+    grant(db_session, data, admin_settings, action="revoke", hours=0, request_key=uuid.uuid4())
