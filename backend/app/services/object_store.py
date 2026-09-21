@@ -56,6 +56,29 @@ def _categorize(status_code, exc=None):
     return "success"
 
 
+def _classify_400(body):
+    """Classify a Supabase 400 response into a safe internal category.
+
+    Matches only known sanitized phrases. Never exposes the raw body externally.
+    Returns one of: invalid_path, invalid_content_type, file_size_rejected,
+    bucket_policy, malformed_request, unknown.
+    """
+    if not body:
+        return "unknown"
+    text = body.lower()
+    if "asset already exists" in text:
+        return "invalid_path"
+    if "content-type" in text or "mime" in text:
+        return "invalid_content_type"
+    if "file size" in text or "payload" in text or "too large" in text:
+        return "file_size_rejected"
+    if "bucket" in text and ("policy" in text or "permission" in text):
+        return "bucket_policy"
+    if "invalid" in text or "malformed" in text:
+        return "malformed_request"
+    return "unknown"
+
+
 class SupabaseStore:
     def __init__(self, settings, transport=None):
         self.settings = settings
@@ -133,7 +156,14 @@ class SupabaseStore:
         response = self.request('POST', self.path(storage_id), content=data,
                                 headers={'Content-Type': 'application/octet-stream', 'x-upsert': 'false'})
         if response.status_code not in {200, 201}:
-            cat = _categorize(response.status_code)
+            if response.status_code == 400:
+                try:
+                    body = response.text
+                except Exception:
+                    body = ""
+                cat = _classify_400(body)
+            else:
+                cat = _categorize(response.status_code)
             log.warning("storage_write status=%d category=%s", response.status_code, cat)
             raise StorageUnavailable(category=cat, operation="write", http_status=response.status_code)
 

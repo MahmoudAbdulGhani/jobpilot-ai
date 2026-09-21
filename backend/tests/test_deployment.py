@@ -333,7 +333,6 @@ def test_storage_503_response_shape(monkeypatch, db_session, handler_factory, ex
 
 
 @pytest.mark.parametrize('supabase_status, expected_category', [
-    (400, 'client_error'),
     (401, 'auth_error'),
     (403, 'auth_error'),
     (415, 'client_error'),
@@ -375,6 +374,77 @@ def test_storage_write_failure_response_fields(monkeypatch, db_session, supabase
     assert body['category'] == expected_category
     assert secret_key not in str(body)
     assert 'write-test-bucket' not in str(body)
+
+
+@pytest.mark.parametrize('response_body, expected_category', [
+    ('Asset Already Exists', 'invalid_path'),
+    ('Duplicate: asset already exists at this path', 'invalid_path'),
+    ('Invalid Content-Type header', 'invalid_content_type'),
+    ('Unsupported MIME type', 'invalid_content_type'),
+    ('File size exceeds limit', 'file_size_rejected'),
+    ('Payload too large', 'file_size_rejected'),
+    ('Request body too large', 'file_size_rejected'),
+    ('Bucket policy denies this operation', 'bucket_policy'),
+    ('Permission denied for bucket writes', 'bucket_policy'),
+    ('Invalid request body', 'malformed_request'),
+    ('Malformed JSON in request', 'malformed_request'),
+    ('Something random happened', 'unknown'),
+    ('', 'unknown'),
+])
+def test_storage_write_400_subclassification(monkeypatch, db_session, response_body, expected_category):
+    secret_key = 'classify-400-key'
+    s = get_settings().model_copy(update={
+        'JOBPILOT_STORAGE': 'supabase',
+        'JOBPILOT_STORAGE_URL': 'https://project.supabase.co',
+        'JOBPILOT_STORAGE_BUCKET': 'classify-bucket',
+        'JOBPILOT_STORAGE_KEY': secret_key,
+    })
+
+    def handler(request):
+        if '/bucket/' in request.url.path:
+            return httpx.Response(200, json={'public': False})
+        return httpx.Response(400, text=response_body)
+
+    provider = SupabaseStore(s, transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(resume_store, 'object_store', lambda: provider)
+
+    user = User(email=f'classify-{uuid.uuid4()}@example.com', password_hash=hash_password('pw'))
+    db_session.add(user); db_session.commit()
+
+    app = create_application()
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post('/api/resumes',
+            headers={'Authorization': 'Bearer ' + create_access_token(user.id)},
+            files={'file': ('cv.pdf', b'%PDF-1.4\n%%EOF', 'application/pdf')})
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body['category'] == expected_category
+    assert body['http_status'] == 400
+    assert body['operation'] == 'write'
+    if response_body:
+        assert response_body not in str(body), 'raw Supabase body leaked in response'
+    assert secret_key not in str(body)
+
+
+def test_classify_400_unit():
+    from app.services.object_store import _classify_400
+    assert _classify_400('Asset Already Exists') == 'invalid_path'
+    assert _classify_400('duplicate: asset already exists at path x') == 'invalid_path'
+    assert _classify_400('Invalid Content-Type') == 'invalid_content_type'
+    assert _classify_400('unsupported mime: text/plain') == 'invalid_content_type'
+    assert _classify_400('file size exceeds 5MB') == 'file_size_rejected'
+    assert _classify_400('payload too large') == 'file_size_rejected'
+    assert _classify_400('request body too large') == 'file_size_rejected'
+    assert _classify_400('bucket policy denies upload') == 'bucket_policy'
+    assert _classify_400('permission denied for bucket writes') == 'bucket_policy'
+    assert _classify_400('invalid request body') == 'malformed_request'
+    assert _classify_400('malformed json') == 'malformed_request'
+    assert _classify_400('random error text') == 'unknown'
+    assert _classify_400('') == 'unknown'
+    assert _classify_400(None) == 'unknown'
 
 
 def test_storage_503_never_exposes_secret_details(monkeypatch, db_session):

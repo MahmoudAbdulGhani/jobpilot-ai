@@ -59,7 +59,11 @@ def create_application() -> FastAPI:
                 {"loc": list(item["loc"]), "msg": item["msg"], "type": item["type"]}
                 for item in error.errors()]})
         return await request_validation_exception_handler(request, error)
-    _SAFE_CATEGORIES = frozenset({"auth_error", "client_error", "server_error", "connection_error", "timeout"})
+    _SAFE_CATEGORIES = frozenset({
+        "auth_error", "client_error", "server_error", "connection_error", "timeout",
+        "invalid_path", "invalid_content_type", "file_size_rejected",
+        "bucket_policy", "malformed_request",
+    })
 
     @application.exception_handler(StorageUnavailable)
     async def unavailable_storage(request, error):
