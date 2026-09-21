@@ -59,9 +59,14 @@ def create_application() -> FastAPI:
                 {"loc": list(item["loc"]), "msg": item["msg"], "type": item["type"]}
                 for item in error.errors()]})
         return await request_validation_exception_handler(request, error)
+    _SAFE_CATEGORIES = frozenset({"auth_error", "client_error", "server_error", "connection_error", "timeout"})
+
     @application.exception_handler(StorageUnavailable)
     async def unavailable_storage(request, error):
         operation = getattr(error, "operation", None) or "unknown"
+        raw_cat = getattr(error, "category", None) or ""
+        category = raw_cat if raw_cat in _SAFE_CATEGORIES else "unknown"
+        http_status = getattr(error, "http_status", None)
         log.warning("event=resume_upload_storage_failure request_id=%s exception_type=%s operation=%s",
                      str(_uuid.uuid4()),
                      type(error).__name__,
@@ -70,6 +75,8 @@ def create_application() -> FastAPI:
             "detail": "Private document storage is unavailable",
             "code": "storage_unavailable",
             "operation": operation,
+            "http_status": http_status,
+            "category": category,
         })
     application.add_middleware(
         CORSMiddleware,

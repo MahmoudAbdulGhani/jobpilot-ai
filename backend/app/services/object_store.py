@@ -10,10 +10,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class StorageUnavailable(Exception):
-    def __init__(self, message="Private document storage is unavailable", *, category=None, operation=None):
+    def __init__(self, message="Private document storage is unavailable", *,
+                 category=None, operation=None, http_status=None):
         super().__init__(message)
         self.category = category
         self.operation = operation
+        self.http_status = http_status
 
 
 def _safe_bucket_path(path):
@@ -75,7 +77,7 @@ class SupabaseStore:
                     for part in response.iter_bytes():
                         content.extend(part)
                         if len(content) > limit:
-                            raise StorageUnavailable(category="response_too_large", operation=method)
+                            raise StorageUnavailable(category="response_too_large", operation=method, http_status=response.status_code)
                     status = response.status_code
                     log.warning("storage_request method=%s path=%s status=%d category=%s",
                                 method, safe_path, status, _categorize(status))
@@ -86,7 +88,7 @@ class SupabaseStore:
             cat = _categorize(None, exc)
             log.warning("storage_request method=%s path=%s category=%s error=%s",
                         method, safe_path, cat, type(exc).__name__)
-            raise StorageUnavailable(category=cat, operation=method) from exc
+            raise StorageUnavailable(category=cat, operation=method, http_status=None) from exc
 
     def private(self):
         """Verify the configured bucket exists and is private.
@@ -98,15 +100,15 @@ class SupabaseStore:
         if response.status_code != 200:
             cat = _categorize(response.status_code)
             log.warning("storage_bucket_check status=%d category=%s", response.status_code, cat)
-            raise StorageUnavailable(category=cat, operation="bucket_check")
+            raise StorageUnavailable(category=cat, operation="bucket_check", http_status=response.status_code)
         try:
             metadata = response.json()
         except Exception:
             log.warning("storage_bucket_check status=200 category=invalid_bucket_response")
-            raise StorageUnavailable(category="invalid_bucket_response", operation="bucket_check")
+            raise StorageUnavailable(category="invalid_bucket_response", operation="bucket_check", http_status=200)
         if metadata.get('public') is not False:
             log.warning("storage_bucket_check status=200 category=bucket_not_private")
-            raise StorageUnavailable(category="bucket_not_private", operation="bucket_check")
+            raise StorageUnavailable(category="bucket_not_private", operation="bucket_check", http_status=200)
 
     def path(self, storage_id):
         return 'object/' + self.settings.JOBPILOT_STORAGE_BUCKET + '/resumes/' + str(uuid.UUID(str(storage_id)))
@@ -119,21 +121,21 @@ class SupabaseStore:
         if response.status_code != 200:
             cat = _categorize(response.status_code)
             log.warning("storage_read status=%d category=%s", response.status_code, cat)
-            raise StorageUnavailable(category=cat, operation="read")
+            raise StorageUnavailable(category=cat, operation="read", http_status=response.status_code)
         return response.content
 
     def write(self, storage_id, data):
         if len(data) > self.settings.RESUME_MAX_SIZE_MB * 1024 * 1024:
             log.warning("storage_write category=file_too_large size=%d limit=%d",
                         len(data), self.settings.RESUME_MAX_SIZE_MB * 1024 * 1024)
-            raise StorageUnavailable(category="file_too_large", operation="write")
+            raise StorageUnavailable(category="file_too_large", operation="write", http_status=None)
         self.private()
         response = self.request('POST', self.path(storage_id), content=data,
                                 headers={'Content-Type': 'application/octet-stream', 'x-upsert': 'false'})
         if response.status_code not in {200, 201}:
             cat = _categorize(response.status_code)
             log.warning("storage_write status=%d category=%s", response.status_code, cat)
-            raise StorageUnavailable(category=cat, operation="write")
+            raise StorageUnavailable(category=cat, operation="write", http_status=response.status_code)
 
     def delete(self, storage_id):
         self.private()
@@ -141,4 +143,4 @@ class SupabaseStore:
         if response.status_code not in {200, 204, 404}:
             cat = _categorize(response.status_code)
             log.warning("storage_delete status=%d category=%s", response.status_code, cat)
-            raise StorageUnavailable(category=cat, operation="delete")
+            raise StorageUnavailable(category=cat, operation="delete", http_status=response.status_code)
