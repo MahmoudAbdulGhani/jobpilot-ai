@@ -541,4 +541,5 @@ def test_openai_provider_maps_out_of_contract_wire_content_to_invalid_field_valu
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "invalid_field_value" == str(caught.value)
+    assert caught.value.field == "headline"
     assert "private CV text" not in str(caught.value)

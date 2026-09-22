@@ -446,6 +446,7 @@ class SuggestionSetResponse(BaseModel):
     model: str
     prompt_version: str
     outcome_message: str | None
+    failure_field: str | None = None
     applied_at: datetime | None
     apply_result: dict[str, Any] | None
     created_at: datetime

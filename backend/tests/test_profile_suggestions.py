@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import uuid
+from datetime import datetime, timezone
 
 import httpx
 import openai
@@ -12,8 +14,11 @@ from app.core.security import create_access_token, hash_password
 from app.main import create_application
 from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, UsageReservation, User
 from app.schemas.profile import CandidateProfileUpdate
-from app.schemas.profile_suggestions import ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput
-from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
+from app.schemas.profile_suggestions import (
+    ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput, ProviderWireSuggestionOutput,
+    SuggestionSetResponse,
+)
+from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure, _profile_failure_field
 from app.services import profile_suggestion_service
 from consent_helpers import grant_consent
 from tests.test_resume_extraction import pdf_bytes
@@ -286,6 +291,7 @@ def test_profile_provider_local_contract_violation_maps_to_invalid_field_value()
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "invalid_field_value" == str(caught.value)
+    assert caught.value.field == "headline"
     assert "private CV text" not in str(caught.value)
 
 
@@ -371,25 +377,87 @@ def _mutate(mutation_key):
     raise AssertionError(mutation_key)
 
 
-@pytest.mark.parametrize("mutation_key, category", [
-    ("invalid_field_value", "invalid_field_value"),
-    ("invalid_evidence_reference", "invalid_evidence_reference"),
-    ("unsupported_claim", "unsupported_claim"),
-    ("invalid_experience_shape", "invalid_experience_shape"),
-    ("invalid_education_shape", "invalid_education_shape"),
-    ("invalid_salary_shape", "invalid_salary_shape"),
-    ("invalid_preference_value", "invalid_preference_value"),
-    ("response_contract_invalid", "response_contract_invalid"),
-    ("unknown", "unknown"),
+@pytest.mark.parametrize("mutation_key, category, field", [
+    ("invalid_field_value", "invalid_field_value", "headline"),
+    ("invalid_evidence_reference", "invalid_evidence_reference", None),
+    ("unsupported_claim", "unsupported_claim", None),
+    ("invalid_experience_shape", "invalid_experience_shape", None),
+    ("invalid_education_shape", "invalid_education_shape", None),
+    ("invalid_salary_shape", "invalid_salary_shape", None),
+    ("invalid_preference_value", "invalid_preference_value", None),
+    ("response_contract_invalid", "response_contract_invalid", None),
+    ("unknown", "unknown", None),
 ])
-def test_profile_provider_classifies_each_validation_failure_to_its_safe_category(mutation_key, category):
+def test_profile_provider_classifies_each_validation_failure_to_its_safe_category(mutation_key, category, field):
     """Each local wire/domain rejection resolves to its exact diagnostic label,
     and no provider input or exception text ever reaches the surface error."""
     parsed = _mutate(mutation_key)
     caught = _run_seeded_provider(parsed)
     assert caught.category == category == str(caught)
+    assert caught.field == field
     assert "private CV text" not in str(caught)
     assert "Synthetic" not in str(caught)
+
+
+def _wire_field_case(field, bucket):
+    return {
+        "suggestions": [{
+            "id": f"{field}-1", "field": field, "value": bucket,
+            "evidence": [{"quote": "Synthetic evidence"}],
+        }],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {field}),
+    }
+
+
+@pytest.mark.parametrize("field, bucket", [
+    ("headline", {"text": "x" * 301}),
+    ("location", {"text": "x" * 301}),
+    ("target_roles", {"text": "x" * 301}),
+    ("skills", {"text": "x" * 301}),
+    ("experience", {"experience": {"organization": "Cedar Inc."}}),
+    ("education", {"education": {"degree": "BSc"}}),
+    ("languages", {"language": {}}),
+    ("remote_preference", {"remote_preference": "onsite"}),
+    ("work_authorization", {"work_authorization": "onsite"}),
+    ("salary_preference", {"salary": {"min": 100, "max": 50}}),
+])
+def test_profile_failure_field_is_identified_for_each_wire_field(field, bucket):
+    """Every supported suggestion field falls out of the pydantic error
+    location alone, with no value ever inspected or returned."""
+    payload = _wire_field_case(field, bucket)
+    with pytest.raises(ValidationError) as caught:
+        ProviderWireSuggestionOutput.model_validate(payload)
+    assert _profile_failure_field(caught.value, payload) == field
+    assert _profile_failure_field(caught.value, payload) in {
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference",
+        "unknown",
+    }
+
+
+def test_profile_failure_field_domain_step_identifies_the_field_without_values():
+    """The bare domain re-validation loc carries no index, so the field is
+    recovered by re-validating each suggestion's own domain conversion."""
+    payload = {
+        "suggestions": [{
+            "id": "h-1", "field": "headline",
+            "value": {"text": "x" * 250}, "evidence": [{"quote": "q"}],
+        }],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {"headline"}),
+    }
+    wire = ProviderWireSuggestionOutput.model_validate(payload)
+    with pytest.raises(ValidationError) as caught:
+        wire.to_domain()
+    assert _profile_failure_field(caught.value, wire) == "headline"
+
+
+def test_profile_failure_field_unknown_fallback_without_correlatable_location():
+    """An envelope-level error with no suggestion index or items must degrade
+    to 'unknown', never to a guessed field."""
+    payload = {"partial": False}
+    with pytest.raises(ValidationError) as caught:
+        ProviderWireSuggestionOutput.model_validate(payload)
+    assert _profile_failure_field(caught.value, payload) == "unknown"
 
 
 @pytest.mark.parametrize("code", ["invalid_json_schema", "json_validate_failed", "schema_validation_failed"])
@@ -478,6 +546,110 @@ def test_profile_failure_releases_reservation_and_persists_only_category(
     assert record.outcome_message == "authentication"
     assert usage.active_token is None and usage.active_until is None
     assert reservation.released_at is not None
+
+
+def test_profile_failure_field_round_trips_through_post_latest_and_detail(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    """invalid_field_value carries a safe field label persisted and served by
+    the generate, latest, and detail endpoints."""
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    resume_id = confirmed_resume(suggestion_client, owner)
+
+    class Broken:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure("invalid_field_value", field="experience")
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Broken())
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["outcome_message"] == "invalid_field_value"
+    assert body["failure_field"] == "experience"
+    assert "experience" in {
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference",
+        "unknown",
+    }
+
+    record = db_session.query(ProfileSuggestionSet).filter_by(owner_id=owner.id).one()
+    assert record.failure_field == "experience"
+
+    latest = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest", headers=headers(owner)
+    ).json()
+    assert latest["failure_field"] == "experience"
+    detail = suggestion_client.get(
+        f"/api/profile-suggestions/{record.id}", headers=headers(owner)
+    ).json()
+    assert detail["failure_field"] == "experience"
+
+
+def test_profile_failure_field_never_exposes_unlisted_values(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    """A field identifier outside the closed set is dropped at the boundary and
+    never persisted or returned."""
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    resume_id = confirmed_resume(suggestion_client, owner)
+
+    class Broken:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure("invalid_field_value", field="cv-text-or-secret")
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Broken())
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["outcome_message"] == "invalid_field_value"
+    assert body["failure_field"] is None
+    record = db_session.query(ProfileSuggestionSet).filter_by(owner_id=owner.id).one()
+    assert record.failure_field is None
+
+
+def test_profile_failure_field_is_nullable_in_model_and_response_schema():
+    """The persistence model and public response expose a nullable
+    failure_field; older and successful rows simply carry null."""
+    from app.models import ProfileSuggestionSet
+    assert ProfileSuggestionSet.__table__.c.failure_field.nullable is True
+    annotations = dict(SuggestionSetResponse.model_fields)
+    assert "failure_field" in annotations
+    assert annotations["failure_field"].is_required() is False
+    assert SuggestionSetResponse(
+        id=uuid.UUID(int=0), resume_id=uuid.UUID(int=1), source_hash="h",
+        source_reviewed_at=datetime.now(timezone.utc), profile_revision="none",
+        status="ready", suggestions=None, provider="openai", model="m",
+        prompt_version="v3", outcome_message=None, applied_at=None, apply_result=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    ).model_dump().get("failure_field") is None
+    assert SuggestionSetResponse(
+        id=uuid.UUID(int=0), resume_id=uuid.UUID(int=1), source_hash="h",
+        source_reviewed_at=datetime.now(timezone.utc), profile_revision="none",
+        status="failed", suggestions=None, provider="openai", model="m",
+        prompt_version="v3", outcome_message="invalid_field_value",
+        failure_field="experience", applied_at=None, apply_result=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    ).model_dump()["failure_field"] == "experience"
 
 
 def test_invalid_and_unsupported_evidence_is_removed():

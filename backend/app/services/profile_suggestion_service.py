@@ -167,6 +167,7 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     except ProviderFailure as error:
         record.status = "failed"
         record.outcome_message = error.category
+        record.failure_field = error.field
     except Exception:
         record.status = "failed"
         record.outcome_message = "unknown"

@@ -8,7 +8,7 @@ from app.schemas.application_packs import PackProviderOutput, GroqPackOutput
 from app.schemas.job_fit import CandidateFact, ProviderJobFitOutput
 from app.schemas.profile_suggestions import (
     ALL_SUGGESTION_FIELDS, GroqProfileOutput, ProviderSuggestionOutput,
-    ProviderWireSuggestionOutput,
+    ProviderWireSuggestionOutput, SuggestionField,
 )
 from app.schemas.qa import ProviderQaOutput
 
@@ -35,15 +35,19 @@ SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
     "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
     "invalid_preference_value", "response_contract_invalid",
 })
+# Closed set of field identifiers that may accompany an invalid_field_value
+# failure. Field labels are schema constants, never generated values.
+SAFE_PROFILE_FAILURE_FIELDS = frozenset((*SuggestionField.__args__, "unknown"))
 
 
 class ProviderFailure(Exception):
-    def __init__(self, message: str = "unknown", *, category: str | None = None):
+    def __init__(self, message: str = "unknown", *, category: str | None = None, field: str | None = None):
         candidate = category or message
         self.category = cast(
             ProviderFailureCategory,
             candidate if candidate in SAFE_PROVIDER_FAILURE_CATEGORIES else "unknown",
         )
+        self.field = field if field in SAFE_PROFILE_FAILURE_FIELDS else None
         super().__init__(message)
 
 
@@ -189,6 +193,60 @@ _PROFILE_VALIDATION_PRIORITY = (
     "invalid_salary_shape",
     "invalid_field_value",
 )
+
+
+def _field_at(items, index):
+    item = items[index] if items and 0 <= index < len(items) else None
+    if item is None:
+        return None
+    field = getattr(item, "field", None)
+    if field is None and isinstance(item, dict):
+        field = item.get("field")
+    return field if field in SAFE_PROFILE_FAILURE_FIELDS else None
+
+
+def _profile_failure_field(error: Exception, parsed) -> str:
+    """Identify the failing suggestion field from error locations, safely.
+
+    Only the stripped error locations (never error inputs, messages, or enum
+    values) and the closed field enum at the located suggestion index
+    participate; anything unmatched collapses to ``"unknown"``. Wire-step
+    locations carry the suggestion index; bulk domain re-validation carries
+    none, so the field is recovered by re-validating each suggestion's own
+    domain conversion individually.
+    """
+    try:
+        details = error.errors(include_input=False, include_context=False, include_url=False)
+    except Exception:
+        return "unknown"
+    items = getattr(parsed, "suggestions", None)
+    if items is None and isinstance(parsed, dict):
+        items = parsed.get("suggestions")
+    for detail in details:
+        loc = tuple(detail.get("loc", ()))
+        if len(loc) >= 2 and loc[0] == "suggestions" and type(loc[1]) is int:
+            field = _field_at(items, loc[1])
+            if field is not None:
+                return field
+    converter = getattr(parsed, "_to_domain_suggestion", None)
+    if converter is None or not items:
+        return "unknown"
+    for item in items:
+        try:
+            converter(item)
+        except ValidationError:
+            field = getattr(item, "field", None)
+            if field is None and isinstance(item, dict):
+                field = item.get("field")
+            return field if field in SAFE_PROFILE_FAILURE_FIELDS else "unknown"
+    return "unknown"
+
+
+def _profile_failure(category, error, parsed):
+    """Build a ProviderFailure with a safe field only for invalid_field_value."""
+    if category != "invalid_field_value":
+        return ProviderFailure(category)
+    return ProviderFailure(category, field=_profile_failure_field(error, parsed))
 
 
 class SuggestionProvider(Protocol):
@@ -379,13 +437,23 @@ class OpenAIResponsesProvider:
             if parsed is None:
                 raise ProviderFailure("structured_output_invalid")
             try:
-                return self.profile_output_model.model_validate(parsed).to_domain()
+                parsed_wire = self.profile_output_model.model_validate(parsed)
             except ValidationError as error:
-                # The provider's parsed structure failed our local contract.
+                # The provider's parsed structure failed the wire contract.
                 # The offline evaluator records only this cause's class name;
                 # production persists ProviderFailure.category (an allowlisted
                 # label derived from error locations/types), never details.
-                raise ProviderFailure(_profile_validation_category(error)) from error
+                raise _profile_failure(
+                    _profile_validation_category(error), error, parsed,
+                ) from error
+            try:
+                return parsed_wire.to_domain()
+            except ValidationError as error:
+                # The wire structure was valid but domain re-validation
+                # rejected a value (e.g. a field length bound).
+                raise _profile_failure(
+                    _profile_validation_category(error), error, parsed_wire,
+                ) from error
         except ProviderFailure:
             raise
         except Exception as error:
