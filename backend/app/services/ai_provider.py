@@ -473,14 +473,13 @@ class OpenAIResponsesProvider:
         )
 
     def _profile_text_config(self):
-        """Ask the provider for one plain JSON object; parsing is fully local.
-
-        The strict structured-output schema boundary is intentionally not used
-        in this flow: the returned message text is always JSON-decoded and
-        revalidated through the wire and domain contracts before anything is
-        accepted (see ``suggest``).
-        """
-        return {"format": {"type": "json_object"}}
+        """Use the Responses structured-output wire shape with local parsing."""
+        return {"format": {
+            "type": "json_schema",
+            "name": self.profile_output_model.__name__,
+            "schema": self.profile_output_model.model_json_schema(),
+            "strict": True,
+        }}
 
     def suggest(self, source_text: str) -> ProviderSuggestionOutput:
         try:

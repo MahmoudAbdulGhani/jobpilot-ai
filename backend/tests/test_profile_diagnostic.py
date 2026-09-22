@@ -238,8 +238,13 @@ def test_other_ai_capabilities_do_not_get_profile_reasoning_or_schema(provider_n
     assert calls[0]["max_output_tokens"] == 1500
     assert calls[0]["text"]["format"].get("name") != "GroqProfileOutput"
     if provider_name == "openai" and task == "profile":
-        assert calls[0]["text"]["format"] == {"type": "json_object"}
-        assert "schema" not in calls[0]["text"]
+        from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
+        assert calls[0]["text"]["format"] == {
+            "type": "json_schema",
+            "name": "ProviderWireSuggestionOutput",
+            "schema": ProviderWireSuggestionOutput.model_json_schema(),
+            "strict": True,
+        }
 
 
 def test_schema_compression_never_merges_different_evidence_constraints():

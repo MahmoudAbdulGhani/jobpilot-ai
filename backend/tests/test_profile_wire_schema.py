@@ -63,7 +63,12 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
     assert output.suggestions[0].value.title == "Engineer"
     assert "job_title" not in output.model_dump()["suggestions"][0]["value"]
     assert len(captured) == 1
-    assert captured[0] == {"type": "json_object"}
+    assert captured[0] == {
+        "type": "json_schema",
+        "name": "ProviderWireSuggestionOutput",
+        "schema": ProviderWireSuggestionOutput.model_json_schema(),
+        "strict": True,
+    }
     local = ProviderSuggestionOutput.model_json_schema()
     compact = ProviderWireSuggestionOutput.model_json_schema()
     wire = compact

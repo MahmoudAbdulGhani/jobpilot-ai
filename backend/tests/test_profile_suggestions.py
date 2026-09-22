@@ -134,7 +134,7 @@ def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_use
     assert suggestion_client.delete(f"/api/profile-suggestions/{body['id']}", headers=headers(owner)).status_code == 204
 
 
-def test_openai_adapter_requests_a_json_object_without_storage():
+def test_openai_adapter_requests_json_schema_without_storage():
     captured = {}
     parsed = ProviderSuggestionOutput(suggestions=[], not_found=sorted(ALL_SUGGESTION_FIELDS))
     wire = {"suggestions": [], "not_found": sorted(ALL_SUGGESTION_FIELDS),
@@ -145,7 +145,12 @@ def test_openai_adapter_requests_a_json_object_without_storage():
     provider = OpenAIResponsesProvider(api_key="test", model="model", timeout=3, max_output_tokens=100, client=client)
     assert provider.suggest("synthetic CV") == parsed
     assert captured["store"] is False
-    assert captured["text"] == {"format": {"type": "json_object"}}
+    assert captured["text"] == {"format": {
+        "type": "json_schema",
+        "name": "ProviderWireSuggestionOutput",
+        "schema": ProviderWireSuggestionOutput.model_json_schema(),
+        "strict": True,
+    }}
     assert "synthetic CV" == captured["input"]
     assert captured["model"] == "model"
     assert captured["max_output_tokens"] == 100
@@ -476,6 +481,85 @@ def _openai_client(handler_fn):
     return openai.OpenAI(
         api_key="x", http_client=httpx.Client(transport=transport), max_retries=0,
     )
+
+
+def test_openai_sdk_serializes_the_accepted_profile_request_contract():
+    body = json.dumps(_strict_wire_output([]))
+
+    def handler(request):
+        payload = json.loads(request.content)
+        assert str(request.url) == "https://api.openai.com/v1/responses"
+        assert set(payload) == {
+            "input", "instructions", "max_output_tokens", "model", "store", "text",
+        }
+        assert payload["model"] == "gpt-5-mini"
+        assert payload["store"] is False
+        assert payload["max_output_tokens"] == 4000
+        assert payload["text"] == {"format": {
+            "type": "json_schema",
+            "name": "ProviderWireSuggestionOutput",
+            "schema": ProviderWireSuggestionOutput.model_json_schema(),
+            "strict": True,
+        }}
+        return httpx.Response(
+            200, json=_transport_response(body), request=request,
+        )
+
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        client=_openai_client(handler),
+    )
+    assert provider.suggest("synthetic CV").suggestions == []
+
+
+def test_openai_sdk_400_maps_to_invalid_request_with_safe_diagnostics(monkeypatch):
+    import app.services.ai_provider as provider_module
+
+    safe = {}
+    classify = provider_module.classify_provider_failure
+
+    def capture(error):
+        body = error.body if isinstance(getattr(error, "body", None), dict) else {}
+        parameter = body.get("param")
+        safe.update({
+            "http_status": getattr(error, "status_code", None),
+            "exception_class": type(error).__name__,
+            "error_type": body.get("type"),
+            "error_code": body.get("code"),
+            "parameter_category": (
+                ".".join(parameter.split(".")[:2])
+                if isinstance(parameter, str) else None
+            ),
+        })
+        return classify(error)
+
+    monkeypatch.setattr(provider_module, "classify_provider_failure", capture)
+
+    def handler(request):
+        return httpx.Response(400, json={"error": {
+            "message": "synthetic detail that must not escape",
+            "type": "invalid_request_error",
+            "code": "unsupported_value",
+            "param": "text.format.type",
+        }}, request=request)
+
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        client=_openai_client(handler),
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+
+    assert caught.value.category == "invalid_request" == str(caught.value)
+    assert safe == {
+        "http_status": 400,
+        "exception_class": "BadRequestError",
+        "error_type": "invalid_request_error",
+        "error_code": "unsupported_value",
+        "parameter_category": "text.format",
+    }
+    assert "synthetic detail" not in str(caught.value)
+    assert "private CV text" not in str(caught.value)
 
 
 def test_openai_end_to_end_accepts_incomplete_status_with_complete_json_object():
