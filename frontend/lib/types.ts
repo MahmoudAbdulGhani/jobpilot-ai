@@ -32,7 +32,8 @@ export type ResumeExtraction = {
 };
 export type ProfileSuggestion = {
   id: string;
-  field: 'headline'|'location'|'skills'|'experience'|'education'|'languages';
+  field: 'headline'|'location'|'target_roles'|'skills'|'experience'|'education'|'languages'|'remote_preference'|'work_authorization'|'salary_preference';
+  status?: 'suggested'|'not_found';
   value: unknown;
   evidence: Array<{ quote: string }>;
 };

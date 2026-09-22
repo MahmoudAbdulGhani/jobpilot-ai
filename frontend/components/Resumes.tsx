@@ -245,8 +245,9 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
   function adoptSuggestions(result: ProfileSuggestionSet) {
     setSuggestionSet(result);
     const suggestions = result.suggestions || [];
-    setSelected(new Set(suggestions.map(item => item.id)));
-    setSuggestionDrafts(Object.fromEntries(suggestions.map(item => [
+    const proposed = suggestions.filter(item => item.status !== 'not_found');
+    setSelected(new Set(proposed.map(item => item.id)));
+    setSuggestionDrafts(Object.fromEntries(proposed.map(item => [
       item.id,
       typeof item.value === 'string' ? item.value : JSON.stringify(item.value, null, 2),
     ])));
@@ -332,9 +333,10 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
     setPending(true);
     setAiError('');
     try {
-      const selections = (suggestionSet.suggestions || []).filter(item => selected.has(item.id)).map(item => ({
+      const stringFields = new Set(['headline', 'location', 'target_roles', 'skills', 'remote_preference', 'work_authorization']);
+      const selections = (suggestionSet.suggestions || []).filter(item => item.status !== 'not_found' && selected.has(item.id)).map(item => ({
         ...item,
-        value: item.field === 'headline' || item.field === 'location'
+        value: stringFields.has(item.field)
           ? suggestionDrafts[item.id]
           : JSON.parse(suggestionDrafts[item.id]),
       }));
@@ -392,9 +394,14 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
                 <p className="muted">Provider: OpenAI when configured. Your confirmed CV text will leave JobPilot only when you request generation. Review every fact and quote before applying.</p>
                 {!suggestionSet && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}><Sparkle size={18} />{pending ? 'Generating…' : 'Suggest profile details with AI'}</button>}
                 {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}>{pending ? 'Generating…' : 'Retry suggestions'}</button>}
-                {suggestionSet?.suggestions?.map(item => (
+                {suggestionSet?.suggestions?.map(item => item.status === 'not_found' ? (
                   <article className="suggestion-card" key={item.id}>
-                    <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet.status === 'applied'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use {item.field}</label>
+                    <strong>{item.field.replaceAll('_', ' ')}</strong>
+                    <p className="muted">Not found in the confirmed CV.</p>
+                  </article>
+                ) : (
+                  <article className="suggestion-card" key={item.id}>
+                    <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet.status === 'applied'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use {item.field.replaceAll('_', ' ')}</label>
                     <textarea aria-label={`Proposed ${item.field}`} value={suggestionDrafts[item.id] || ''} disabled={suggestionSet.status === 'applied'} onChange={event => setSuggestionDrafts(current => ({ ...current, [item.id]: event.target.value }))} rows={3} />
                     {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
                   </article>

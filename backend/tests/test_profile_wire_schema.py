@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.evaluation.validation_diagnostics import validation_diagnostics
 from app.schemas.profile import CandidateProfileUpdate, CandidateProfileResponse
-from app.schemas.profile_suggestions import ProviderSuggestionOutput, ProviderWireSuggestionOutput, _compact_wire_schema
+from app.schemas.profile_suggestions import ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput, ProviderWireSuggestionOutput, _compact_wire_schema
 from app.services.ai_provider import GroqResponsesProvider, OpenAIResponsesProvider
 
 
@@ -26,6 +26,16 @@ def suggestion(field, value):
             "evidence": [{"quote": "Synthetic evidence"}]}
 
 
+def complete_wire(suggestions):
+    present = {item["field"] for item in suggestions}
+    return {
+        "suggestions": suggestions,
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - present),
+        "partial": False,
+        "message": None,
+    }
+
+
 def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
     captured = []
 
@@ -35,9 +45,9 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
             "id": "offline", "object": "response", "created_at": 0,
             "model": "synthetic", "status": "completed",
             "output": [{"id": "msg", "type": "message", "role": "assistant", "status": "completed",
-                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps({"suggestions": [suggestion("experience", {
+                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps(complete_wire([suggestion("experience", {
                             "job_title": "Engineer", "organization": "Synthetic",
-                            "period": None, "notes": None})], "partial": False, "message": None})}]}],
+                            "period": None, "notes": None})]))}]}],
         })
 
     with OpenAI(api_key="synthetic", max_retries=0,
@@ -63,8 +73,11 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
             "type": "string", "minLength": 1, "maxLength": 200}
         assert entry["additionalProperties"] is False
         variants = {"HeadlineSuggestion": "headline", "LocationSuggestion": "location",
-                    "SkillsSuggestion": "skills", "ProviderExperienceSuggestion": "experience",
-                    "EducationSuggestion": "education", "LanguageSuggestion": "languages"}
+                    "TargetRoleSuggestion": "target_roles", "SkillsSuggestion": "skills",
+                    "ProviderExperienceSuggestion": "experience", "EducationSuggestion": "education",
+                    "LanguageSuggestion": "languages", "RemotePreferenceSuggestion": "remote_preference",
+                    "WorkAuthorizationSuggestion": "work_authorization",
+                    "SalaryPreferenceSuggestion": "salary_preference"}
         assert schema["$defs"]["ProviderExperienceSuggestion"]["properties"]["value"] == {
             "$ref": "#/$defs/ProviderExperienceEntry"}
         assert {item["$ref"] for item in schema["properties"]["suggestions"]["items"]["anyOf"]} == {
@@ -88,13 +101,14 @@ def test_compaction_preserves_names_that_match_metadata_keywords():
     assert "title" in schema  # Original schema remains untouched.
 
 
-def test_missing_experience_title_reproduces_all_17_retained_errors():
+def test_missing_experience_title_reproduces_all_retained_errors():
     payload = {"suggestions": [suggestion("headline", "Synthetic") for _ in range(3)] + [
         suggestion("experience", {"organization": "Synthetic", "period": None, "notes": None})]}
     with pytest.raises(ValidationError) as caught:
         ProviderSuggestionOutput.model_validate_json(json.dumps(payload))
     diagnostic = validation_diagnostics(caught.value)["validation"]
-    actual = {(e["type"], tuple(e["location"][2:])) for e in diagnostic["errors"]}
+    actual = {(e["type"], tuple(e["loc"][2:])) for e in
+              caught.value.errors(include_input=False, include_context=False, include_url=False)}
     # Complete retained error signature, without any original input values.
     expected = {
         ("missing", ("ExperienceSuggestion", "value", "title")),
@@ -104,14 +118,20 @@ def test_missing_experience_title_reproduces_all_17_retained_errors():
         ("missing", ("LanguageSuggestion", "value", "name")),
         ("missing", ("LanguageSuggestion", "value", "proficiency")),
     }
-    for branch in ("HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion"):
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion"):
         expected.add(("string_type", (branch, "value")))
-    for branch in ("HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion", "EducationSuggestion", "LanguageSuggestion"):
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion",
+                   "EducationSuggestion", "LanguageSuggestion", "RemotePreferenceSuggestion",
+                   "WorkAuthorizationSuggestion", "SalaryPreferenceSuggestion"):
         expected.add(("literal_error", (branch, "field")))
     for field in ("organization", "period", "notes"):
         expected.add(("extra_forbidden", ("LanguageSuggestion", "value", field)))
+        expected.add(("extra_forbidden", ("SalaryPreferenceSuggestion", "value", field)))
+    for branch in ("RemotePreferenceSuggestion", "WorkAuthorizationSuggestion"):
+        expected.add(("literal_error", (branch, "value")))
     assert actual == expected
-    assert len(diagnostic["errors"]) == 17 and not diagnostic["errors_truncated"]
+    assert len(actual) == 27
+    assert len(diagnostic["errors"]) == 20 and diagnostic["errors_truncated"]
     assert all(e["location"][:2] == ["suggestions", 3] for e in diagnostic["errors"])
 
 
@@ -139,11 +159,11 @@ def test_local_experience_title_validation_is_not_relaxed(title):
 
 
 def test_wire_job_title_parses_and_round_trips_to_domain_title():
-    payload = {"suggestions": [{
+    payload = complete_wire([{
         "id": "exp-1", "field": "experience",
         "value": {"job_title": "Engineer", "organization": "Cedar Demo",
                   "period": None, "notes": None},
-        "evidence": [{"quote": "Engineer at Cedar Demo"}]}]}
+        "evidence": [{"quote": "Engineer at Cedar Demo"}]}])
     parsed = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
     value = parsed.suggestions[0].value
     assert value.title == "Engineer"
@@ -211,7 +231,7 @@ def test_public_profile_experience_contract_before_ed05a0f(model, entry, valid):
 def test_provider_entry_preserves_bounds(changes):
     entry = {"job_title": "Engineer", "organization": "Synthetic", **changes}
     with pytest.raises(ValidationError):
-        ProviderWireSuggestionOutput.model_validate({"suggestions": [suggestion("experience", entry)]})
+        ProviderWireSuggestionOutput.model_validate(complete_wire([suggestion("experience", entry)]))
 
 
 @pytest.mark.parametrize("missing", ["job_title", "organization"])
@@ -219,7 +239,7 @@ def test_provider_entry_requires_fields(missing):
     entry = {"job_title": "Engineer", "organization": "Synthetic"}
     del entry[missing]
     with pytest.raises(ValidationError):
-        ProviderWireSuggestionOutput.model_validate({"suggestions": [suggestion("experience", entry)]})
+        ProviderWireSuggestionOutput.model_validate(complete_wire([suggestion("experience", entry)]))
 
 
 @pytest.mark.parametrize("evidence", [[], [{"quote": ""}], [{"quote": "x" * 1001}]])
@@ -227,14 +247,14 @@ def test_provider_evidence_constraints(evidence):
     item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
     item["evidence"] = evidence
     with pytest.raises(ValidationError):
-        ProviderWireSuggestionOutput.model_validate({"suggestions": [item]})
+        ProviderWireSuggestionOutput.model_validate(complete_wire([item]))
 
 
 def test_mapped_experience_preserves_evidence_validation():
     from app.services.profile_suggestion_service import validate_output
     item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
     item["evidence"] = [{"quote": "Engineer Synthetic"}]
-    output = ProviderWireSuggestionOutput.model_validate({"suggestions": [item]}).to_domain()
+    output = ProviderWireSuggestionOutput.model_validate(complete_wire([item])).to_domain()
     accepted, partial = validate_output(output, "Engineer Synthetic")
     assert not partial and accepted[0]["value"]["title"] == "Engineer"
     assert validate_output(output, "Different source") == ([], True)
@@ -346,7 +366,7 @@ def test_supported_headline_requires_nonempty_exact_source_quote(evidence, outco
     source = "Backend engineer"
     item = suggestion("headline", source)
     item["evidence"] = evidence
-    payload = {"suggestions": [item]}
+    payload = complete_wire([item])
     if outcome == "parse_failure":
         with pytest.raises(ValidationError):
             ProviderWireSuggestionOutput.model_validate(payload)

@@ -12,7 +12,7 @@ from app.core.security import create_access_token, hash_password
 from app.main import create_application
 from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, UsageReservation, User
 from app.schemas.profile import CandidateProfileUpdate
-from app.schemas.profile_suggestions import ProviderSuggestionOutput
+from app.schemas.profile_suggestions import ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
 from app.services import profile_suggestion_service
 from consent_helpers import grant_consent
@@ -40,8 +40,8 @@ def headers(user):
     return {"Authorization": f"Bearer {create_access_token(user.id)}"}
 
 
-def confirmed_resume(client, user):
-    uploaded = client.post("/api/resumes", headers=headers(user), files={"file": ("cv.pdf", pdf_bytes("Senior Engineer"), "application/pdf")}).json()
+def confirmed_resume(client, user, text="Senior Engineer"):
+    uploaded = client.post("/api/resumes", headers=headers(user), files={"file": ("cv.pdf", pdf_bytes(text), "application/pdf")}).json()
     resume_id = uploaded["id"]
     client.post(f"/api/resumes/{resume_id}/extract", headers=headers(user))
     client.post(f"/api/resumes/{resume_id}/extraction/confirm", headers=headers(user))
@@ -123,14 +123,14 @@ def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_use
     suggestion_client.post(f"/api/resumes/{resume_id}/extraction/confirm", headers=headers(owner))
     assert suggestion_client.post(
         f"/api/profile-suggestions/{body['id']}/apply", headers=headers(owner),
-        json={"selections": body["suggestions"]},
+        json={"selections": [item for item in body["suggestions"] if item.get("status") != "not_found"]},
     ).status_code == 409
     assert suggestion_client.delete(f"/api/profile-suggestions/{body['id']}", headers=headers(owner)).status_code == 204
 
 
 def test_openai_adapter_uses_responses_structured_output_without_storage():
     captured = {}
-    parsed = ProviderSuggestionOutput(suggestions=[])
+    parsed = ProviderSuggestionOutput(suggestions=[], not_found=sorted(ALL_SUGGESTION_FIELDS))
     client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: captured.update(kwargs) or SimpleNamespace(status="completed", output_parsed=parsed.model_dump())))
     provider = OpenAIResponsesProvider(api_key="test", model="model", timeout=3, max_output_tokens=100, client=client)
     assert provider.suggest("synthetic CV") == parsed
@@ -294,6 +294,15 @@ def test_typed_structured_values_validate_with_source_evidence():
         {item["field"]: [item["value"]] for item in accepted})
 
 
+def test_language_requires_explicit_proficiency_evidence():
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [{
+        "id": "language-1", "field": "languages",
+        "value": {"name": "Arabic", "proficiency": "professional"},
+        "evidence": [{"quote": "Languages: Arabic"}],
+    }]})
+    assert profile_suggestion_service.validate_output(output, "Languages: Arabic") == ([], True)
+
+
 def test_valid_experience_object_parses_and_applies_to_profile():
     """Minimal mocked reproduction: a valid experience suggestion parses and
     the value round-trips into CandidateProfileUpdate (the downstream apply
@@ -321,16 +330,19 @@ def test_suggestion_schema_constrains_per_field_values():
     assert suggestions["type"] == "array"
     variants = {ref["$ref"].split("/")[-1] for ref in suggestions["items"]["anyOf"]}
     assert variants == {
-        "HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion",
+        "HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion",
         "ProviderExperienceSuggestion", "EducationSuggestion", "LanguageSuggestion",
+        "RemotePreferenceSuggestion", "WorkAuthorizationSuggestion", "SalaryPreferenceSuggestion",
     }
     assert defs["ProviderExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ProviderExperienceEntry"}
     assert defs["EducationSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/EducationEntry"}
     assert defs["LanguageSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/LanguageEntry"}
+    assert defs["SalaryPreferenceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/SalaryPreference"}
     assert defs["ProviderExperienceEntry"]["required"] == ["job_title", "organization"]
     assert defs["HeadlineSuggestion"]["properties"]["value"]["type"] == "string"
     assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
+    assert defs["TargetRoleSuggestion"]["properties"]["value"]["maxLength"] == 200
     assert defs["LocationSuggestion"]["properties"]["value"]["maxLength"] == 300
     # The wire schema drops only tautological keys and duplicated id/value
     # min-bounds; the typed structure ("required", "$ref", enums, maxLength,
@@ -346,6 +358,77 @@ def test_suggestion_schema_constrains_per_field_values():
     assert "minLength" not in defs["HeadlineSuggestion"]["properties"]["value"]
     assert defs["Evidence"]["properties"]["quote"] == {"type": "string", "minLength": 1, "maxLength": 1000}
     assert defs["HeadlineSuggestion"]["properties"]["field"] == {"type": "string", "const": "headline"}
+
+
+def test_explicit_cv_fields_generate_apply_and_keep_absent_languages_empty(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    source = "\n".join([
+        "Full-Stack Software Engineer",
+        "Location: Tripoli Lebanon",
+        "Target role: Full-Stack Software Engineer",
+        "Skills: Python TypeScript",
+        "Software Engineer at Cedar Labs 2022-2025",
+        "BSc Computer Science at Lebanese University 2022",
+        "Remote preference: remote",
+        "Work authorization: citizen",
+        "Salary preference: USD 70000 to 90000",
+    ])
+    resume_id = confirmed_resume(suggestion_client, owner, source)
+    output = ProviderSuggestionOutput.model_validate({
+        "suggestions": [
+            {"id": "headline-1", "field": "headline", "value": "Full-Stack Software Engineer", "evidence": [{"quote": "Full-Stack Software Engineer"}]},
+            {"id": "location-1", "field": "location", "value": "Tripoli Lebanon", "evidence": [{"quote": "Location: Tripoli Lebanon"}]},
+            {"id": "role-1", "field": "target_roles", "value": "Full-Stack Software Engineer", "evidence": [{"quote": "Target role: Full-Stack Software Engineer"}]},
+            {"id": "skill-1", "field": "skills", "value": "Python", "evidence": [{"quote": "Skills: Python TypeScript"}]},
+            {"id": "skill-2", "field": "skills", "value": "TypeScript", "evidence": [{"quote": "Skills: Python TypeScript"}]},
+            {"id": "experience-1", "field": "experience", "value": {"title": "Software Engineer", "organization": "Cedar Labs", "period": "2022-2025"}, "evidence": [{"quote": "Software Engineer at Cedar Labs 2022-2025"}]},
+            {"id": "education-1", "field": "education", "value": {"school": "Lebanese University", "degree": "BSc", "field": "Computer Science", "period": "2022"}, "evidence": [{"quote": "BSc Computer Science at Lebanese University 2022"}]},
+            {"id": "remote-1", "field": "remote_preference", "value": "remote", "evidence": [{"quote": "Remote preference: remote"}]},
+            {"id": "authorization-1", "field": "work_authorization", "value": "citizen", "evidence": [{"quote": "Work authorization: citizen"}]},
+            {"id": "salary-1", "field": "salary_preference", "value": {"currency": "USD", "min": 70000, "max": 90000}, "evidence": [{"quote": "Salary preference: USD 70000 to 90000"}]},
+        ],
+        "not_found": ["languages"],
+    })
+
+    class SyntheticProvider:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, text):
+            assert all(line in text for line in source.splitlines())
+            return output
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: SyntheticProvider())
+    generated = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    assert generated.status_code == 200
+    body = generated.json()
+    assert body["status"] == "ready"
+    assert {item["field"] for item in body["suggestions"] if item.get("status") != "not_found"} == ALL_SUGGESTION_FIELDS - {"languages"}
+    assert [item["field"] for item in body["suggestions"] if item.get("status") == "not_found"] == ["languages"]
+
+    selections = [item for item in body["suggestions"] if item.get("status") != "not_found"]
+    applied = suggestion_client.post(
+        f"/api/profile-suggestions/{body['id']}/apply",
+        headers=headers(owner), json={"selections": selections},
+    )
+    assert applied.status_code == 200
+    profile = suggestion_client.get("/api/profile", headers=headers(owner)).json()
+    assert profile["headline"] == "Full-Stack Software Engineer"
+    assert profile["location"] == "Tripoli Lebanon"
+    assert profile["target_roles"] == ["Full-Stack Software Engineer"]
+    assert profile["skills"] == ["Python", "TypeScript"]
+    assert profile["experience"] == [{"title": "Software Engineer", "organization": "Cedar Labs", "period": "2022-2025", "notes": None}]
+    assert profile["education"] == [{"school": "Lebanese University", "degree": "BSc", "field": "Computer Science", "period": "2022"}]
+    assert profile["remote_preference"] == "remote"
+    assert profile["work_authorization"] == "citizen"
+    assert profile["salary_preference"] == {"currency": "USD", "min": 70000, "max": 90000}
+    assert profile["languages"] is None
 
 
 def test_wire_compaction_never_weakens_local_parse():
@@ -420,7 +503,7 @@ def test_stale_profile_blocks_apply(suggestion_client, suggestion_users, db_sess
     suggestion_client.patch("/api/profile", headers=headers(owner), json={"headline": "Manual edit"})
     response = suggestion_client.post(
         f"/api/profile-suggestions/{body['id']}/apply", headers=headers(owner),
-        json={"selections": body["suggestions"]},
+        json={"selections": [item for item in body["suggestions"] if item.get("status") != "not_found"]},
     )
     assert response.status_code == 409
     assert suggestion_client.get("/api/profile", headers=headers(owner)).json()["headline"] == "Manual edit"

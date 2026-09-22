@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -64,20 +65,26 @@ def provider_for(settings: Settings):
 
 
 def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list[dict], bool]:
-    from app.services.evidence_validation import supported_claim, value_text
+    from app.services.evidence_validation import normalize, supported_claim, value_text
     accepted: list[dict] = []
     partial = output.partial
     seen: set[str] = set()
     for suggestion in output.suggestions:
+        quotes = [e.quote for e in suggestion.evidence]
+        if suggestion.field == "languages":
+            proficiency = re.escape(suggestion.value.proficiency.replace("_", " "))
+            if not re.search(rf"\b{proficiency}\b", normalize(" ".join(quotes))):
+                partial = True
+                continue
         if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
-                or not supported_claim(value_text(suggestion.value), [e.quote for e in suggestion.evidence],
+                or not supported_claim(value_text(suggestion.value), quotes,
                                        single_passage=suggestion.field in {"experience", "education"})):
             partial = True
             continue
         try:
             value = (
                 [suggestion.value]
-                if suggestion.field in {"skills", "experience", "education", "languages"}
+                if suggestion.field in {"target_roles", "skills", "experience", "education", "languages"}
                 else suggestion.value
             )
             CandidateProfileUpdate.model_validate({suggestion.field: value})
@@ -134,6 +141,10 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
     try:
         output = ai_usage.bounded_call(lambda: provider.suggest(source), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
         suggestions, partial = validate_output(output, source)
+        suggestions.extend({
+            "id": f"not-found:{field}", "field": field, "status": "not_found",
+            "value": None, "evidence": [],
+        } for field in output.not_found)
         record.status = "ready"
         record.suggestions = suggestions
         record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
@@ -180,7 +191,10 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
     profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == record.owner_id).with_for_update())
     if profile_revision(profile) != record.profile_revision:
         raise SuggestionError(409, "The profile changed. Refresh and review the suggestions again.")
-    offered = {item["id"] for item in (record.suggestions or [])}
+    offered = {
+        item["id"] for item in (record.suggestions or [])
+        if item.get("status") != "not_found"
+    }
     if any(item.id not in offered for item in selections):
         raise SuggestionError(422, "A selected suggestion is not part of this suggestion set.")
     valid, partial = validate_output(ProviderSuggestionOutput(suggestions=selections), record.source_text)
@@ -193,7 +207,7 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
     applied: list[dict] = []
     for item in valid:
         field, value = item["field"], item["value"]
-        if field in {"headline", "location"}:
+        if field in {"headline", "location", "remote_preference", "work_authorization", "salary_preference"}:
             current[field] = value
         else:
             values = current.get(field) or []
@@ -217,7 +231,7 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
             "value": item["value"],
             "evidence": item["evidence"],
         }
-        if item["field"] in {"skills", "experience", "education", "languages"}:
+        if item["field"] in {"target_roles", "skills", "experience", "education", "languages"}:
             existing_provenance = provenance.get(item["field"])
             entries = existing_provenance if isinstance(existing_provenance, list) else []
             provenance[item["field"]] = [*entries, entry]

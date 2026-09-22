@@ -14,10 +14,18 @@ from app.schemas.profile import (
     LOCATION_MAX_LENGTH,
     LanguageEntry,
     ExperienceEntry,
+    REMOTE_PREFERENCES,
+    ROLE_MAX_LENGTH,
+    SalaryPreference,
     SKILL_MAX_LENGTH,
+    WORK_AUTHORIZATIONS,
 )
 
-SuggestionField = Literal["headline", "location", "skills", "experience", "education", "languages"]
+SuggestionField = Literal[
+    "headline", "location", "target_roles", "skills", "experience", "education",
+    "languages", "remote_preference", "work_authorization", "salary_preference",
+]
+ALL_SUGGESTION_FIELDS = frozenset(SuggestionField.__args__)
 
 
 class Evidence(BaseModel):
@@ -41,6 +49,11 @@ class LocationSuggestion(_SuggestionShape):
     value: str = Field(min_length=1, max_length=LOCATION_MAX_LENGTH)
 
 
+class TargetRoleSuggestion(_SuggestionShape):
+    field: Literal["target_roles"]
+    value: str = Field(min_length=1, max_length=ROLE_MAX_LENGTH)
+
+
 class SkillsSuggestion(_SuggestionShape):
     field: Literal["skills"]
     value: str = Field(min_length=1, max_length=SKILL_MAX_LENGTH)
@@ -61,6 +74,21 @@ class LanguageSuggestion(_SuggestionShape):
     value: LanguageEntry
 
 
+class RemotePreferenceSuggestion(_SuggestionShape):
+    field: Literal["remote_preference"]
+    value: REMOTE_PREFERENCES
+
+
+class WorkAuthorizationSuggestion(_SuggestionShape):
+    field: Literal["work_authorization"]
+    value: WORK_AUTHORIZATIONS
+
+
+class SalaryPreferenceSuggestion(_SuggestionShape):
+    field: Literal["salary_preference"]
+    value: SalaryPreference
+
+
 # Untagged union on purpose: pydantic emits ``anyOf`` in the provider JSON
 # schema (the SDK's strict converter and compatible Responses endpoints handle
 # ``anyOf``, not ``oneOf``/``discriminator``). The disjoint ``field`` literals
@@ -69,10 +97,14 @@ class LanguageSuggestion(_SuggestionShape):
 ProfileSuggestion = Union[
     HeadlineSuggestion,
     LocationSuggestion,
+    TargetRoleSuggestion,
     SkillsSuggestion,
     ExperienceSuggestion,
     EducationSuggestion,
     LanguageSuggestion,
+    RemotePreferenceSuggestion,
+    WorkAuthorizationSuggestion,
+    SalaryPreferenceSuggestion,
 ]
 
 
@@ -120,7 +152,7 @@ def _compact_wire_schema(schema):
     # String value fields retain maxLength (provider guidance for bounded
     # content); minLength is local-parse only (keeps the wire schema smaller
     # while never weakening the application contract).
-    for branch in ("HeadlineSuggestion", "LocationSuggestion", "SkillsSuggestion"):
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion"):
         val = (compacted.get("$defs", {}).get(branch, {})
                .get("properties", {}).get("value"))
         if isinstance(val, dict):
@@ -146,6 +178,7 @@ class ProviderSuggestionOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     suggestions: list[ProfileSuggestion] = Field(max_length=50)
+    not_found: list[SuggestionField] = Field(default_factory=list, max_length=len(ALL_SUGGESTION_FIELDS))
     partial: bool = False
     message: str | None = Field(default=None, max_length=500)
 
@@ -172,9 +205,23 @@ class ProviderExperienceSuggestion(_SuggestionShape):
 
 class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
     suggestions: list[Union[
-        HeadlineSuggestion, LocationSuggestion, SkillsSuggestion,
+        HeadlineSuggestion, LocationSuggestion, TargetRoleSuggestion, SkillsSuggestion,
         ProviderExperienceSuggestion, EducationSuggestion, LanguageSuggestion,
+        RemotePreferenceSuggestion, WorkAuthorizationSuggestion, SalaryPreferenceSuggestion,
     ]] = Field(max_length=50)
+    not_found: list[SuggestionField] = Field(max_length=len(ALL_SUGGESTION_FIELDS))
+
+    @model_validator(mode="after")
+    def account_for_every_profile_field(self):
+        suggested = {item.field for item in self.suggestions}
+        absent = set(self.not_found)
+        if len(absent) != len(self.not_found):
+            raise ValueError("not_found fields must be unique")
+        if suggested & absent:
+            raise ValueError("a field cannot be suggested and not_found")
+        if suggested | absent != ALL_SUGGESTION_FIELDS:
+            raise ValueError("every profile field must be suggested or not_found")
+        return self
 
     def to_domain(self) -> ProviderSuggestionOutput:
         return ProviderSuggestionOutput(
@@ -184,7 +231,7 @@ class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
                 if isinstance(item, ProviderExperienceSuggestion) else item
                 for item in self.suggestions
             ],
-            partial=self.partial, message=self.message,
+            not_found=self.not_found, partial=self.partial, message=self.message,
         )
 
     @classmethod
@@ -229,10 +276,32 @@ def _groq_profile_schema(schema):
     return visit(schema)
 
 
-class GroqProfileOutput(ProviderWireSuggestionOutput):
+class GroqProfileOutput(BaseModel):
     """Groq profile wire contract: absent required keys cannot become defaults."""
+    model_config = ConfigDict(extra="forbid")
+    suggestions: list[Union[
+        HeadlineSuggestion, LocationSuggestion, SkillsSuggestion,
+        ProviderExperienceSuggestion, EducationSuggestion, LanguageSuggestion,
+    ]] = Field(max_length=50)
+    # Accepted only for shared offline domain fixtures, then removed from this
+    # provider's serialized schema to preserve its evaluated 8k-TPM contract.
+    not_found: list[SuggestionField] = Field(default_factory=list, exclude=True)
     partial: bool
     message: str | None = Field(max_length=500)
+
+    def to_domain(self) -> ProviderSuggestionOutput:
+        return ProviderSuggestionOutput(
+            suggestions=[
+                ExperienceSuggestion(id=item.id, field=item.field,
+                                     value=item.value.to_domain(), evidence=item.evidence)
+                if isinstance(item, ProviderExperienceSuggestion) else item
+                for item in self.suggestions
+            ],
+            not_found=(self.not_found or sorted(
+                ALL_SUGGESTION_FIELDS - {item.field for item in self.suggestions}
+            )),
+            partial=self.partial, message=self.message,
+        )
 
     @model_validator(mode="after")
     def require_all_wire_fields(self):
@@ -241,6 +310,8 @@ class GroqProfileOutput(ProviderWireSuggestionOutput):
         def visit(value, path=()):
             if isinstance(value, BaseModel):
                 for name in type(value).model_fields:
+                    if isinstance(value, GroqProfileOutput) and name == "not_found":
+                        continue
                     if name not in value.model_fields_set:
                         errors.append({"type": "missing", "loc": path + (name,), "input": None})
                     else:
@@ -255,7 +326,10 @@ class GroqProfileOutput(ProviderWireSuggestionOutput):
 
     @classmethod
     def model_json_schema(cls, *args, **kwargs):
-        return _groq_profile_schema(super().model_json_schema(*args, **kwargs))
+        schema = super().model_json_schema(*args, **kwargs)
+        schema["properties"].pop("not_found", None)
+        schema["required"] = [name for name in schema.get("required", []) if name != "not_found"]
+        return _groq_profile_schema(_compact_wire_schema(schema))
 
 
 class SuggestionSetResponse(BaseModel):

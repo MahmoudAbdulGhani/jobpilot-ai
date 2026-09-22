@@ -281,6 +281,55 @@ describe('ResumesView', () => {
     expect(await screen.findByText(/Selected profile changes applied/)).not.toBeNull();
   });
 
+  it('renders and applies every supported category while keeping absent languages unselected', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    await screen.findByText(/confirmed CV text will leave JobPilot/);
+
+    const suggestions = [
+      { id: 'headline-1', field: 'headline', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Full-Stack Software Engineer' }] },
+      { id: 'location-1', field: 'location', value: 'Tripoli, Lebanon', evidence: [{ quote: 'Tripoli, Lebanon' }] },
+      { id: 'role-1', field: 'target_roles', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Target role: Full-Stack Software Engineer' }] },
+      { id: 'skill-1', field: 'skills', value: 'Python', evidence: [{ quote: 'Skills: Python' }] },
+      { id: 'experience-1', field: 'experience', value: { title: 'Engineer', organization: 'Cedar Labs', period: '2022-2025', notes: null }, evidence: [{ quote: 'Engineer at Cedar Labs, 2022-2025' }] },
+      { id: 'education-1', field: 'education', value: { school: 'Lebanese University', degree: 'BSc', field: 'Computer Science', period: '2022' }, evidence: [{ quote: 'BSc Computer Science, Lebanese University, 2022' }] },
+      { id: 'remote-1', field: 'remote_preference', value: 'remote', evidence: [{ quote: 'Remote preference: remote' }] },
+      { id: 'authorization-1', field: 'work_authorization', value: 'citizen', evidence: [{ quote: 'Work authorization: citizen' }] },
+      { id: 'salary-1', field: 'salary_preference', value: { currency: 'USD', min: 70000, max: 90000 }, evidence: [{ quote: 'Salary preference: USD 70000 to 90000' }] },
+      { id: 'not-found-languages', field: 'languages', status: 'not_found', value: null, evidence: [] },
+    ];
+    apiMock.mockResolvedValueOnce({
+      id: 'set-all', resume_id: pdfResume.id, status: 'ready', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, applied_at: null, suggestions,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
+
+    for (const field of ['headline', 'location', 'target_roles', 'skills', 'experience', 'education', 'remote_preference', 'work_authorization', 'salary_preference']) {
+      expect(await screen.findByLabelText(`Proposed ${field}`)).not.toBeNull();
+    }
+    expect(screen.getByText('languages')).not.toBeNull();
+    expect(screen.getByText('Not found in the confirmed CV.')).not.toBeNull();
+    expect(screen.queryByLabelText('Proposed languages')).toBeNull();
+
+    apiMock.mockResolvedValueOnce({
+      id: 'set-all', resume_id: pdfResume.id, status: 'applied', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected changes' }));
+    await screen.findByText(/Selected profile changes applied/);
+    const lastCall = apiMock.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const init = lastCall![1] as RequestInit;
+    const applied = JSON.parse(init.body as string).selections;
+    expect(applied.map((item: { field: string }) => item.field)).not.toContain('languages');
+    expect(applied.find((item: { field: string }) => item.field === 'skills').value).toBe('Python');
+    expect(applied.find((item: { field: string }) => item.field === 'target_roles').value).toBe('Full-Stack Software Engineer');
+    expect(applied.find((item: { field: string }) => item.field === 'remote_preference').value).toBe('remote');
+    expect(applied.find((item: { field: string }) => item.field === 'salary_preference').value).toEqual({ currency: 'USD', min: 70000, max: 90000 });
+  });
+
   it.each([
     'AI data-use consent is required. Review Privacy settings before continuing.',
     'The AI provider is currently unavailable. Try again later.',
