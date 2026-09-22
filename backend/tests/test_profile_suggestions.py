@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -250,6 +251,158 @@ def test_profile_provider_null_parsed_output_maps_to_structured_output_invalid()
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def _strict_value(bucket, payload):
+    """A wire value carrying all seven required-nullable buckets, with exactly
+    one filled; the strict OpenAI schema demands every key be present."""
+    return {"text": None, "experience": None, "education": None, "language": None,
+            "remote_preference": None, "work_authorization": None, "salary": None} | {
+        bucket: payload}
+
+
+def _ten_category_wire_suggestions():
+    return [
+        {"id": "headline-1", "field": "headline", "value": _strict_value("text", "Backend engineer"),
+         "evidence": [{"quote": "Backend engineer"}]},
+        {"id": "location-1", "field": "location", "value": _strict_value("text", "Beirut, Lebanon"),
+         "evidence": [{"quote": "Location: Beirut, Lebanon"}]},
+        {"id": "role-1", "field": "target_roles", "value": _strict_value("text", "Backend engineer"),
+         "evidence": [{"quote": "Target role: Backend engineer"}]},
+        {"id": "skill-1", "field": "skills", "value": _strict_value("text", "Python, PostgreSQL"),
+         "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
+        {"id": "exp-1", "field": "experience",
+         "value": _strict_value("experience", {"job_title": "Engineer", "organization": "Cedar Demo",
+                                               "period": "2021-2024", "notes": "Core platform"}),
+         "evidence": [{"quote": "Engineer at Cedar Demo"}]},
+        {"id": "edu-1", "field": "education",
+         "value": _strict_value("education", {"school": "Example University", "degree": "BSc",
+                                              "field": "Computer Science", "period": "2020"}),
+         "evidence": [{"quote": "BSc Computer Science at Example University"}]},
+        {"id": "lang-1", "field": "languages",
+         "value": _strict_value("language", {"name": "French", "proficiency": "professional"}),
+         "evidence": [{"quote": "Fluent French"}]},
+        {"id": "remote-1", "field": "remote_preference",
+         "value": _strict_value("remote_preference", "remote"),
+         "evidence": [{"quote": "Remote preference: remote"}]},
+        {"id": "auth-1", "field": "work_authorization",
+         "value": _strict_value("work_authorization", "citizen"),
+         "evidence": [{"quote": "Work authorization: citizen"}]},
+        {"id": "sal-1", "field": "salary_preference",
+         "value": _strict_value("salary", {"currency": "USD", "min": 70000, "max": 90000}),
+         "evidence": [{"quote": "Salary: USD 70000 to 90000"}]},
+    ]
+
+
+def _strict_wire_output(suggestions):
+    present = {item["field"] for item in suggestions}
+    return {"suggestions": suggestions,
+            "not_found": sorted(ALL_SUGGESTION_FIELDS - present),
+            "partial": True, "message": None}
+
+
+def test_profile_provider_accepts_valid_parse_under_noncompleted_status():
+    """The exact failing production shape: a gpt-5-mini length-limited response
+    is labeled 'incomplete' while still carrying a complete, schema-conforming
+    parsed object. The structured output must be accepted, not discarded."""
+    parsed = _strict_wire_output(_ten_category_wire_suggestions())
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=parsed)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    output = provider.suggest("private CV text")
+    assert [item.field for item in output.suggestions] == [
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference"]
+    assert output.not_found == []
+
+
+def test_profile_provider_salvages_a_valid_json_object_from_output_text():
+    """Deterministic fallback: when the response carries no parsed output but
+    its message text is a JSON object, that candidate is revalidated through
+    the full wire contract before being accepted."""
+    parsed = _strict_wire_output([{
+        "id": "headline-1", "field": "headline", "value": _strict_value("text", "Backend engineer"),
+        "evidence": [{"quote": "Backend engineer"}]}])
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None,
+                                               output_text=json.dumps(parsed))))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    output = provider.suggest("private CV text")
+    assert [item.field for item in output.suggestions] == ["headline"]
+    assert output.suggestions[0].value == "Backend engineer"
+
+
+@pytest.mark.parametrize("output_text", [
+    "not-json", "[1, 2]", "12", "",
+])
+def test_profile_provider_rejects_unparsed_output_text_that_is_not_a_json_object(output_text):
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None,
+                                               output_text=output_text)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def _transport_response(body):
+    return {
+        "id": "resp_1", "object": "response", "created_at": 0,
+        "status": "incomplete", "incomplete_details": {"reason": "length"},
+        "output": [{"id": "msg_1", "type": "message", "status": "incomplete",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": body,
+                                 "annotations": []}]}],
+    }
+
+
+def _openai_client(handler_fn):
+    transport = httpx.MockTransport(handler_fn)
+    return openai.OpenAI(
+        api_key="x", http_client=httpx.Client(transport=transport), max_retries=0,
+    )
+
+
+def test_openai_end_to_end_accepts_incomplete_status_with_complete_strict_json():
+    """End-to-end reproduction of the production failure shape and one valid
+    ten-category response through a real openai client: the SDK parses the
+    complete strict JSON even under an 'incomplete'/length finish, and the
+    provider accepts it."""
+    body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        client=_openai_client(lambda request: httpx.Response(200, json=_transport_response(body), request=request)),
+    )
+    output = provider.suggest("private CV text")
+    assert [item.field for item in output.suggestions] == [
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference"]
+    assert output.not_found == []
+    assert output.suggestions[4].value.title == "Engineer"
+    assert output.suggestions[5].value.school == "Example University"
+    assert output.suggestions[6].value.name == "French"
+    assert output.suggestions[9].value.min == 70000
+
+
+def test_openai_end_to_end_incomplete_status_with_truncated_json_is_structured_output_invalid():
+    body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))[:100]
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        client=_openai_client(lambda request: httpx.Response(200, json=_transport_response(body), request=request)),
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+    assert body not in str(caught.value)
 
 
 def test_profile_provider_envelope_parse_failure_maps_to_structured_output_invalid():

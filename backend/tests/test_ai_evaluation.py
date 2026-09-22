@@ -142,7 +142,7 @@ def fake_client(mode="success"):
                   _wire_profile_output(output) if task == "profile"
                   else output.model_dump())
         return SimpleNamespace(status="incomplete" if mode == "incomplete" else "completed",
-            output_parsed=None if mode == "refusal" else parsed,
+            output_parsed=None if mode in {"refusal", "incomplete"} else parsed,
             model="resolved-synthetic-model",
             usage=None if mode == "unknown_usage" else SimpleNamespace(
                 input_tokens=32001 if mode == "over_limit" else 100,

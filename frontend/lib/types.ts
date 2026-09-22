@@ -40,7 +40,7 @@ export type ProfileSuggestion = {
 export type ProfileSuggestionSet = {
   id: string; resume_id: string; status: 'generating'|'ready'|'failed'|'applied';
   suggestions: ProfileSuggestion[] | null; provider: string; model: string;
-  outcome_message: string | null; applied_at: string | null;
+  outcome_message: string | null; failure_field: string | null; applied_at: string | null;
 };
 export type JobFitRequirement = {
   id: string; text: string; job_quote: string;

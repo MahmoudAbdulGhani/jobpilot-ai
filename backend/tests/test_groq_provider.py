@@ -124,6 +124,11 @@ def test_actual_sdk_wire_contract_and_failures(task, mode):
                    "text": expected.model_dump_json(), "annotations": []}
         if mode == "malformed":
             content["text"] = '{"unexpected": true}'
+        if mode == "incomplete":
+            # A length-limited stop that cut the JSON mid-string is a genuine
+            # failure; a complete JSON body under "incomplete" is accepted by
+            # the provider (covered by test_profile_suggestions.py).
+            content["text"] = '{"sug'
         if mode == "refusal":
             content = {"type": "refusal", "refusal": "Cannot comply"}
         return httpx.Response(200, json={"id": "resp-test", "object": "response", "created_at": 0,

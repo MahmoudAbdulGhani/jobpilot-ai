@@ -225,7 +225,7 @@ export function ResumesView() {
         <DeleteResumeDialog resume={deleteTarget} onClose={() => setDeleteTarget(null)} onDelete={deleteResume} />
       )}
       {reviewTarget && (
-        <ExtractionDialog resume={reviewTarget} onClose={() => setReviewTarget(null)} />
+        <ExtractionDialog key={reviewTarget.id} resume={reviewTarget} onClose={() => setReviewTarget(null)} />
       )}
     </div>
   );
@@ -242,7 +242,8 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
   const [suggestionDrafts, setSuggestionDrafts] = useState<Record<string, string>>({});
   const [aiError, setAiError] = useState('');
 
-  function adoptSuggestions(result: ProfileSuggestionSet) {
+function adoptSuggestions(result: ProfileSuggestionSet) {
+    if (result.resume_id !== resume.id) return;
     setSuggestionSet(result);
     const suggestions = result.suggestions || [];
     const proposed = suggestions.filter(item => item.status !== 'not_found');
@@ -251,6 +252,14 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
       item.id,
       typeof item.value === 'string' ? item.value : JSON.stringify(item.value, null, 2),
     ])));
+  }
+
+  async function refreshLatest() {
+    try {
+      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`));
+    } catch {
+      // Keep whatever is already displayed; the reported error stays primary.
+    }
   }
 
   async function loadLatest() {
@@ -323,6 +332,7 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
       adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' }));
     } catch (cause) {
       setAiError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
+      await refreshLatest();
     } finally {
       setPending(false);
     }
@@ -406,7 +416,7 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
                     {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
                   </article>
                 ))}
-                {suggestionSet?.outcome_message && <p className="muted">{suggestionSet.outcome_message}</p>}
+                {suggestionSet?.outcome_message && <p className="muted">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
                 {suggestionSet?.status === 'ready' && <button className="primary-button" disabled={pending || selected.size === 0} onClick={() => void applySuggestions()}>{pending ? 'Applying…' : 'Apply selected changes'}</button>}
                 {suggestionSet?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Selected profile changes applied.</p>}
                 {aiError && <p className="form-error" role="alert">{aiError}</p>}

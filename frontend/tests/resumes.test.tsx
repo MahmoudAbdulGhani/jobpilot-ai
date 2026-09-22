@@ -267,15 +267,15 @@ describe('ResumesView', () => {
     expect(await screen.findByRole('button', { name: 'Generating…' })).not.toBeNull();
     expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}`, { method: 'POST' });
 
-    resolveGeneration({
-      id: 'set-1', resume_id: pdfResume.id, status: 'ready', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: null,
+resolveGeneration({
+      id: 'set-1', resume_id: pdfResume.id, status: 'ready', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, failure_field: null, applied_at: null,
       suggestions: [{ id: 'headline-1', field: 'headline', value: 'Ada Lovelace', evidence: [{ quote: 'Ada Lovelace' }] }],
     });
     const proposed = await screen.findByLabelText('Proposed headline');
     expect((proposed as HTMLTextAreaElement).value).toBe('Ada Lovelace');
     fireEvent.change(proposed, { target: { value: 'Computing pioneer' } });
     apiMock.mockResolvedValueOnce({
-      id: 'set-1', resume_id: pdfResume.id, status: 'applied', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
+      id: 'set-1', resume_id: pdfResume.id, status: 'applied', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, failure_field: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply selected changes' }));
     expect(await screen.findByText(/Selected profile changes applied/)).not.toBeNull();
@@ -302,8 +302,8 @@ describe('ResumesView', () => {
       { id: 'salary-1', field: 'salary_preference', value: { currency: 'USD', min: 70000, max: 90000 }, evidence: [{ quote: 'Salary preference: USD 70000 to 90000' }] },
       { id: 'not-found-languages', field: 'languages', status: 'not_found', value: null, evidence: [] },
     ];
-    apiMock.mockResolvedValueOnce({
-      id: 'set-all', resume_id: pdfResume.id, status: 'ready', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, applied_at: null, suggestions,
+apiMock.mockResolvedValueOnce({
+      id: 'set-all', resume_id: pdfResume.id, status: 'ready', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, failure_field: null, applied_at: null, suggestions,
     });
     fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
 
@@ -314,8 +314,8 @@ describe('ResumesView', () => {
     expect(screen.getByText('Not found in the confirmed CV.')).not.toBeNull();
     expect(screen.queryByLabelText('Proposed languages')).toBeNull();
 
-    apiMock.mockResolvedValueOnce({
-      id: 'set-all', resume_id: pdfResume.id, status: 'applied', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
+apiMock.mockResolvedValueOnce({
+      id: 'set-all', resume_id: pdfResume.id, status: 'applied', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, failure_field: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply selected changes' }));
     await screen.findByText(/Selected profile changes applied/);
@@ -345,9 +345,50 @@ describe('ResumesView', () => {
     apiMock.mockRejectedValueOnce(new Error(message));
     fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
 
-    expect((await screen.findByRole('alert')).textContent).toBe(message);
+expect((await screen.findByRole('alert')).textContent).toBe(message);
     const retry = screen.getByRole('button', { name: 'Suggest profile details with AI' });
     expect(retry.hasAttribute('disabled')).toBe(false);
-    expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}`, { method: 'POST' });
+    expect(apiMock).toHaveBeenCalledWith(`/profile-suggestions/resumes/${pdfResume.id}`, { method: 'POST' });
+    expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}/latest`);
+  });
+
+  it('shows the exact outcome_message and failure_field from the latest failed record', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    await screen.findByText(/confirmed CV text will leave JobPilot/);
+
+    apiMock.mockRejectedValueOnce(new Error('AI data-use consent is required.'));
+    apiMock.mockResolvedValueOnce({
+      id: 'set-fail', resume_id: pdfResume.id, status: 'failed', provider: 'openai', model: 'gpt-5-mini',
+      outcome_message: 'invalid_field_value', failure_field: 'experience', applied_at: null, suggestions: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('AI data-use consent is required.');
+    expect(await screen.findByText(/invalid_field_value · experience/)).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry suggestions' })).not.toBeNull();
+  });
+
+  it('ignores a suggestion record that belongs to another resume', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    await screen.findByText(/confirmed CV text will leave JobPilot/);
+
+    apiMock.mockResolvedValueOnce({
+      id: 'other-set', resume_id: 'another-resume-id', status: 'failed', provider: 'openai', model: 'gpt-5-mini',
+      outcome_message: 'structured_output_invalid', failure_field: null, applied_at: null, suggestions: null,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
+
+    expect(await screen.findByRole('button', { name: 'Suggest profile details with AI' })).not.toBeNull();
+    expect(screen.queryByText('structured_output_invalid')).toBeNull();
   });
 });

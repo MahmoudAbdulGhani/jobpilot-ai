@@ -260,6 +260,25 @@ def _profile_failure(category, error, parsed):
     return ProviderFailure(category, field=_profile_failure_field(error, parsed))
 
 
+def _salvage_output_text(response) -> dict | None:
+    """Return a JSON-object candidate from a response with no parsed output.
+
+    A provider can label a response incomplete (for example a gpt-5-mini
+    output-token length finish) while still returning a complete structured
+    JSON object in its message text. This helper only converts that text into
+    a candidate; the caller always revalidates the object against the local
+    wire and domain contracts before anything is returned.
+    """
+    raw = getattr(response, "output_text", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 class SuggestionProvider(Protocol):
     name: str
     model: str
@@ -440,11 +459,16 @@ class OpenAIResponsesProvider:
                 text_format=self.profile_output_model,
                 **self._profile_request_options(),
             )
-            if getattr(response, "status", None) != "completed":
-                # Non-completed responses under strict structured output mean the
-                # provider could not return schema-conforming content.
-                raise ProviderFailure("structured_output_invalid")
-            parsed = response.output_parsed
+            # Structured-output acceptance is deterministic: a response can
+            # legally carry a non-``completed`` status (for example a gpt-5-mini
+            # length-limited finish) while still containing a complete,
+            # schema-conforming JSON object. A missing parsed output falls back
+            # to the message text only when it is a JSON object, and every
+            # candidate is revalidated against the wire and domain contracts
+            # below before anything is accepted.
+            parsed = getattr(response, "output_parsed", None)
+            if parsed is None:
+                parsed = _salvage_output_text(response)
             if parsed is None:
                 raise ProviderFailure("structured_output_invalid")
             try:
