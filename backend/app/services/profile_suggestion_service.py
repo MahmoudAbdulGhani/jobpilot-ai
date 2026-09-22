@@ -20,6 +20,19 @@ from app.services.ai_provider import (
 )
 
 
+_CONTACT_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE)
+_CONTACT_PHONE = re.compile(
+    r"(?:\+\d[\d\s().-]{5,})"
+    r"|(?:\b\d{2,4}[\s.-]\d{2,4}[\s.-]\d{3,4}\b)"
+    r"|(?:\b\d{9,10}\b)"
+)
+
+
+def _is_contact_details(value: str) -> bool:
+    """A location suggestion may never contain phone or email contact data."""
+    return bool(_CONTACT_EMAIL.search(value) or _CONTACT_PHONE.search(value))
+
+
 class SuggestionError(Exception):
     def __init__(self, status_code: int, message: str):
         self.status_code = status_code
@@ -76,6 +89,9 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
             if not re.search(rf"\b{proficiency}\b", normalize(" ".join(quotes))):
                 partial = True
                 continue
+        if suggestion.field == "location" and _is_contact_details(str(suggestion.value)):
+            partial = True
+            continue
         if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
                 or not supported_claim(value_text(suggestion.value), quotes,
                                        single_passage=suggestion.field in {"experience", "education"})):

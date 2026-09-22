@@ -303,6 +303,76 @@ def test_language_requires_explicit_proficiency_evidence():
     assert profile_suggestion_service.validate_output(output, "Languages: Arabic") == ([], True)
 
 
+@pytest.mark.parametrize("value", [
+    "Tripoli, Lebanon | +961 76 364 340 | Mahmoud.Abdulghani@outlook.com",
+    "Tripoli, Lebanon | Mahmoud.Abdulghani@outlook.com",
+    "Tripoli, Lebanon | +961 76 364 340",
+    "Beirut 076364340",
+])
+def test_location_suggestion_rejects_phone_and_email_contact_details(value):
+    source = f"Location: {value}"
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [{
+        "id": "location-1", "field": "location", "value": value,
+        "evidence": [{"quote": source}],
+    }]})
+    assert profile_suggestion_service.validate_output(output, source) == ([], True)
+
+
+def test_plain_city_country_location_is_still_accepted():
+    source = "Location: Tripoli, Lebanon"
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [{
+        "id": "location-1", "field": "location", "value": "Tripoli, Lebanon",
+        "evidence": [{"quote": source}],
+    }]})
+    accepted, partial = profile_suggestion_service.validate_output(output, source)
+    assert partial is False
+    assert accepted == [{
+        "id": "location-1", "field": "location", "value": "Tripoli, Lebanon",
+        "evidence": [{"quote": source}],
+    }]
+
+
+def test_contact_block_location_is_never_offered_as_profile_location(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    source = "\n".join([
+        "Full-Stack Software Engineer",
+        "Tripoli, Lebanon | +961 76 364 340 | Mahmoud.Abdulghani@outlook.com",
+    ])
+    resume_id = confirmed_resume(suggestion_client, owner, source)
+    output = ProviderSuggestionOutput.model_validate({
+        "suggestions": [{
+            "id": "location-1", "field": "location",
+            "value": "Tripoli, Lebanon | +961 76 364 340 | Mahmoud.Abdulghani@outlook.com",
+            "evidence": [{"quote": "Tripoli, Lebanon | +961 76 364 340 | Mahmoud.Abdulghani@outlook.com"}],
+        }],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {"location"}),
+    })
+
+    class SyntheticProvider:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, text):
+            assert all(line in text for line in source.splitlines())
+            return output
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: SyntheticProvider())
+    generated = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    assert generated.status_code == 200
+    body = generated.json()
+    assert body["status"] == "ready"
+    assert body["outcome_message"] == "Some unsupported suggestions were removed."
+    body_fields = {item["field"] for item in body["suggestions"]}
+    assert "location" not in body_fields
+    assert body_fields == ALL_SUGGESTION_FIELDS - {"location"}
+
+
 def test_valid_experience_object_parses_and_applies_to_profile():
     """Minimal mocked reproduction: a valid experience suggestion parses and
     the value round-trips into CandidateProfileUpdate (the downstream apply
