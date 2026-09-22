@@ -1,6 +1,6 @@
 """Typed, tool-free AI provider boundary for explicit user-requested tasks."""
 import json
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -16,8 +16,73 @@ QA_PROMPT_VERSION = "qa-answer-v1"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
+ProviderFailureCategory = Literal[
+    "authentication", "billing", "rate_limit", "model_unavailable",
+    "invalid_request", "timeout", "provider_unavailable", "unknown",
+]
+SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
+    "authentication", "billing", "rate_limit", "model_unavailable",
+    "invalid_request", "timeout", "provider_unavailable", "unknown",
+})
+
+
 class ProviderFailure(Exception):
-    pass
+    def __init__(self, message: str = "unknown", *, category: str | None = None):
+        candidate = category or message
+        self.category = cast(
+            ProviderFailureCategory,
+            candidate if candidate in SAFE_PROVIDER_FAILURE_CATEGORIES else "unknown",
+        )
+        super().__init__(message)
+
+
+def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
+    """Reduce an SDK failure to a non-sensitive, stable category.
+
+    Only SDK exception type, HTTP status, and documented machine error codes
+    participate. Exception messages and response bodies are never returned.
+    """
+    from openai import APIConnectionError, APIStatusError, APITimeoutError
+
+    if isinstance(error, (APITimeoutError, TimeoutError)):
+        return "timeout"
+    if isinstance(error, APIStatusError):
+        body = getattr(error, "body", None)
+        machine_values = {
+            value.casefold() for key in ("code", "type")
+            if isinstance(body, dict) and isinstance((value := body.get(key)), str)
+        }
+        if machine_values & {
+            "billing_hard_limit_reached", "billing_not_active",
+            "insufficient_quota", "usage_limit_reached",
+        }:
+            return "billing"
+        if machine_values & {"model_not_found", "model_not_available", "unsupported_model"}:
+            return "model_unavailable"
+        if machine_values & {
+            "authentication_error", "incorrect_api_key", "invalid_api_key",
+            "organization_deactivated", "project_deactivated",
+        }:
+            return "authentication"
+        status = error.status_code
+        if status in {401, 403}:
+            return "authentication"
+        if status == 402:
+            return "billing"
+        if status == 404:
+            return "model_unavailable"
+        if status == 408:
+            return "timeout"
+        if status == 429:
+            return "rate_limit"
+        if status in {400, 409, 422}:
+            return "invalid_request"
+        if status >= 500:
+            return "provider_unavailable"
+        return "unknown"
+    if isinstance(error, APIConnectionError):
+        return "provider_unavailable"
+    return "unknown"
 
 
 class SuggestionProvider(Protocol):
@@ -186,20 +251,20 @@ class OpenAIResponsesProvider:
                 **self._profile_request_options(),
             )
             if getattr(response, "status", None) != "completed":
-                raise ProviderFailure("The AI response was incomplete.")
+                raise ProviderFailure("unknown")
             parsed = response.output_parsed
             if parsed is None:
-                raise ProviderFailure("The AI provider refused or returned no structured result.")
+                raise ProviderFailure("unknown")
             try:
                 return self.profile_output_model.model_validate(parsed).to_domain()
             except ValidationError as error:
-                raise ProviderFailure(
-                    "The AI provider returned structured content outside the agreed schema."
-                ) from error
+                # The offline evaluator records only this cause's class name;
+                # production persists ProviderFailure.category, never details.
+                raise ProviderFailure("unknown") from error
         except ProviderFailure:
             raise
         except Exception as error:
-            raise ProviderFailure("The AI provider is currently unavailable. Try again later.") from error
+            raise ProviderFailure(classify_provider_failure(error)) from None
 
     def analyze(self, job_description: str, facts: list[CandidateFact]) -> ProviderJobFitOutput:
         payload = {"job_description": job_description, "candidate_facts": [fact.model_dump() for fact in facts]}

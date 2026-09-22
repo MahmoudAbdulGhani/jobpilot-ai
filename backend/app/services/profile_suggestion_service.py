@@ -139,10 +139,10 @@ def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings:
         record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
     except ProviderFailure as error:
         record.status = "failed"
-        record.outcome_message = str(error)
+        record.outcome_message = error.category
     except Exception:
         record.status = "failed"
-        record.outcome_message = "Provider request failed; no automatic retry."
+        record.outcome_message = "unknown"
     ai_usage.release(session, owner_id, token)
     session.commit()
     session.refresh(record)

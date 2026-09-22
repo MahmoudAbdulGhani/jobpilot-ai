@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -8,7 +10,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import create_application
-from app.models import CandidateProfile, User
+from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, UsageReservation, User
 from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProviderSuggestionOutput
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
@@ -136,12 +138,104 @@ def test_openai_adapter_uses_responses_structured_output_without_storage():
     from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
     assert captured["text_format"] is ProviderWireSuggestionOutput
     assert "synthetic CV" == captured["input"]
+    assert captured["model"] == "model"
+    assert captured["max_output_tokens"] == 100
+    assert "reasoning" not in captured
+
+
+def test_profile_provider_loads_openai_key_and_timeout(monkeypatch):
+    captured = {}
+
+    def client(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr("openai.OpenAI", client)
+    settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True,
+        "JOBPILOT_AI_TEST_PROVIDER": False,
+        "JOBPILOT_AI_PROVIDER": "openai",
+        "JOBPILOT_AI_MODEL": "gpt-5-mini",
+        "JOBPILOT_OPENAI_API_KEY": "synthetic-key",
+        "JOBPILOT_AI_TIMEOUT_SECONDS": 17,
+    })
+    provider = profile_suggestion_service.provider_for(settings)
+
+    assert provider.model == "gpt-5-mini"
+    assert provider.timeout == 17
+    assert captured == {"api_key": "synthetic-key", "timeout": 17, "max_retries": 0}
+
+
+def _status_error(status, code):
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(status, request=request)
+    return openai.APIStatusError(
+        "sensitive upstream detail", response=response, body={"code": code}
+    )
+
+
+@pytest.mark.parametrize(("upstream", "category"), [
+    (_status_error(401, "invalid_api_key"), "authentication"),
+    (_status_error(429, "insufficient_quota"), "billing"),
+    (_status_error(429, "rate_limit_exceeded"), "rate_limit"),
+    (_status_error(404, "model_not_found"), "model_unavailable"),
+    (_status_error(400, "invalid_request_error"), "invalid_request"),
+    (openai.APITimeoutError(httpx.Request("POST", "https://api.openai.com/v1/responses")), "timeout"),
+    (openai.APIConnectionError(request=httpx.Request("POST", "https://api.openai.com/v1/responses")), "provider_unavailable"),
+    (RuntimeError("sensitive unknown failure"), "unknown"),
+])
+def test_profile_provider_exposes_only_safe_failure_category(upstream, category):
+    def fail(**kwargs):
+        raise upstream
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert str(caught.value) == category
+    assert caught.value.category == category
+    assert "sensitive" not in str(caught.value)
 
 
 def test_openai_adapter_maps_incomplete_and_transport_errors():
     incomplete = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None)))
     with pytest.raises(ProviderFailure):
         OpenAIResponsesProvider(api_key="x", model="m", timeout=1, max_output_tokens=1, client=incomplete).suggest("cv")
+
+
+def test_profile_failure_releases_reservation_and_persists_only_category(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    resume_id = confirmed_resume(suggestion_client, owner)
+
+    class Broken:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure("authentication")
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Broken())
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["outcome_message"] == "authentication"
+    record = db_session.query(ProfileSuggestionSet).filter_by(owner_id=owner.id).one()
+    usage = db_session.get(AIUsage, owner.id)
+    reservation = db_session.query(UsageReservation).filter_by(owner_id=owner.id).one()
+    assert record.outcome_message == "authentication"
+    assert usage.active_token is None and usage.active_until is None
+    assert reservation.released_at is not None
 
 
 def test_invalid_and_unsupported_evidence_is_removed():

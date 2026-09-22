@@ -63,7 +63,7 @@ def bounded_call(operation, timeout):
         return future.result(timeout=timeout)
     except TimeoutError:
         future.cancel()
-        raise ProviderFailure("The AI request timed out. Retry with a new request.") from None
+        raise ProviderFailure("timeout") from None
     finally:
         # A late worker returns data only; it has no DB session or write callback.
         executor.shutdown(wait=False, cancel_futures=True)
