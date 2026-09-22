@@ -22,12 +22,18 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 ProviderFailureCategory = Literal[
     "authentication", "billing", "rate_limit", "model_unavailable",
     "invalid_request", "timeout", "provider_unavailable", "unknown",
-    "structured_output_invalid", "request_contract_invalid", "response_validation_failed",
+    "structured_output_invalid", "request_contract_invalid",
+    "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
+    "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
+    "invalid_preference_value", "response_contract_invalid",
 ]
 SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
     "authentication", "billing", "rate_limit", "model_unavailable",
     "invalid_request", "timeout", "provider_unavailable", "unknown",
-    "structured_output_invalid", "request_contract_invalid", "response_validation_failed",
+    "structured_output_invalid", "request_contract_invalid",
+    "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
+    "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
+    "invalid_preference_value", "response_contract_invalid",
 })
 
 
@@ -100,6 +106,89 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
         # the structured output did not match the request contract.
         return "structured_output_invalid"
     return "unknown"
+
+
+def _profile_validation_category(error: Exception) -> ProviderFailureCategory:
+    """Reduce a local profile response ValidationError to a safe category.
+
+    The provider's parsed response was schema-shaped but violated our local
+    wire/domain contract. Only error locations and types participate; the
+    error is already stripped of inputs, attributes, and URLs, and the
+    category is an immutable allowlisted label, so no CV text, quotes, enum
+    inputs, or exception text is ever observed or returned.
+    """
+    try:
+        details = error.errors(include_input=False, include_context=False, include_url=False)
+    except Exception:
+        return "unknown"
+    if not details:
+        return "unknown"
+
+    def trail(loc):
+        loc = tuple(loc)
+        if len(loc) >= 2 and loc[0] == "suggestions" and type(loc[1]) is int:
+            loc = loc[2:]
+        return loc
+
+    def classify_one(loc, kind):
+        loc = trail(loc)
+        if not loc:
+            if kind == "value_error":
+                return "response_contract_invalid"
+            return "unknown"
+        first = loc[0]
+        if first == "evidence":
+            return "invalid_evidence_reference"
+        if first == "field" and kind == "literal_error":
+            return "unsupported_claim"
+        if first in {"suggestions", "not_found", "partial", "message", "id"}:
+            return "response_contract_invalid"
+        if first == "value":
+            sub = loc[1] if len(loc) > 1 else None
+            if sub in {"remote_preference", "work_authorization"}:
+                return "invalid_preference_value"
+            if sub == "salary":
+                return "invalid_salary_shape"
+            if sub == "experience":
+                return "invalid_experience_shape"
+            if sub == "education":
+                return "invalid_education_shape"
+            if sub == "language":
+                return "invalid_field_value"
+            if sub == "text" or (sub is None and kind == "literal_error"):
+                return "invalid_field_value" if sub == "text" else "invalid_preference_value"
+            if sub is None:
+                return "invalid_field_value"
+        if first in {"ExperienceSuggestion", "ProviderExperienceSuggestion", "ProviderExperienceEntry"}:
+            return "invalid_experience_shape"
+        if first in {"EducationSuggestion"}:
+            return "invalid_education_shape"
+        if first == "SalaryPreferenceSuggestion":
+            return "invalid_salary_shape"
+        if first in {"RemotePreferenceSuggestion", "WorkAuthorizationSuggestion"}:
+            return "invalid_preference_value"
+        if first in {"HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion",
+                     "SkillsSuggestion", "LanguageSuggestion"}:
+            return "invalid_field_value"
+        return "unknown"
+
+    categories = [classify_one(detail.get("loc", ()), detail.get("type", "")) for detail in details]
+    for name in _PROFILE_VALIDATION_PRIORITY:
+        if name in categories:
+            return cast(ProviderFailureCategory, name)
+    return "unknown"
+
+
+_PROFILE_VALIDATION_PRIORITY = (
+    "invalid_evidence_reference",
+    "unsupported_claim",
+    "response_contract_invalid",
+    "invalid_preference_value",
+    "invalid_experience_shape",
+    "invalid_education_shape",
+    "invalid_salary_shape",
+    "invalid_field_value",
+)
 
 
 class SuggestionProvider(Protocol):
@@ -294,8 +383,9 @@ class OpenAIResponsesProvider:
             except ValidationError as error:
                 # The provider's parsed structure failed our local contract.
                 # The offline evaluator records only this cause's class name;
-                # production persists ProviderFailure.category, never details.
-                raise ProviderFailure("response_validation_failed") from error
+                # production persists ProviderFailure.category (an allowlisted
+                # label derived from error locations/types), never details.
+                raise ProviderFailure(_profile_validation_category(error)) from error
         except ProviderFailure:
             raise
         except Exception as error:

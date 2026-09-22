@@ -527,7 +527,7 @@ def test_invalid_claims_are_rejected_by_the_local_contract():
         ProviderWireSuggestionOutput.model_validate(complete_wire([invalid_remote]))
 
 
-def test_openai_provider_maps_out_of_contract_wire_content_to_response_validation_failed():
+def test_openai_provider_maps_out_of_contract_wire_content_to_invalid_field_value():
     from types import SimpleNamespace
 
     from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
@@ -540,5 +540,5 @@ def test_openai_provider_maps_out_of_contract_wire_content_to_response_validatio
     )
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
-    assert caught.value.category == "response_validation_failed" == str(caught.value)
+    assert caught.value.category == "invalid_field_value" == str(caught.value)
     assert "private CV text" not in str(caught.value)

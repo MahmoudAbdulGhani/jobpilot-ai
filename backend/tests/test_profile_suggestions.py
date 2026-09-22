@@ -208,12 +208,17 @@ def test_openai_adapter_maps_incomplete_and_transport_errors():
 
 
 def test_structured_contract_categories_are_allowlisted_safe_categories():
-    """The new diagnostic labels must be in the safe set, or every one of
-    them collapses back to the opaque 'unknown' bucket."""
+    """Every new diagnostic label must be in the safe set, or each one
+    collapses back to the opaque 'unknown' bucket."""
     from app.services.ai_provider import SAFE_PROVIDER_FAILURE_CATEGORIES
-    for name in ("structured_output_invalid", "request_contract_invalid", "response_validation_failed"):
+    names = (
+        "structured_output_invalid", "request_contract_invalid",
+        "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
+        "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
+        "invalid_preference_value", "response_contract_invalid",
+    )
+    for name in names:
         assert name in SAFE_PROVIDER_FAILURE_CATEGORIES
-    for name in ("structured_output_invalid", "request_contract_invalid", "response_validation_failed"):
         assert ProviderFailure(name).category == name
 
 
@@ -259,11 +264,11 @@ def test_profile_provider_envelope_parse_failure_maps_to_structured_output_inval
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
 
 
-def test_profile_provider_local_contract_violation_maps_to_response_validation_failed():
+def test_profile_provider_local_contract_violation_maps_to_invalid_field_value():
     """A flat-wire-validated payload that still violates the local domain
     contract (a headline above the 200-char bound but inside the 300-char
-    wire text bound) must fail as response_validation_failed, never as the
-    opaque 'unknown' category."""
+    wire text bound) must fail as invalid_field_value, never as the opaque
+    'unknown' category."""
     broken = {
         "suggestions": [{
             "id": "headline-1", "field": "headline",
@@ -280,8 +285,111 @@ def test_profile_provider_local_contract_violation_maps_to_response_validation_f
     )
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
-    assert caught.value.category == "response_validation_failed" == str(caught.value)
+    assert caught.value.category == "invalid_field_value" == str(caught.value)
     assert "private CV text" not in str(caught.value)
+
+
+def _wire(parsed):
+    return SimpleNamespace(status="completed", output_parsed=parsed)
+
+
+def _run_seeded_provider(parsed, source="private CV text"):
+    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: _wire(parsed)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest(source)
+    assert isinstance(caught.value.category, str)
+    return caught.value
+
+
+def _seeded(present=None, suggestion=None, exception=None, *, raw=None):
+    if raw is not None:
+        return raw
+    suggestion = suggestion or {
+        "id": "h-1", "field": "headline",
+        "value": {"text": "Synthetic headline"},
+        "evidence": [{"quote": "Synthetic evidence"}],
+    }
+    payload = {
+        "suggestions": [suggestion],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - ({suggestion["field"]} if present is None else present)),
+    }
+    if exception:
+        payload.update(exception)
+    return payload
+
+
+def _mutate(mutation_key):
+    if mutation_key == "invalid_field_value":
+        return _seeded(suggestion={
+            "id": "h-1", "field": "headline",
+            "value": {"text": "x" * 250},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "invalid_evidence_reference":
+        return _seeded(suggestion={
+            "id": "h-1", "field": "headline",
+            "value": {"text": "Synthetic headline"},
+            "evidence": [{"quote": "x" * 1001}]})
+    if mutation_key == "unsupported_claim":
+        return _seeded(suggestion={
+            "id": "p-1", "field": "publications",
+            "value": {"text": "Synthetic paper"},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "invalid_experience_shape":
+        return _seeded(suggestion={
+            "id": "e-1", "field": "experience",
+            "value": {"experience": {"organization": "Cedar Inc."}},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "invalid_education_shape":
+        return _seeded(suggestion={
+            "id": "ed-1", "field": "education",
+            "value": {"education": {"degree": "BSc"}},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "invalid_salary_shape":
+        return _seeded(suggestion={
+            "id": "s-1", "field": "salary_preference",
+            "value": {"salary": {"currency": "USD", "min": 90000, "max": 50000}},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "invalid_preference_value":
+        return _seeded(suggestion={
+            "id": "r-1", "field": "remote_preference",
+            "value": {"remote_preference": "onsite"},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "response_contract_invalid":
+        return _seeded(suggestion={
+            "id": "h-1", "field": "headline",
+            "value": {"text": "Synthetic headline", "salary": {"currency": "USD"}},
+            "evidence": [{"quote": "Synthetic evidence"}]})
+    if mutation_key == "unknown":
+        return [{
+            "id": "h-1", "field": "headline",
+            "value": {"text": "x"},
+            "evidence": [{"quote": "q"}]}]
+    raise AssertionError(mutation_key)
+
+
+@pytest.mark.parametrize("mutation_key, category", [
+    ("invalid_field_value", "invalid_field_value"),
+    ("invalid_evidence_reference", "invalid_evidence_reference"),
+    ("unsupported_claim", "unsupported_claim"),
+    ("invalid_experience_shape", "invalid_experience_shape"),
+    ("invalid_education_shape", "invalid_education_shape"),
+    ("invalid_salary_shape", "invalid_salary_shape"),
+    ("invalid_preference_value", "invalid_preference_value"),
+    ("response_contract_invalid", "response_contract_invalid"),
+    ("unknown", "unknown"),
+])
+def test_profile_provider_classifies_each_validation_failure_to_its_safe_category(mutation_key, category):
+    """Each local wire/domain rejection resolves to its exact diagnostic label,
+    and no provider input or exception text ever reaches the surface error."""
+    parsed = _mutate(mutation_key)
+    caught = _run_seeded_provider(parsed)
+    assert caught.category == category == str(caught)
+    assert "private CV text" not in str(caught)
+    assert "Synthetic" not in str(caught)
 
 
 @pytest.mark.parametrize("code", ["invalid_json_schema", "json_validate_failed", "schema_validation_failed"])
@@ -300,12 +408,18 @@ def test_profile_provider_schema_rejection_maps_to_request_contract_invalid(code
     assert "sensitive" not in str(caught.value)
 
 
-@pytest.mark.parametrize("category", ["structured_output_invalid", "request_contract_invalid", "response_validation_failed"])
-def test_new_profile_failure_categories_persist_only_safe_label(
+@pytest.mark.parametrize("category", [
+    "structured_output_invalid", "request_contract_invalid",
+    "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
+    "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
+    "invalid_preference_value", "response_contract_invalid",
+])
+def test_new_profile_failure_categories_persist_only_safe_label_and_release_reservation(
     category, suggestion_client, suggestion_users, db_session, monkeypatch
 ):
     """A provider raising any diagnostic category must land in the persisted
-    record as that exact safe label, never leaking details."""
+    record as that exact safe label (never leaking details) and the failed
+    reservation must be released."""
     owner, _ = suggestion_users
     grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
@@ -329,6 +443,10 @@ def test_new_profile_failure_categories_persist_only_safe_label(
     record = db_session.query(ProfileSuggestionSet).filter_by(owner_id=owner.id).one()
     assert record.status == "failed"
     assert record.outcome_message == category
+    usage = db_session.get(AIUsage, owner.id)
+    reservation = db_session.query(UsageReservation).filter_by(owner_id=owner.id).one()
+    assert usage.active_token is None and usage.active_until is None
+    assert reservation.released_at is not None
 
 
 def test_profile_failure_releases_reservation_and_persists_only_category(
