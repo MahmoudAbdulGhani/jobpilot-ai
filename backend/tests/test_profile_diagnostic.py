@@ -236,14 +236,10 @@ def test_other_ai_capabilities_do_not_get_profile_reasoning_or_schema(provider_n
             evaluation.dispatch(provider, task, cases()[0]["source"])
     assert len(calls) == 1 and "reasoning" not in calls[0]
     assert calls[0]["max_output_tokens"] == 1500
-    assert calls[0]["text"]["format"]["name"] != "GroqProfileOutput"
+    assert calls[0]["text"]["format"].get("name") != "GroqProfileOutput"
     if provider_name == "openai" and task == "profile":
-        schema = calls[0]["text"]["format"]["schema"]
-        assert schema["required"] == ["suggestions", "not_found", "partial", "message"]
-        assert set(schema["properties"]["not_found"]["items"]["enum"]) == {
-            "headline", "location", "target_roles", "skills", "experience", "education",
-            "languages", "remote_preference", "work_authorization", "salary_preference",
-        }
+        assert calls[0]["text"]["format"] == {"type": "json_object"}
+        assert "schema" not in calls[0]["text"]
 
 
 def test_schema_compression_never_merges_different_evidence_constraints():

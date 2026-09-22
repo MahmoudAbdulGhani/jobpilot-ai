@@ -134,15 +134,18 @@ def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_use
     assert suggestion_client.delete(f"/api/profile-suggestions/{body['id']}", headers=headers(owner)).status_code == 204
 
 
-def test_openai_adapter_uses_responses_structured_output_without_storage():
+def test_openai_adapter_requests_a_json_object_without_storage():
     captured = {}
     parsed = ProviderSuggestionOutput(suggestions=[], not_found=sorted(ALL_SUGGESTION_FIELDS))
-    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: captured.update(kwargs) or SimpleNamespace(status="completed", output_parsed=parsed.model_dump())))
+    wire = {"suggestions": [], "not_found": sorted(ALL_SUGGESTION_FIELDS),
+            "partial": False, "message": None}
+    client = SimpleNamespace(responses=SimpleNamespace(
+        create=lambda **kwargs: captured.update(kwargs) or SimpleNamespace(
+            status="completed", output_text=json.dumps(wire))))
     provider = OpenAIResponsesProvider(api_key="test", model="model", timeout=3, max_output_tokens=100, client=client)
     assert provider.suggest("synthetic CV") == parsed
     assert captured["store"] is False
-    from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
-    assert captured["text_format"] is ProviderWireSuggestionOutput
+    assert captured["text"] == {"format": {"type": "json_object"}}
     assert "synthetic CV" == captured["input"]
     assert captured["model"] == "model"
     assert captured["max_output_tokens"] == 100
@@ -194,7 +197,7 @@ def test_profile_provider_exposes_only_safe_failure_category(upstream, category)
     def fail(**kwargs):
         raise upstream
 
-    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    client = SimpleNamespace(responses=SimpleNamespace(create=fail))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -208,7 +211,7 @@ def test_profile_provider_exposes_only_safe_failure_category(upstream, category)
 
 
 def test_openai_adapter_maps_incomplete_and_transport_errors():
-    incomplete = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None)))
+    incomplete = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(status="incomplete", output_text=None)))
     with pytest.raises(ProviderFailure):
         OpenAIResponsesProvider(api_key="x", model="m", timeout=1, max_output_tokens=1, client=incomplete).suggest("cv")
 
@@ -231,7 +234,7 @@ def test_structured_contract_categories_are_allowlisted_safe_categories():
 @pytest.mark.parametrize("status", ["incomplete", "failed", "cancelled"])
 def test_profile_provider_noncompleted_status_maps_to_structured_output_invalid(status):
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status=status, output_parsed=None)))
+        create=lambda **kwargs: SimpleNamespace(status=status, output_text=None)))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -243,7 +246,7 @@ def test_profile_provider_noncompleted_status_maps_to_structured_output_invalid(
 
 def test_profile_provider_null_parsed_output_maps_to_structured_output_invalid():
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status="completed", output_parsed=None)))
+        create=lambda **kwargs: SimpleNamespace(status="completed", output_text=None)))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -302,13 +305,14 @@ def _strict_wire_output(suggestions):
             "partial": True, "message": None}
 
 
-def test_profile_provider_accepts_valid_parse_under_noncompleted_status():
-    """The exact failing production shape: a gpt-5-mini length-limited response
-    is labeled 'incomplete' while still carrying a complete, schema-conforming
-    parsed object. The structured output must be accepted, not discarded."""
+def test_profile_provider_accepts_valid_json_object_under_noncompleted_status():
+    """The production shape that motivated plain-JSON parsing: a gpt-5-mini
+    length-limited response is labeled 'incomplete' while still carrying a
+    complete JSON object in its message text. The output must be decoded,
+    wire-validated, and accepted, not discarded."""
     parsed = _strict_wire_output(_ten_category_wire_suggestions())
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=parsed)))
+        create=lambda **kwargs: SimpleNamespace(status="incomplete", output_text=json.dumps(parsed))))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -320,16 +324,14 @@ def test_profile_provider_accepts_valid_parse_under_noncompleted_status():
     assert output.not_found == []
 
 
-def test_profile_provider_salvages_a_valid_json_object_from_output_text():
-    """Deterministic fallback: when the response carries no parsed output but
-    its message text is a JSON object, that candidate is revalidated through
-    the full wire contract before being accepted."""
+def test_profile_provider_accepts_a_valid_json_object_from_output_text():
+    """The json_object flow reads the provider's message text, decodes it, and
+    revalidates the candidate through the full wire contract before accepting."""
     parsed = _strict_wire_output([{
         "id": "headline-1", "field": "headline", "value": _strict_value("text", "Backend engineer"),
         "evidence": [{"quote": "Backend engineer"}]}])
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None,
-                                               output_text=json.dumps(parsed))))
+        create=lambda **kwargs: SimpleNamespace(status="completed", output_text=json.dumps(parsed))))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -344,8 +346,7 @@ def test_profile_provider_salvages_a_valid_json_object_from_output_text():
 ])
 def test_profile_provider_rejects_unparsed_output_text_that_is_not_a_json_object(output_text):
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status="incomplete", output_parsed=None,
-                                               output_text=output_text)))
+        create=lambda **kwargs: SimpleNamespace(status="completed", output_text=output_text)))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -353,6 +354,110 @@ def test_profile_provider_rejects_unparsed_output_text_that_is_not_a_json_object
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def _json_object_response(payload, status="completed"):
+    return SimpleNamespace(status=status, output_text=json.dumps(payload))
+
+
+def _json_flow_provider(payload, status="completed"):
+    client = SimpleNamespace(responses=SimpleNamespace(
+        create=lambda **kwargs: _json_object_response(payload, status)))
+    return OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+
+
+def test_profile_provider_accepts_a_valid_ten_category_json_object():
+    """The full deterministic flow: responses.create output_text is decoded and
+    validated through ProviderWireSuggestionOutput and the domain conversion."""
+    output = _json_flow_provider(_strict_wire_output(_ten_category_wire_suggestions())).suggest("private CV text")
+    assert [item.field for item in output.suggestions] == [
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference"]
+    assert output.not_found == []
+    assert output.partial is True
+    assert output.suggestions[4].value.title == "Engineer"
+    assert output.suggestions[3].value == ["Python", "PostgreSQL"]
+
+
+def test_profile_provider_truncated_json_object_maps_to_structured_output_invalid():
+    body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))[:100]
+    client = SimpleNamespace(responses=SimpleNamespace(
+        create=lambda **kwargs: SimpleNamespace(status="completed", output_text=body)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+    assert body not in str(caught.value)
+
+
+def test_profile_provider_invalid_skills_value_maps_to_invalid_field_value_on_skills():
+    payload = _strict_wire_output([{
+        "id": "skill-1", "field": "skills",
+        "value": _strict_value("skills", "Python, PostgreSQL"),
+        "evidence": [{"quote": "Skills: Python, PostgreSQL"}]}])
+    with pytest.raises(ProviderFailure) as caught:
+        _json_flow_provider(payload).suggest("private CV text")
+    assert caught.value.category == "invalid_field_value" == str(caught.value)
+    assert caught.value.field == "skills"
+    assert "private CV text" not in str(caught.value)
+
+
+def test_profile_provider_invalid_evidence_maps_to_invalid_evidence_reference():
+    payload = {"suggestions": [{
+        "id": "headline-1", "field": "headline",
+        "value": _strict_value("text", "Synthetic headline"),
+        "evidence": "Synthetic evidence"}],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {"headline"}),
+        "partial": True, "message": None}
+    with pytest.raises(ProviderFailure) as caught:
+        _json_flow_provider(payload).suggest("private CV text")
+    assert caught.value.category == "invalid_evidence_reference" == str(caught.value)
+    assert "Synthetic" not in str(caught.value)
+
+
+def test_profile_provider_unaccounted_fields_map_to_response_contract_invalid():
+    payload = {"suggestions": [{
+        "id": "headline-1", "field": "headline",
+        "value": _strict_value("text", "Backend engineer"),
+        "evidence": [{"quote": "Backend engineer"}]}],
+        "not_found": [], "partial": True, "message": None}
+    with pytest.raises(ProviderFailure) as caught:
+        _json_flow_provider(payload).suggest("private CV text")
+    assert caught.value.category == "response_contract_invalid" == str(caught.value)
+    assert "private CV text" not in str(caught.value)
+
+
+def test_profile_provider_missing_not_found_key_maps_to_response_contract_invalid():
+    payload = {"suggestions": [{
+        "id": "headline-1", "field": "headline",
+        "value": _strict_value("text", "Backend engineer"),
+        "evidence": [{"quote": "Backend engineer"}]}],
+        "partial": True, "message": None}
+    with pytest.raises(ProviderFailure) as caught:
+        _json_flow_provider(payload).suggest("private CV text")
+    assert caught.value.category == "response_contract_invalid" == str(caught.value)
+
+
+def test_profile_provider_never_leaks_raw_response_body_or_cv_data():
+    payload = _strict_wire_output([{
+        "id": "headline-1", "field": "headline",
+        "value": _strict_value("text", "x" * 250),
+        "evidence": [{"quote": "Synthetic evidence"}]}])
+    raw_body = json.dumps(payload)
+    with pytest.raises(ProviderFailure) as caught:
+        _json_flow_provider(payload).suggest("private CV text")
+    assert caught.value.category == "invalid_field_value" == str(caught.value)
+    assert caught.value.field == "headline"
+    assert str(caught.value) == "invalid_field_value"
+    assert "private CV text" not in str(caught.value)
+    assert raw_body not in str(caught.value)
+    assert "Synthetic evidence" not in str(caught.value)
 
 
 def _transport_response(body):
@@ -373,11 +478,11 @@ def _openai_client(handler_fn):
     )
 
 
-def test_openai_end_to_end_accepts_incomplete_status_with_complete_strict_json():
-    """End-to-end reproduction of the production failure shape and one valid
-    ten-category response through a real openai client: the SDK parses the
-    complete strict JSON even under an 'incomplete'/length finish, and the
-    provider accepts it."""
+def test_openai_end_to_end_accepts_incomplete_status_with_complete_json_object():
+    """End-to-end reproduction of the production shape and one valid
+    ten-category response through a real openai client: the SDK returns the
+    complete JSON object in the message text even under an 'incomplete'/length
+    finish, and the provider decodes and accepts it."""
     body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))
     provider = OpenAIResponsesProvider(
         api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
@@ -413,7 +518,7 @@ def test_profile_provider_envelope_parse_failure_maps_to_structured_output_inval
     def fail(**kwargs):
         raise upstream
 
-    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    client = SimpleNamespace(responses=SimpleNamespace(create=fail))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -436,15 +541,14 @@ def _captured_wire_validation():
     openai.LengthFinishReasonError(completion=SimpleNamespace(usage=None)),
     openai.ContentFilterFinishReasonError(),
 ])
-def test_profile_provider_escaping_sdk_parse_failures_map_to_structured_output_invalid(upstream):
-    """A pydantic ValidationError escaping the SDK's own responses.parse
-    structured-output validation — plus the SDK's dedicated finish-reason
-    classes — must surface as structured_output_invalid, never 'unknown',
-    with no provider text leaking through."""
+def test_profile_provider_escaping_sdk_failures_map_to_structured_output_invalid(upstream):
+    """A pydantic ValidationError or the SDK's dedicated finish-reason classes
+    escaping responses.create must surface as structured_output_invalid, never
+    'unknown', with no provider text leaking through."""
     def fail(**kwargs):
         raise upstream
 
-    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    client = SimpleNamespace(responses=SimpleNamespace(create=fail))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -456,11 +560,11 @@ def test_profile_provider_escaping_sdk_parse_failures_map_to_structured_output_i
     assert "private CV text" not in str(caught.value)
 
 
-def test_profile_provider_reproduces_production_sdk_parse_unknown_path():
+def test_profile_provider_reproduces_production_plain_json_unknown_path():
     """Regression for the observed production 'outcome_message=unknown': a
-    real openai client whose responses.parse JSON cannot be validated by the
-    SDK's internal text_format parse (non-conforming provider output) raised a
-    raw pydantic ValidationError that was previously classified unknown."""
+    real openai client whose responses.create message text is not a JSON
+    object must resolve to the safe structured_output_invalid category, never
+    'unknown', and the raw text must never leak to the surface error."""
     raw = {
         "id": "resp_1", "object": "response", "created_at": 0,
         "status": "completed",
@@ -502,7 +606,7 @@ def test_profile_provider_local_contract_violation_maps_to_invalid_field_value()
         "not_found": sorted(ALL_SUGGESTION_FIELDS - {"headline"}),
     }
     client = SimpleNamespace(responses=SimpleNamespace(
-        parse=lambda **kwargs: SimpleNamespace(status="completed", output_parsed=broken)))
+        create=lambda **kwargs: SimpleNamespace(status="completed", output_text=json.dumps(broken))))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -515,11 +619,11 @@ def test_profile_provider_local_contract_violation_maps_to_invalid_field_value()
 
 
 def _wire(parsed):
-    return SimpleNamespace(status="completed", output_parsed=parsed)
+    return SimpleNamespace(status="completed", output_text=json.dumps(parsed))
 
 
 def _run_seeded_provider(parsed, source="private CV text"):
-    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: _wire(parsed)))
+    client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: _wire(parsed)))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,
@@ -589,10 +693,11 @@ def _mutate(mutation_key):
             "value": {"text": "Synthetic headline", "salary": {"currency": "USD"}},
             "evidence": [{"quote": "Synthetic evidence"}]})
     if mutation_key == "unknown":
-        return [{
+        return _seeded(suggestion={
             "id": "h-1", "field": "headline",
             "value": {"text": "x"},
-            "evidence": [{"quote": "q"}]}]
+            "garbage": "y",
+            "evidence": [{"quote": "q"}]})
     raise AssertionError(mutation_key)
 
 
@@ -684,7 +789,7 @@ def test_profile_provider_schema_rejection_maps_to_request_contract_invalid(code
     def fail(**kwargs):
         raise _status_error(400, code)
 
-    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    client = SimpleNamespace(responses=SimpleNamespace(create=fail))
     provider = OpenAIResponsesProvider(
         api_key="synthetic-key", model="gpt-5-mini", timeout=30,
         max_output_tokens=4000, client=client,

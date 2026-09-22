@@ -63,10 +63,10 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
     assert output.suggestions[0].value.title == "Engineer"
     assert "job_title" not in output.model_dump()["suggestions"][0]["value"]
     assert len(captured) == 1
-    assert captured[0]["strict"] is True
+    assert captured[0] == {"type": "json_object"}
     local = ProviderSuggestionOutput.model_json_schema()
     compact = ProviderWireSuggestionOutput.model_json_schema()
-    wire = captured[0]["schema"]
+    wire = compact
     local_entry = local["$defs"]["ExperienceEntry"]
     assert "title" in local_entry["required"]
     assert "job_title" not in local_entry["properties"]
@@ -535,8 +535,8 @@ def test_openai_provider_maps_out_of_contract_wire_content_to_invalid_field_valu
 
     from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
     payload = complete_wire([wire_suggestion("headline", {"text": "x" * 250})])
-    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(
-        status="completed", output_parsed=payload)))
+    client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+        status="completed", output_text=json.dumps(payload))))
     provider = OpenAIResponsesProvider(
         api_key="unused", model="synthetic", timeout=3,
         max_output_tokens=1500, client=client,

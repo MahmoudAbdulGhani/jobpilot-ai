@@ -127,6 +127,37 @@ def fake_client(mode="success"):
     captured = []
     synthetic = DeterministicTestProvider()
 
+    def _dispatch_output(**kwargs):
+        index = len(captured) - 1
+        case = cases()[index // 3]
+        task = list(evaluation.TASKS)[index % 3]
+        output = evaluation.dispatch(synthetic, task, case["source"])
+        if mode == "invalid_evidence" and task == "profile":
+            output.suggestions[0].evidence[0].quote = "not in CV"
+        return task, output
+
+    def create(**kwargs):
+        captured.append(kwargs)
+        assert kwargs["store"] is False and "tools" not in kwargs
+        assert kwargs["max_output_tokens"] == 4000
+        assert kwargs["service_tier"] == "default"
+        if mode == "exception":
+            raise RuntimeError("secret-test-value")
+        task, output = _dispatch_output(**kwargs)
+        if mode == "malformed":
+            text = "{}"
+        elif mode == "refusal":
+            text = ""
+        elif mode == "incomplete":
+            text = json.dumps(_wire_profile_output(output))[:80]
+        else:
+            text = json.dumps(_wire_profile_output(output))
+        return SimpleNamespace(status="incomplete" if mode == "incomplete" else "completed",
+            output_text=text, model="resolved-synthetic-model",
+            usage=None if mode == "unknown_usage" else SimpleNamespace(
+                input_tokens=32001 if mode == "over_limit" else 100,
+                output_tokens=50, output_tokens_details=SimpleNamespace(reasoning_tokens=10)))
+
     def parse(**kwargs):
         captured.append(kwargs)
         assert kwargs["store"] is False and "tools" not in kwargs
@@ -134,12 +165,7 @@ def fake_client(mode="success"):
         assert kwargs["service_tier"] == "default"
         if mode == "exception":
             raise RuntimeError("secret-test-value")
-        index = len(captured) - 1
-        case = cases()[index // 3]
-        task = list(evaluation.TASKS)[index % 3]
-        output = evaluation.dispatch(synthetic, task, case["source"])
-        if mode == "invalid_evidence" and task == "profile":
-            output.suggestions[0].evidence[0].quote = "not in CV"
+        task, output = _dispatch_output(**kwargs)
         parsed = ({} if mode == "malformed" else
                   _wire_profile_output(output) if task == "profile"
                   else output.model_dump())
@@ -149,7 +175,7 @@ def fake_client(mode="success"):
             usage=None if mode == "unknown_usage" else SimpleNamespace(
                 input_tokens=32001 if mode == "over_limit" else 100,
                 output_tokens=50, output_tokens_details=SimpleNamespace(reasoning_tokens=10)))
-    return SimpleNamespace(responses=SimpleNamespace(parse=parse)), captured
+    return SimpleNamespace(responses=SimpleNamespace(parse=parse, create=create)), captured
 
 
 @pytest.mark.parametrize("mode", ["success", "exception", "incomplete", "refusal", "malformed", "unknown_usage", "invalid_evidence", "over_limit"])

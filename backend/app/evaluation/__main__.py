@@ -327,13 +327,19 @@ class Meter:
         self.last = {}
 
     def parse(self, **kwargs):
+        return self._run("parse", **kwargs)
+
+    def create(self, **kwargs):
+        return self._run("create", **kwargs)
+
+    def _run(self, method, **kwargs):
         if self.calls >= self.max_requests:
             raise ProviderFailure("Evaluation request budget exhausted")
         self.calls += 1  # Failures consume the allowance too; never retry.
         self.last = {
             "provider_status": "unknown", "status_code": None, "usage": None}
         try:
-            response = self.client.responses.parse(
+            response = getattr(self.client.responses, method)(
                 **kwargs, service_tier="default")
         except Exception as error:
             # Record only bounded, typed tags (exception class, numeric status
