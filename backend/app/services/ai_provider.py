@@ -1,6 +1,6 @@
 """Typed, tool-free AI provider boundary for explicit user-requested tasks."""
 import json
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -38,16 +38,136 @@ SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
 # Closed set of field identifiers that may accompany an invalid_field_value
 # failure. Field labels are schema constants, never generated values.
 SAFE_PROFILE_FAILURE_FIELDS = frozenset((*SuggestionField.__args__, "unknown"))
+SAFE_RESPONSE_STATUSES = frozenset({
+    "completed", "failed", "in_progress", "queued", "incomplete", "cancelled",
+})
+SAFE_FINISH_REASONS = frozenset({
+    "stop", "length", "max_output_tokens", "content_filter", "tool_calls",
+})
+SAFE_OUTPUT_SHAPES = frozenset({"empty", "object", "array", "scalar", "malformed_json"})
+SAFE_PARSER_ERROR_CATEGORIES = frozenset({
+    "empty_output_text", "malformed_json", "json_not_object", "validation_error",
+    "response_envelope_invalid", "finish_reason", "api_error",
+})
+SAFE_VALIDATION_LOCATION_PARTS = frozenset({
+    "suggestions", "not_found", "partial", "message", "id", "field", "evidence",
+    "value", "text", "skills", "experience", "education", "language",
+    "remote_preference", "work_authorization", "salary", "headline", "location",
+    "target_roles", "quote", "job_title", "organization", "period", "notes",
+    "school", "degree", "name", "proficiency", "currency", "min", "max",
+})
+
+
+def _safe_response_status(value) -> str | int | None:
+    if type(value) is int and 100 <= value <= 599:
+        return value
+    if isinstance(value, str):
+        return value if value in SAFE_RESPONSE_STATUSES else ("unknown" if value else None)
+    return "unknown" if value is not None else None
+
+
+def _safe_finish_reason(value) -> str | None:
+    if isinstance(value, str):
+        return value if value in SAFE_FINISH_REASONS else ("unknown" if value else None)
+    return "unknown" if value is not None else None
+
+
+def _safe_validation_entries(entries) -> list[dict[str, object]]:
+    safe = []
+    if not isinstance(entries, list):
+        return safe
+    for detail in entries[:50]:
+        if not isinstance(detail, dict):
+            continue
+        location = []
+        raw_location = detail.get("location", ())
+        if isinstance(raw_location, (list, tuple)):
+            for part in raw_location:
+                if type(part) is int and 0 <= part <= 10000:
+                    location.append(part)
+                elif isinstance(part, str) and part in SAFE_VALIDATION_LOCATION_PARTS:
+                    location.append(part)
+                else:
+                    location.append("unknown")
+        kind = detail.get("type")
+        safe.append({
+            "location": location,
+            "type": kind if isinstance(kind, str) and len(kind) <= 64 else "unknown",
+        })
+    return safe
+
+
+def _safe_validation_errors(error: Exception) -> list[dict[str, object]]:
+    try:
+        details = error.errors(include_input=False, include_context=False, include_url=False)
+    except Exception:
+        return []
+    safe = []
+    for detail in details[:50]:
+        safe.append({"location": detail.get("loc", ()), "type": detail.get("type")})
+    return _safe_validation_entries(safe)
+
+
+def _diagnostic(*, response=None, output_shape=None, parser_error_category=None,
+                validation_error=None, status=None, finish_reason=None) -> dict[str, object]:
+    if response is not None:
+        status = getattr(response, "status", None)
+        incomplete = getattr(response, "incomplete_details", None)
+        finish_reason = getattr(incomplete, "reason", None) if incomplete is not None else None
+    result: dict[str, object] = {
+        "status": _safe_response_status(status),
+        "finish_reason": _safe_finish_reason(finish_reason),
+        "output_shape": output_shape if isinstance(output_shape, str) and output_shape in SAFE_OUTPUT_SHAPES else None,
+        "parser_error_category": parser_error_category,
+        "validation_errors": _safe_validation_errors(validation_error) if validation_error else [],
+    }
+    if parser_error_category not in SAFE_PARSER_ERROR_CATEGORIES:
+        result["parser_error_category"] = "unknown" if parser_error_category is not None else None
+    return result
+
+
+def _sanitize_diagnostic(value) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return _diagnostic(
+        status=value.get("status"),
+        finish_reason=value.get("finish_reason"),
+        output_shape=value.get("output_shape"),
+        parser_error_category=value.get("parser_error_category"),
+    ) | {"validation_errors": _safe_validation_entries(value.get("validation_errors"))}
+
+
+def _exception_diagnostic(error: Exception) -> dict[str, object] | None:
+    from openai import (
+        APIResponseValidationError, APIStatusError, ContentFilterFinishReasonError,
+        LengthFinishReasonError,
+    )
+    if isinstance(error, APIStatusError):
+        return _diagnostic(
+            status=error.status_code,
+            parser_error_category="api_error",
+        )
+    if isinstance(error, APIResponseValidationError):
+        return _diagnostic(parser_error_category="response_envelope_invalid")
+    if isinstance(error, LengthFinishReasonError):
+        return _diagnostic(finish_reason="max_output_tokens", parser_error_category="finish_reason")
+    if isinstance(error, ContentFilterFinishReasonError):
+        return _diagnostic(finish_reason="content_filter", parser_error_category="finish_reason")
+    if isinstance(error, ValidationError):
+        return _diagnostic(parser_error_category="validation_error", validation_error=error)
+    return None
 
 
 class ProviderFailure(Exception):
-    def __init__(self, message: str = "unknown", *, category: str | None = None, field: str | None = None):
+    def __init__(self, message: str = "unknown", *, category: str | None = None,
+                 field: str | None = None, diagnostic: dict[str, object] | None = None):
         candidate = category or message
         self.category = cast(
             ProviderFailureCategory,
             candidate if candidate in SAFE_PROVIDER_FAILURE_CATEGORIES else "unknown",
         )
         self.field = field if field in SAFE_PROFILE_FAILURE_FIELDS else None
+        self.diagnostic = _sanitize_diagnostic(diagnostic)
         super().__init__(message)
 
 
@@ -255,11 +375,30 @@ def _profile_failure_field(error: Exception, parsed) -> str:
     return "unknown"
 
 
-def _profile_failure(category, error, parsed):
+def _profile_failure(category, error, parsed, *, diagnostic=None):
     """Build a ProviderFailure with a safe field only for invalid_field_value."""
     if category != "invalid_field_value":
-        return ProviderFailure(category)
-    return ProviderFailure(category, field=_profile_failure_field(error, parsed))
+        return ProviderFailure(category, diagnostic=diagnostic)
+    return ProviderFailure(category, field=_profile_failure_field(error, parsed), diagnostic=diagnostic)
+
+
+def _response_json_candidate(response) -> tuple[dict | None, dict[str, object]]:
+    """Classify output text without retaining any provider-generated content."""
+    base = {"response": response}
+    raw = getattr(response, "output_text", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None, _diagnostic(**base, output_shape="empty", parser_error_category="empty_output_text")
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None, _diagnostic(**base, output_shape="malformed_json", parser_error_category="malformed_json")
+    if isinstance(value, dict):
+        return value, _diagnostic(**base, output_shape="object")
+    if isinstance(value, list):
+        shape = "array"
+    else:
+        shape = "scalar"
+    return None, _diagnostic(**base, output_shape=shape, parser_error_category="json_not_object")
 
 
 def _response_json_object(response) -> dict | None:
@@ -273,14 +412,7 @@ def _response_json_object(response) -> dict | None:
     returned. A None result surfaces as structured_output_invalid with no
     provider text returned.
     """
-    raw = getattr(response, "output_text", None)
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        value = json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
+    return _response_json_candidate(response)[0]
 
 
 class SuggestionProvider(Protocol):
@@ -492,9 +624,9 @@ class OpenAIResponsesProvider:
                 text=self._profile_text_config(),
                 **self._profile_request_options(),
             )
-            parsed = _response_json_object(response)
+            parsed, output_diagnostic = _response_json_candidate(response)
             if parsed is None:
-                raise ProviderFailure("structured_output_invalid")
+                raise ProviderFailure("structured_output_invalid", diagnostic=output_diagnostic)
             try:
                 parsed_wire = self.profile_output_model.model_validate(parsed)
             except ValidationError as error:
@@ -505,6 +637,7 @@ class OpenAIResponsesProvider:
                 # never details.
                 raise _profile_failure(
                     _profile_validation_category(error), error, parsed,
+                    diagnostic=_diagnostic(response=response, output_shape="object", validation_error=error),
                 ) from error
             try:
                 return parsed_wire.to_domain()
@@ -513,11 +646,14 @@ class OpenAIResponsesProvider:
                 # rejected a value (e.g. a field length bound).
                 raise _profile_failure(
                     _profile_validation_category(error), error, parsed_wire,
+                    diagnostic=_diagnostic(response=response, output_shape="object", validation_error=error),
                 ) from error
         except ProviderFailure:
             raise
         except Exception as error:
-            raise ProviderFailure(classify_provider_failure(error)) from None
+            raise ProviderFailure(
+                classify_provider_failure(error), diagnostic=_exception_diagnostic(error),
+            ) from None
 
     def _suggest_via_structured_output(self, source_text: str) -> ProviderSuggestionOutput:
         """Legacy Compatibility: the evaluated Groq strict structured-output

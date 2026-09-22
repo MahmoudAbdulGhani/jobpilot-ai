@@ -520,6 +520,7 @@ class SuggestionSetResponse(BaseModel):
     prompt_version: str
     outcome_message: str | None
     failure_field: str | None = None
+    failure_diagnostic: dict[str, Any] | None = None
     applied_at: datetime | None
     apply_result: dict[str, Any] | None
     created_at: datetime

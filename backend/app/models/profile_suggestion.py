@@ -35,6 +35,7 @@ class ProfileSuggestionSet(Base, TimestampMixin):
     prompt_version: Mapped[str] = mapped_column(String(32))
     outcome_message: Mapped[str | None] = mapped_column(String(500))
     failure_field: Mapped[str | None] = mapped_column(String(32))
+    failure_diagnostic: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     applied_selection_hash: Mapped[str | None] = mapped_column(String(64))
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     apply_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
