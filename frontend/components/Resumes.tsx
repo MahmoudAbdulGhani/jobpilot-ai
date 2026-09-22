@@ -343,7 +343,7 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
     setPending(true);
     setAiError('');
     try {
-      const stringFields = new Set(['headline', 'location', 'target_roles', 'skills', 'remote_preference', 'work_authorization']);
+      const stringFields = new Set(['headline', 'location', 'target_roles', 'remote_preference', 'work_authorization']);
       const selections = (suggestionSet.suggestions || []).filter(item => item.status !== 'not_found' && selected.has(item.id)).map(item => ({
         ...item,
         value: stringFields.has(item.field)

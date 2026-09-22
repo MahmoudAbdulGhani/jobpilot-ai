@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.evaluation import __main__ as evaluation
 from app.evaluation.fixtures import cases
+from app.schemas.profile_suggestions import ALL_SUGGESTION_FIELDS, GroqProfileOutput
 from app.services.ai_provider import DeterministicTestProvider, GroqResponsesProvider, ProviderFailure
 from app.services.profile_suggestion_service import provider_configuration, provider_for, SuggestionError
 
@@ -43,6 +44,32 @@ def test_config_defaults_and_secret_serialization():
     assert "synthetic-secret" not in config.model_dump_json()
     with pytest.raises(ValidationError):
         settings(JOBPILOT_AI_PROVIDER="unknown")
+
+
+def test_groq_shared_skills_domain_keeps_groqs_string_wire_contract():
+    """The shared OpenAI skills fix must not leak into Groq's wire contract:
+    Groq still accepts a single bounded string and the domain conversion wraps
+    it into the list the shared service applies, preserving Groq behavior."""
+    payload = GroqProfileOutput.model_validate({
+        "suggestions": [{
+            "id": "skill-1", "field": "skills", "value": "Python, PostgreSQL",
+            "evidence": [{"quote": "Skills: Python, PostgreSQL"}]}],
+        "partial": False, "message": None,
+    })
+    domain = payload.to_domain()
+    assert domain.suggestions[0].field == "skills"
+    assert domain.suggestions[0].value == ["Python, PostgreSQL"]
+    assert domain.not_found == sorted(ALL_SUGGESTION_FIELDS - {"skills"})
+
+
+def test_groq_shared_skills_domain_still_rejects_oversized_or_list_entries():
+    for value in ("x" * 101, ["Python"]):
+        with pytest.raises(ValidationError):
+            GroqProfileOutput.model_validate({
+                "suggestions": [{"id": "skill-1", "field": "skills",
+                                 "value": value, "evidence": [{"quote": "Skills: Python"}]}],
+                "partial": False, "message": None,
+            })
 
 
 def test_root_env_mechanism_with_synthetic_file(tmp_path):

@@ -1,8 +1,16 @@
+import re
 import uuid
 from datetime import datetime
-from typing import Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from app.schemas.profile import (
     ENTRY_TITLE_MAX_LENGTH,
@@ -14,9 +22,11 @@ from app.schemas.profile import (
     LOCATION_MAX_LENGTH,
     LanguageEntry,
     ExperienceEntry,
+    MAX_SKILLS,
     REMOTE_PREFERENCES,
     ROLE_MAX_LENGTH,
     SalaryPreference,
+    SKILL_GROUP_MAX_LENGTH,
     SKILL_MAX_LENGTH,
     WORK_AUTHORIZATIONS,
 )
@@ -55,6 +65,15 @@ class TargetRoleSuggestion(_SuggestionShape):
 
 
 class SkillsSuggestion(_SuggestionShape):
+    field: Literal["skills"]
+    value: list[Annotated[str, StringConstraints(min_length=1, max_length=SKILL_MAX_LENGTH)]] = Field(max_length=MAX_SKILLS)
+
+
+class GroqSkillsSuggestion(_SuggestionShape):
+    """Groq's wire skills contract stays an individual bounded string so the
+    shared OpenAI skills fix never changes Groq's serialized schema or request
+    budget; the domain conversion wraps it into the list the service applies."""
+
     field: Literal["skills"]
     value: str = Field(min_length=1, max_length=SKILL_MAX_LENGTH)
 
@@ -152,7 +171,8 @@ def _compact_wire_schema(schema):
     # String value fields retain maxLength (provider guidance for bounded
     # content); minLength is local-parse only (keeps the wire schema smaller
     # while never weakening the application contract).
-    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion"):
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion",
+                   "GroqSkillsSuggestion"):
         val = (compacted.get("$defs", {}).get(branch, {})
                .get("properties", {}).get("value"))
         if isinstance(val, dict):
@@ -203,9 +223,54 @@ class ProviderExperienceSuggestion(_SuggestionShape):
     value: ProviderExperienceEntry
 
 
-_WIRE_TEXT_FIELDS = frozenset({"headline", "location", "target_roles", "skills"})
+_SKILL_SEPARATORS = re.compile(r"[,;•·|]+")
+
+
+def _normalize_skills(entries: list[str]) -> list[str]:
+    """Deterministically normalize CV skills into the profile representation.
+
+    Profile skills are an ordered ``list[str]`` with each entry bounded at
+    ``SKILL_MAX_LENGTH`` and at most ``MAX_SKILLS`` entries. The provider may
+    emit an array of individual skills or grouped strings; comma-,
+    semicolon-, or bullet-separated groups split into individual entries.
+    Pieces still over the bound split at the last whitespace within it so no
+    characters are lost. Entries are deduplicated case-insensitively (first
+    occurrence wins) and capped at ``MAX_SKILLS``, matching
+    ``CandidateProfileUpdate``.
+    """
+    pieces: list[str] = []
+    for entry in entries:
+        for chunk in _SKILL_SEPARATORS.split(entry):
+            chunk = chunk.strip()
+            if chunk:
+                pieces.append(chunk)
+    bounded: list[str] = []
+    for piece in pieces:
+        while len(piece) > SKILL_MAX_LENGTH:
+            cut = piece.rfind(" ", 0, SKILL_MAX_LENGTH)
+            if cut > 0:
+                bounded.append(piece[:cut])
+                piece = piece[cut:].strip()
+            else:
+                bounded.append(piece[:SKILL_MAX_LENGTH])
+                piece = piece[SKILL_MAX_LENGTH:]
+        if piece:
+            bounded.append(piece)
+    seen: set[str] = set()
+    result: list[str] = []
+    for skill in bounded:
+        if len(result) >= MAX_SKILLS:
+            break
+        key = skill.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(skill)
+    return result
+
+
+_WIRE_TEXT_FIELDS = frozenset({"headline", "location", "target_roles"})
 _WIRE_BUCKET_FOR_FIELD = {
-    "headline": "text", "location": "text", "target_roles": "text", "skills": "text",
+    "headline": "text", "location": "text", "target_roles": "text", "skills": "skills",
     "experience": "experience", "education": "education", "languages": "language",
     "remote_preference": "remote_preference", "work_authorization": "work_authorization",
     "salary_preference": "salary",
@@ -232,6 +297,7 @@ class ProviderWireValue(BaseModel):
     remote_preference: REMOTE_PREFERENCES | None = None
     work_authorization: WORK_AUTHORIZATIONS | None = None
     salary: SalaryPreference | None = None
+    skills: list[Annotated[str, StringConstraints(min_length=1, max_length=SKILL_GROUP_MAX_LENGTH)]] | None = None
 
 
 class ProviderWireSuggestion(BaseModel):
@@ -274,9 +340,12 @@ class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
                 "headline": HeadlineSuggestion,
                 "location": LocationSuggestion,
                 "target_roles": TargetRoleSuggestion,
-                "skills": SkillsSuggestion,
             }[item.field]
             return cls(id=item.id, field=item.field, value=value.text, evidence=item.evidence)
+        if item.field == "skills":
+            return SkillsSuggestion(
+                id=item.id, field=item.field, value=_normalize_skills(value.skills),
+                evidence=item.evidence)
         if item.field == "experience":
             return ExperienceSuggestion(
                 id=item.id, field=item.field, value=value.experience.to_domain(),
@@ -381,7 +450,7 @@ class GroqProfileOutput(BaseModel):
     """Groq profile wire contract: absent required keys cannot become defaults."""
     model_config = ConfigDict(extra="forbid")
     suggestions: list[Union[
-        HeadlineSuggestion, LocationSuggestion, SkillsSuggestion,
+        HeadlineSuggestion, LocationSuggestion, GroqSkillsSuggestion,
         ProviderExperienceSuggestion, EducationSuggestion, LanguageSuggestion,
     ]] = Field(max_length=50)
     # Accepted only for shared offline domain fixtures, then removed from this
@@ -395,7 +464,11 @@ class GroqProfileOutput(BaseModel):
             suggestions=[
                 ExperienceSuggestion(id=item.id, field=item.field,
                                      value=item.value.to_domain(), evidence=item.evidence)
-                if isinstance(item, ProviderExperienceSuggestion) else item
+                if isinstance(item, ProviderExperienceSuggestion)
+                else SkillsSuggestion(id=item.id, field=item.field,
+                                      value=[item.value], evidence=item.evidence)
+                if isinstance(item, GroqSkillsSuggestion)
+                else item
                 for item in self.suggestions
             ],
             not_found=(self.not_found or sorted(

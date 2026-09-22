@@ -294,7 +294,7 @@ resolveGeneration({
       { id: 'headline-1', field: 'headline', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Full-Stack Software Engineer' }] },
       { id: 'location-1', field: 'location', value: 'Tripoli, Lebanon', evidence: [{ quote: 'Tripoli, Lebanon' }] },
       { id: 'role-1', field: 'target_roles', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Target role: Full-Stack Software Engineer' }] },
-      { id: 'skill-1', field: 'skills', value: 'Python', evidence: [{ quote: 'Skills: Python' }] },
+      { id: 'skill-1', field: 'skills', value: ['Python'], evidence: [{ quote: 'Skills: Python' }] },
       { id: 'experience-1', field: 'experience', value: { title: 'Engineer', organization: 'Cedar Labs', period: '2022-2025', notes: null }, evidence: [{ quote: 'Engineer at Cedar Labs, 2022-2025' }] },
       { id: 'education-1', field: 'education', value: { school: 'Lebanese University', degree: 'BSc', field: 'Computer Science', period: '2022' }, evidence: [{ quote: 'BSc Computer Science, Lebanese University, 2022' }] },
       { id: 'remote-1', field: 'remote_preference', value: 'remote', evidence: [{ quote: 'Remote preference: remote' }] },
@@ -324,7 +324,7 @@ apiMock.mockResolvedValueOnce({
     const init = lastCall![1] as RequestInit;
     const applied = JSON.parse(init.body as string).selections;
     expect(applied.map((item: { field: string }) => item.field)).not.toContain('languages');
-    expect(applied.find((item: { field: string }) => item.field === 'skills').value).toBe('Python');
+expect(applied.find((item: { field: string }) => item.field === 'skills').value).toEqual(['Python']);
     expect(applied.find((item: { field: string }) => item.field === 'target_roles').value).toBe('Full-Stack Software Engineer');
     expect(applied.find((item: { field: string }) => item.field === 'remote_preference').value).toBe('remote');
     expect(applied.find((item: { field: string }) => item.field === 'salary_preference').value).toEqual({ currency: 'USD', min: 70000, max: 90000 });

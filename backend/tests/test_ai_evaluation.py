@@ -95,8 +95,10 @@ def _wire_profile_output(output):
     experience entry maps title back to the provider's job_title contract)."""
     suggestions = []
     for item in output.suggestions:
-        if item.field in {"headline", "location", "target_roles", "skills"}:
+        if item.field in {"headline", "location", "target_roles"}:
             bucket = {"text": item.value}
+        elif item.field == "skills":
+            bucket = {"skills": list(item.value)}
         elif item.field == "experience":
             bucket = {"experience": {
                 "job_title": item.value.title, "organization": item.value.organization,

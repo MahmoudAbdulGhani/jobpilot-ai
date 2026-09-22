@@ -17,7 +17,7 @@ from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, UsageRes
 from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import (
     ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput, ProviderWireSuggestionOutput,
-    SuggestionSetResponse,
+    SuggestionSetResponse, _normalize_skills,
 )
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure, _profile_failure_field
 from app.services import profile_suggestion_service
@@ -254,10 +254,11 @@ def test_profile_provider_null_parsed_output_maps_to_structured_output_invalid()
 
 
 def _strict_value(bucket, payload):
-    """A wire value carrying all seven required-nullable buckets, with exactly
+    """A wire value carrying all eight required-nullable buckets, with exactly
     one filled; the strict OpenAI schema demands every key be present."""
     return {"text": None, "experience": None, "education": None, "language": None,
-            "remote_preference": None, "work_authorization": None, "salary": None} | {
+            "remote_preference": None, "work_authorization": None, "salary": None,
+            "skills": None} | {
         bucket: payload}
 
 
@@ -269,7 +270,7 @@ def _ten_category_wire_suggestions():
          "evidence": [{"quote": "Location: Beirut, Lebanon"}]},
         {"id": "role-1", "field": "target_roles", "value": _strict_value("text", "Backend engineer"),
          "evidence": [{"quote": "Target role: Backend engineer"}]},
-        {"id": "skill-1", "field": "skills", "value": _strict_value("text", "Python, PostgreSQL"),
+        {"id": "skill-1", "field": "skills", "value": _strict_value("skills", ["Python", "PostgreSQL"]),
          "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
         {"id": "exp-1", "field": "experience",
          "value": _strict_value("experience", {"job_title": "Engineer", "organization": "Cedar Demo",
@@ -631,7 +632,7 @@ def _wire_field_case(field, bucket):
     ("headline", {"text": "x" * 301}),
     ("location", {"text": "x" * 301}),
     ("target_roles", {"text": "x" * 301}),
-    ("skills", {"text": "x" * 301}),
+    ("skills", {"skills": ["x" * 301]}),
     ("experience", {"experience": {"organization": "Cedar Inc."}}),
     ("education", {"education": {"degree": "BSc"}}),
     ("languages", {"language": {}}),
@@ -896,11 +897,90 @@ def test_plain_string_structured_values_fail_at_provider_boundary():
              "value": "BSc Computer Science, Example University, 2020",
              "evidence": [{"quote": "BSc Computer Science, Example University, 2020"}]},
         ]})
+    # Skills are also a provider-boundary array now: a bare skill string no
+    # longer satisfies the domain contract.
     with pytest.raises(ValidationError):
         ProviderSuggestionOutput.model_validate({"suggestions": [
-            {"id": "long-skill", "field": "skills", "value": "x" * 101,
+            {"id": "skill-1", "field": "skills", "value": "Python",
              "evidence": [{"quote": "Python"}]},
         ]})
+
+
+def _skills_wire(skills):
+    return {
+        "suggestions": [{
+            "id": "skill-1", "field": "skills", "value": {"skills": skills},
+            "evidence": [{"quote": "Skills: " + ", ".join(map(str, skills))}],
+        }],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {"skills"}),
+    }
+
+
+def test_long_grouped_skills_normalize_into_individual_entries():
+    """Regression for the production ``invalid_field_value / skills`` failure:
+    a grouped CV skill string longer than a single profile skill must split
+    into individual entries instead of being rejected."""
+    grouped = ("Frontend: TypeScript, React.js, Next.js, Tailwind CSS, Node.js, "
+               "REST APIs, Testing with Jest, GraphQL, Docker, CI/CD")
+    assert len(grouped) > 100
+    domain = ProviderWireSuggestionOutput.model_validate(
+        _skills_wire([grouped])).to_domain()
+    skills = domain.suggestions[0].value
+    assert skills == ["Frontend: TypeScript", "React.js", "Next.js", "Tailwind CSS",
+                      "Node.js", "REST APIs", "Testing with Jest", "GraphQL",
+                      "Docker", "CI/CD"]
+    assert all(len(skill) <= 100 for skill in skills)
+    accepted, partial = profile_suggestion_service.validate_output(domain, "Skills: " + grouped)
+    assert accepted[0]["value"] == skills
+    assert partial is False
+
+
+def test_skills_accept_individual_entries_and_short_grouped_strings():
+    domain = ProviderWireSuggestionOutput.model_validate(_skills_wire(
+        ["Python", "Backend: FastAPI, PostgreSQL"])).to_domain()
+    assert domain.suggestions[0].value == ["Python", "Backend: FastAPI", "PostgreSQL"]
+
+
+def test_normalize_skills_is_deterministic_dedupes_and_bounds():
+    assert _normalize_skills(["Python", "python", "Python", ",", ";", "  "]) == ["Python"]
+    assert _normalize_skills(["A" * 150 + " " + "B" * 20]) == [
+        "A" * 100, "A" * 50 + " " + "B" * 20]
+    assert len(_normalize_skills([f"skill-{i}" for i in range(80)])) == 50
+
+
+def test_skills_wire_rejects_bare_strings_and_oversized_entries():
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(
+            {"suggestions": [{"id": "s", "field": "skills", "value": {"skills": "Python"},
+                              "evidence": [{"quote": "Python"}]}]})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(
+            {"suggestions": [{"id": "s", "field": "skills", "value": {"skills": [123]},
+                              "evidence": [{"quote": "123"}]}]})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(
+            {"suggestions": [{"id": "s", "field": "skills", "value": {"skills": ["x" * 301]},
+                              "evidence": [{"quote": "x"}]}],
+             "not_found": sorted(ALL_SUGGESTION_FIELDS - {"skills"})})
+
+
+def test_skills_reject_empty_and_contact_details_as_partial():
+    source = "Skills: Python TypeScript. Contact: Mahmoud.Abdulghani@outlook.com, +961 76 364 340"
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [
+        {"id": "empty-1", "field": "skills", "value": [],
+         "evidence": [{"quote": "Skills: Python TypeScript"}]},
+        {"id": "email-1", "field": "skills", "value": ["Mahmoud.Abdulghani@outlook.com"],
+         "evidence": [{"quote": "Contact: Mahmoud.Abdulghani@outlook.com"}]},
+        {"id": "phone-1", "field": "skills", "value": ["+961 76 364 340"],
+         "evidence": [{"quote": "Contact: Mahmoud.Abdulghani@outlook.com"}]},
+        {"id": "ok-1", "field": "skills", "value": ["Python", "Python", "TypeScript"],
+         "evidence": [{"quote": "Skills: Python TypeScript"}]},
+    ]})
+    accepted, partial = profile_suggestion_service.validate_output(output, source)
+    assert partial is True
+    assert [item["id"] for item in accepted] == ["ok-1"]
+    assert accepted[0]["value"] == ["Python", "Python", "TypeScript"]
+    CandidateProfileUpdate.model_validate({"skills": accepted[0]["value"]})
 
 
 def test_typed_structured_values_validate_with_source_evidence():
@@ -1096,8 +1176,7 @@ def test_explicit_cv_fields_generate_apply_and_keep_absent_languages_empty(
             {"id": "headline-1", "field": "headline", "value": "Full-Stack Software Engineer", "evidence": [{"quote": "Full-Stack Software Engineer"}]},
             {"id": "location-1", "field": "location", "value": "Tripoli Lebanon", "evidence": [{"quote": "Location: Tripoli Lebanon"}]},
             {"id": "role-1", "field": "target_roles", "value": "Full-Stack Software Engineer", "evidence": [{"quote": "Target role: Full-Stack Software Engineer"}]},
-            {"id": "skill-1", "field": "skills", "value": "Python", "evidence": [{"quote": "Skills: Python TypeScript"}]},
-            {"id": "skill-2", "field": "skills", "value": "TypeScript", "evidence": [{"quote": "Skills: Python TypeScript"}]},
+{"id": "skill-1", "field": "skills", "value": ["Python", "TypeScript"], "evidence": [{"quote": "Skills: Python TypeScript"}]},
             {"id": "experience-1", "field": "experience", "value": {"title": "Software Engineer", "organization": "Cedar Labs", "period": "2022-2025"}, "evidence": [{"quote": "Software Engineer at Cedar Labs 2022-2025"}]},
             {"id": "education-1", "field": "education", "value": {"school": "Lebanese University", "degree": "BSc", "field": "Computer Science", "period": "2022"}, "evidence": [{"quote": "BSc Computer Science at Lebanese University 2022"}]},
             {"id": "remote-1", "field": "remote_preference", "value": "remote", "evidence": [{"quote": "Remote preference: remote"}]},

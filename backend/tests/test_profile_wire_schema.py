@@ -122,8 +122,9 @@ def test_missing_experience_title_reproduces_all_retained_errors():
         ("missing", ("LanguageSuggestion", "value", "name")),
         ("missing", ("LanguageSuggestion", "value", "proficiency")),
     }
-    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion"):
+    for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion"):
         expected.add(("string_type", (branch, "value")))
+    expected.add(("list_type", ("SkillsSuggestion", "value")))
     for branch in ("HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion",
                    "EducationSuggestion", "LanguageSuggestion", "RemotePreferenceSuggestion",
                    "WorkAuthorizationSuggestion", "SalaryPreferenceSuggestion"):
@@ -409,7 +410,7 @@ def test_all_ten_categories_parse_from_the_flat_wire_and_convert_to_domain():
          "evidence": [{"quote": "Location: Beirut, Lebanon"}]},
         {"id": "role-1", "field": "target_roles", "value": {"text": "Backend engineer"},
          "evidence": [{"quote": "Target role: Backend engineer"}]},
-        {"id": "skill-1", "field": "skills", "value": {"text": "Python, PostgreSQL"},
+        {"id": "skill-1", "field": "skills", "value": {"skills": ["Python", "PostgreSQL"]},
          "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
         {"id": "exp-1", "field": "experience",
          "value": {"experience": {"job_title": "Engineer", "organization": "Cedar Demo"}},
@@ -438,7 +439,7 @@ def test_all_ten_categories_parse_from_the_flat_wire_and_convert_to_domain():
     assert by_field["headline"].value == "Backend engineer"
     assert by_field["location"].value == "Beirut, Lebanon"
     assert by_field["target_roles"].value == "Backend engineer"
-    assert by_field["skills"].value == "Python, PostgreSQL"
+    assert by_field["skills"].value == ["Python", "PostgreSQL"]
     assert by_field["experience"].value.title == "Engineer"
     assert by_field["experience"].value.organization == "Cedar Demo"
     assert by_field["education"].value.school == "Example University"
@@ -464,6 +465,8 @@ def test_missing_languages_become_not_found_in_the_domain_output():
             value = {"work_authorization": "citizen"}
         elif field == "salary_preference":
             value = {"salary": {"currency": "USD", "min": 50000, "max": 80000}}
+        elif field == "skills":
+            value = {"skills": ["Python"]}
         else:
             value = {"text": "Backend engineer"}
         suggestions.append({"id": f"{field}-1", "field": field, "value": value,
@@ -477,7 +480,7 @@ def test_missing_languages_become_not_found_in_the_domain_output():
 
 def test_skills_experience_education_parse_from_their_typed_buckets():
     payload = complete_wire([
-        {"id": "skill-1", "field": "skills", "value": {"text": "Python, PostgreSQL"},
+        {"id": "skill-1", "field": "skills", "value": {"skills": ["Python", "PostgreSQL"]},
          "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
         {"id": "exp-1", "field": "experience",
          "value": {"experience": {"job_title": "Engineer", "organization": "Cedar Demo",
@@ -490,7 +493,7 @@ def test_skills_experience_education_parse_from_their_typed_buckets():
     ])
     domain = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
     values = {item.field: item.value for item in domain.suggestions}
-    assert values["skills"] == "Python, PostgreSQL"
+    assert values["skills"] == ["Python", "PostgreSQL"]
     assert values["experience"].title == "Engineer"
     assert values["experience"].notes == "Core platform"
     assert values["education"].degree == "BSc"

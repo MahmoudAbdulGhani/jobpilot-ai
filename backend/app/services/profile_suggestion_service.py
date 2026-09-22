@@ -29,7 +29,7 @@ _CONTACT_PHONE = re.compile(
 
 
 def _is_contact_details(value: str) -> bool:
-    """A location suggestion may never contain phone or email contact data."""
+    """A location or skills suggestion may never contain contact details."""
     return bool(_CONTACT_EMAIL.search(value) or _CONTACT_PHONE.search(value))
 
 
@@ -92,6 +92,13 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
         if suggestion.field == "location" and _is_contact_details(str(suggestion.value)):
             partial = True
             continue
+        if suggestion.field == "skills":
+            if not suggestion.value:
+                partial = True
+                continue
+            if any(_is_contact_details(skill) for skill in suggestion.value):
+                partial = True
+                continue
         if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
                 or not supported_claim(value_text(suggestion.value), quotes,
                                        single_passage=suggestion.field in {"experience", "education"})):
@@ -100,7 +107,7 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
         try:
             value = (
                 [suggestion.value]
-                if suggestion.field in {"target_roles", "skills", "experience", "education", "languages"}
+                if suggestion.field in {"target_roles", "experience", "education", "languages"}
                 else suggestion.value
             )
             CandidateProfileUpdate.model_validate({suggestion.field: value})
@@ -228,7 +235,13 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
             current[field] = value
         else:
             values = current.get(field) or []
-            if _key(value) not in {_key(existing) for existing in values}:
+            if field == "skills":
+                existing = {_key(skill) for skill in values}
+                for skill in value:
+                    if _key(skill) not in existing:
+                        existing.add(_key(skill))
+                        values.append(skill)
+            elif _key(value) not in {_key(existing) for existing in values}:
                 values.append(value)
             current[field] = values
         applied.append(item)
