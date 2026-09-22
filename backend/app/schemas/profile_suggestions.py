@@ -203,12 +203,56 @@ class ProviderExperienceSuggestion(_SuggestionShape):
     value: ProviderExperienceEntry
 
 
+_WIRE_TEXT_FIELDS = frozenset({"headline", "location", "target_roles", "skills"})
+_WIRE_BUCKET_FOR_FIELD = {
+    "headline": "text", "location": "text", "target_roles": "text", "skills": "text",
+    "experience": "experience", "education": "education", "languages": "language",
+    "remote_preference": "remote_preference", "work_authorization": "work_authorization",
+    "salary_preference": "salary",
+}
+
+
+class ProviderWireValue(BaseModel):
+    """Deterministic single-bucket wire value for one suggestion field.
+
+    OpenAI strict structured outputs forbid ``anyOf``/``oneOf`` unions except
+    for nullability, so every bucket is a nullable, strictly-required field.
+    Exactly one bucket must be filled and must match the suggestion's ``field``
+    (enforced by ``ProviderWireSuggestion``); each bucket retains the exact
+    typed shape the application contract requires, and the domain conversion
+    below revalidates the same bounds locally.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str | None = Field(default=None, max_length=LOCATION_MAX_LENGTH)
+    experience: ProviderExperienceEntry | None = None
+    education: EducationEntry | None = None
+    language: LanguageEntry | None = None
+    remote_preference: REMOTE_PREFERENCES | None = None
+    work_authorization: WORK_AUTHORIZATIONS | None = None
+    salary: SalaryPreference | None = None
+
+
+class ProviderWireSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    field: SuggestionField
+    evidence: list[Evidence] = Field(min_length=1, max_length=10)
+    value: ProviderWireValue
+
+    @model_validator(mode="after")
+    def require_value_bucket_matching_field(self):
+        filled = {name for name in ProviderWireValue.model_fields
+                  if getattr(self.value, name) is not None}
+        expected = _WIRE_BUCKET_FOR_FIELD[self.field]
+        if filled != {expected}:
+            raise ValueError(f"suggestion value must set exactly the '{expected}' field")
+        return self
+
+
 class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
-    suggestions: list[Union[
-        HeadlineSuggestion, LocationSuggestion, TargetRoleSuggestion, SkillsSuggestion,
-        ProviderExperienceSuggestion, EducationSuggestion, LanguageSuggestion,
-        RemotePreferenceSuggestion, WorkAuthorizationSuggestion, SalaryPreferenceSuggestion,
-    ]] = Field(max_length=50)
+    suggestions: list[ProviderWireSuggestion] = Field(max_length=50)
     not_found: list[SuggestionField] = Field(max_length=len(ALL_SUGGESTION_FIELDS))
 
     @model_validator(mode="after")
@@ -223,14 +267,40 @@ class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
             raise ValueError("every profile field must be suggested or not_found")
         return self
 
+    def _to_domain_suggestion(self, item: ProviderWireSuggestion) -> ProfileSuggestion:
+        value = item.value
+        if item.field in _WIRE_TEXT_FIELDS:
+            cls = {
+                "headline": HeadlineSuggestion,
+                "location": LocationSuggestion,
+                "target_roles": TargetRoleSuggestion,
+                "skills": SkillsSuggestion,
+            }[item.field]
+            return cls(id=item.id, field=item.field, value=value.text, evidence=item.evidence)
+        if item.field == "experience":
+            return ExperienceSuggestion(
+                id=item.id, field=item.field, value=value.experience.to_domain(),
+                evidence=item.evidence)
+        if item.field == "education":
+            return EducationSuggestion(
+                id=item.id, field=item.field, value=value.education, evidence=item.evidence)
+        if item.field == "languages":
+            return LanguageSuggestion(
+                id=item.id, field=item.field, value=value.language, evidence=item.evidence)
+        if item.field == "remote_preference":
+            return RemotePreferenceSuggestion(
+                id=item.id, field=item.field, value=value.remote_preference,
+                evidence=item.evidence)
+        if item.field == "work_authorization":
+            return WorkAuthorizationSuggestion(
+                id=item.id, field=item.field, value=value.work_authorization,
+                evidence=item.evidence)
+        return SalaryPreferenceSuggestion(
+            id=item.id, field=item.field, value=value.salary, evidence=item.evidence)
+
     def to_domain(self) -> ProviderSuggestionOutput:
         return ProviderSuggestionOutput(
-            suggestions=[
-                ExperienceSuggestion(id=item.id, field=item.field,
-                                     value=item.value.to_domain(), evidence=item.evidence)
-                if isinstance(item, ProviderExperienceSuggestion) else item
-                for item in self.suggestions
-            ],
+            suggestions=[self._to_domain_suggestion(item) for item in self.suggestions],
             not_found=self.not_found, partial=self.partial, message=self.message,
         )
 
@@ -238,9 +308,40 @@ class ProviderWireSuggestionOutput(ProviderSuggestionOutput):
     def model_json_schema(cls, *args, **kwargs):
         # The SDK loads the text-format schema via model_json_schema(), so the
         # wire payload (and the evaluation request plan, which estimates from
-        # the same call) is the compact form below; parsing of the returned
-        # content always goes through this class's own pydantic validation.
-        return _compact_wire_schema(super().model_json_schema(*args, **kwargs))
+        # the same call) is the compact strict form below. Parsing of the
+        # returned content always goes through this class's own pydantic
+        # validation.
+        return _strict_wire_schema(
+            _compact_wire_schema(super().model_json_schema(*args, **kwargs)))
+
+
+def _strict_wire_schema(schema):
+    """Make the compact schema deterministic strict-schema compatible.
+
+    OpenAI strict structured outputs reject object ``anyOf`` unions; every
+    object must set ``additionalProperties: false`` and list all of its
+    properties in ``required`` (nullable fields stay ``anyOf`` with ``null``,
+    the only union form strict mode permits). ``_compact_wire_schema`` already
+    removed defaults/titles, so the flat shape below is fully strict: the ten
+    suggestion branches collapse into a single ``ProviderWireSuggestion``
+    whose ``value`` uses nullable buckets.
+    """
+    def visit(node):
+        if isinstance(node, dict):
+            result = {}
+            for key, value in node.items():
+                if key in {"properties", "$defs", "definitions", "patternProperties"}:
+                    result[key] = {name: visit(spec) for name, spec in value.items()}
+                else:
+                    result[key] = visit(value)
+            if "properties" in result:
+                result["additionalProperties"] = False
+                result["required"] = list(result["properties"])
+            return result
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        return node
+    return visit(schema)
 
 
 def _groq_profile_schema(schema):

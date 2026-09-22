@@ -26,6 +26,11 @@ def suggestion(field, value):
             "evidence": [{"quote": "Synthetic evidence"}]}
 
 
+def wire_suggestion(field, bucket):
+    return {"id": "synthetic", "field": field, "value": bucket,
+            "evidence": [{"quote": "Synthetic evidence"}]}
+
+
 def complete_wire(suggestions):
     present = {item["field"] for item in suggestions}
     return {
@@ -45,9 +50,10 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
             "id": "offline", "object": "response", "created_at": 0,
             "model": "synthetic", "status": "completed",
             "output": [{"id": "msg", "type": "message", "role": "assistant", "status": "completed",
-                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps(complete_wire([suggestion("experience", {
-                            "job_title": "Engineer", "organization": "Synthetic",
-                            "period": None, "notes": None})]))}]}],
+                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps(complete_wire([
+                            wire_suggestion("experience", {
+                                "experience": {"job_title": "Engineer", "organization": "Synthetic",
+                                               "period": None, "notes": None}})]))}]}],
         })
 
     with OpenAI(api_key="synthetic", max_retries=0,
@@ -72,20 +78,18 @@ def test_serialized_sdk_requires_job_title_and_maps_to_domain_title():
         assert entry["properties"]["job_title"] == {
             "type": "string", "minLength": 1, "maxLength": 200}
         assert entry["additionalProperties"] is False
-        variants = {"HeadlineSuggestion": "headline", "LocationSuggestion": "location",
-                    "TargetRoleSuggestion": "target_roles", "SkillsSuggestion": "skills",
-                    "ProviderExperienceSuggestion": "experience", "EducationSuggestion": "education",
-                    "LanguageSuggestion": "languages", "RemotePreferenceSuggestion": "remote_preference",
-                    "WorkAuthorizationSuggestion": "work_authorization",
-                    "SalaryPreferenceSuggestion": "salary_preference"}
-        assert schema["$defs"]["ProviderExperienceSuggestion"]["properties"]["value"] == {
-            "$ref": "#/$defs/ProviderExperienceEntry"}
-        assert {item["$ref"] for item in schema["properties"]["suggestions"]["items"]["anyOf"]} == {
-            f"#/$defs/{variant}" for variant in variants}
-        for variant, literal in variants.items():
-            branch = schema["$defs"][variant]
-            assert set(branch["required"]) == {"id", "field", "value", "evidence"}
-            assert branch["properties"]["field"]["const"] == literal
+        # The OpenAI wire contract is one flat suggestion with strict objects;
+        # the suggestion-level anyOf union (rejected by strict structured
+        # outputs) is gone, so only nullable anyOf remains on the wire.
+        assert schema["properties"]["suggestions"]["items"]["$ref"] == (
+            "#/$defs/ProviderWireSuggestion")
+        suggestion = schema["$defs"]["ProviderWireSuggestion"]
+        assert set(suggestion["required"]) == {"id", "field", "evidence", "value"}
+        assert suggestion["additionalProperties"] is False
+        assert set(suggestion["properties"]["field"]["enum"]) == set(ALL_SUGGESTION_FIELDS)
+        value = schema["$defs"]["ProviderWireValue"]
+        assert set(value["required"]) == set(value["properties"])
+        assert value["additionalProperties"] is False
     assert set(wire["$defs"]["ProviderExperienceEntry"]["required"]) == {
         "job_title", "organization", "period", "notes"}
 
@@ -161,8 +165,8 @@ def test_local_experience_title_validation_is_not_relaxed(title):
 def test_wire_job_title_parses_and_round_trips_to_domain_title():
     payload = complete_wire([{
         "id": "exp-1", "field": "experience",
-        "value": {"job_title": "Engineer", "organization": "Cedar Demo",
-                  "period": None, "notes": None},
+        "value": {"experience": {"job_title": "Engineer", "organization": "Cedar Demo",
+                                 "period": None, "notes": None}},
         "evidence": [{"quote": "Engineer at Cedar Demo"}]}])
     parsed = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
     value = parsed.suggestions[0].value
@@ -231,7 +235,8 @@ def test_public_profile_experience_contract_before_ed05a0f(model, entry, valid):
 def test_provider_entry_preserves_bounds(changes):
     entry = {"job_title": "Engineer", "organization": "Synthetic", **changes}
     with pytest.raises(ValidationError):
-        ProviderWireSuggestionOutput.model_validate(complete_wire([suggestion("experience", entry)]))
+        ProviderWireSuggestionOutput.model_validate(complete_wire([
+            wire_suggestion("experience", {"experience": entry})]))
 
 
 @pytest.mark.parametrize("missing", ["job_title", "organization"])
@@ -239,12 +244,13 @@ def test_provider_entry_requires_fields(missing):
     entry = {"job_title": "Engineer", "organization": "Synthetic"}
     del entry[missing]
     with pytest.raises(ValidationError):
-        ProviderWireSuggestionOutput.model_validate(complete_wire([suggestion("experience", entry)]))
+        ProviderWireSuggestionOutput.model_validate(complete_wire([
+            wire_suggestion("experience", {"experience": entry})]))
 
 
 @pytest.mark.parametrize("evidence", [[], [{"quote": ""}], [{"quote": "x" * 1001}]])
 def test_provider_evidence_constraints(evidence):
-    item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
+    item = wire_suggestion("experience", {"experience": {"job_title": "Engineer", "organization": "Synthetic"}})
     item["evidence"] = evidence
     with pytest.raises(ValidationError):
         ProviderWireSuggestionOutput.model_validate(complete_wire([item]))
@@ -252,7 +258,7 @@ def test_provider_evidence_constraints(evidence):
 
 def test_mapped_experience_preserves_evidence_validation():
     from app.services.profile_suggestion_service import validate_output
-    item = suggestion("experience", {"job_title": "Engineer", "organization": "Synthetic"})
+    item = wire_suggestion("experience", {"experience": {"job_title": "Engineer", "organization": "Synthetic"}})
     item["evidence"] = [{"quote": "Engineer Synthetic"}]
     output = ProviderWireSuggestionOutput.model_validate(complete_wire([item])).to_domain()
     accepted, partial = validate_output(output, "Engineer Synthetic")
@@ -364,7 +370,7 @@ def test_canonical_sdk_request_meets_documented_structural_requirements():
 def test_supported_headline_requires_nonempty_exact_source_quote(evidence, outcome):
     from app.services.profile_suggestion_service import validate_output
     source = "Backend engineer"
-    item = suggestion("headline", source)
+    item = wire_suggestion("headline", {"text": source})
     item["evidence"] = evidence
     payload = complete_wire([item])
     if outcome == "parse_failure":
@@ -393,3 +399,146 @@ def test_next_diagnostic_only_closes_empty_string_schema_gap():
     new_evidence = prepared["text"]["format"]["schema"]["properties"]["evidence"]
     assert new_evidence.pop("minLength") == 1
     assert prepared == original  # No prompt/source/model change or injected evidence.
+
+
+def test_all_ten_categories_parse_from_the_flat_wire_and_convert_to_domain():
+    suggestions = [
+        {"id": "headline-1", "field": "headline", "value": {"text": "Backend engineer"},
+         "evidence": [{"quote": "Backend engineer"}]},
+        {"id": "location-1", "field": "location", "value": {"text": "Beirut, Lebanon"},
+         "evidence": [{"quote": "Location: Beirut, Lebanon"}]},
+        {"id": "role-1", "field": "target_roles", "value": {"text": "Backend engineer"},
+         "evidence": [{"quote": "Target role: Backend engineer"}]},
+        {"id": "skill-1", "field": "skills", "value": {"text": "Python, PostgreSQL"},
+         "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
+        {"id": "exp-1", "field": "experience",
+         "value": {"experience": {"job_title": "Engineer", "organization": "Cedar Demo"}},
+         "evidence": [{"quote": "Engineer at Cedar Demo"}]},
+        {"id": "edu-1", "field": "education",
+         "value": {"education": {"school": "Example University", "degree": "BSc"}},
+         "evidence": [{"quote": "BSc at Example University"}]},
+        {"id": "lang-1", "field": "languages",
+         "value": {"language": {"name": "French", "proficiency": "professional"}},
+         "evidence": [{"quote": "Fluent French"}]},
+        {"id": "remote-1", "field": "remote_preference", "value": {"remote_preference": "remote"},
+         "evidence": [{"quote": "Remote preference: remote"}]},
+        {"id": "auth-1", "field": "work_authorization", "value": {"work_authorization": "citizen"},
+         "evidence": [{"quote": "Work authorization: citizen"}]},
+        {"id": "sal-1", "field": "salary_preference",
+         "value": {"salary": {"currency": "USD", "min": 70000, "max": 90000}},
+         "evidence": [{"quote": "Salary: USD 70000 to 90000"}]},
+    ]
+    parsed = ProviderWireSuggestionOutput.model_validate(complete_wire(suggestions))
+    domain = parsed.to_domain()
+    assert [item.field for item in domain.suggestions] == [
+        "headline", "location", "target_roles", "skills", "experience", "education",
+        "languages", "remote_preference", "work_authorization", "salary_preference"]
+    assert domain.not_found == []
+    by_field = {item.field: item for item in domain.suggestions}
+    assert by_field["headline"].value == "Backend engineer"
+    assert by_field["location"].value == "Beirut, Lebanon"
+    assert by_field["target_roles"].value == "Backend engineer"
+    assert by_field["skills"].value == "Python, PostgreSQL"
+    assert by_field["experience"].value.title == "Engineer"
+    assert by_field["experience"].value.organization == "Cedar Demo"
+    assert by_field["education"].value.school == "Example University"
+    assert by_field["languages"].value.proficiency == "professional"
+    assert by_field["remote_preference"].value == "remote"
+    assert by_field["work_authorization"].value == "citizen"
+    assert by_field["salary_preference"].value.min == 70000
+    assert by_field["salary_preference"].value.max == 90000
+
+
+def test_missing_languages_become_not_found_in_the_domain_output():
+    fields = ["headline", "location", "target_roles", "skills", "experience",
+              "education", "remote_preference", "work_authorization", "salary_preference"]
+    suggestions = []
+    for field in fields:
+        if field == "experience":
+            value = {"experience": {"job_title": "Engineer", "organization": "Cedar"}}
+        elif field == "education":
+            value = {"education": {"school": "Example University"}}
+        elif field == "remote_preference":
+            value = {"remote_preference": "remote"}
+        elif field == "work_authorization":
+            value = {"work_authorization": "citizen"}
+        elif field == "salary_preference":
+            value = {"salary": {"currency": "USD", "min": 50000, "max": 80000}}
+        else:
+            value = {"text": "Backend engineer"}
+        suggestions.append({"id": f"{field}-1", "field": field, "value": value,
+                            "evidence": [{"quote": "Synthetic evidence"}]})
+    payload = complete_wire(suggestions)
+    payload["not_found"] = ["languages"]
+    domain = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
+    assert [item.field for item in domain.suggestions] == fields
+    assert domain.not_found == ["languages"]
+
+
+def test_skills_experience_education_parse_from_their_typed_buckets():
+    payload = complete_wire([
+        {"id": "skill-1", "field": "skills", "value": {"text": "Python, PostgreSQL"},
+         "evidence": [{"quote": "Skills: Python, PostgreSQL"}]},
+        {"id": "exp-1", "field": "experience",
+         "value": {"experience": {"job_title": "Engineer", "organization": "Cedar Demo",
+                                  "period": "2021-2024", "notes": "Core platform"}},
+         "evidence": [{"quote": "Engineer at Cedar Demo"}]},
+        {"id": "edu-1", "field": "education",
+         "value": {"education": {"school": "Example University", "degree": "BSc",
+                                 "field": "Computer Science", "period": "2020"}},
+         "evidence": [{"quote": "BSc Computer Science at Example University"}]},
+    ])
+    domain = ProviderWireSuggestionOutput.model_validate(payload).to_domain()
+    values = {item.field: item.value for item in domain.suggestions}
+    assert values["skills"] == "Python, PostgreSQL"
+    assert values["experience"].title == "Engineer"
+    assert values["experience"].notes == "Core platform"
+    assert values["education"].degree == "BSc"
+    assert values["education"].field == "Computer Science"
+
+
+def test_wire_rejects_mismatched_multiple_or_missing_value_buckets():
+    mismatch = wire_suggestion("experience", {"text": "Engineer at Cedar"})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(complete_wire([mismatch]))
+    two_buckets = wire_suggestion("headline", {"text": "Engineer", "salary": {"currency": "USD"}})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(complete_wire([two_buckets]))
+    no_bucket = wire_suggestion("headline", {})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(complete_wire([no_bucket]))
+
+
+def test_invalid_claims_are_rejected_by_the_local_contract():
+    # 250 chars fits the flat wire text bound (300) but violates the domain
+    # headline bound (200); the wire parse succeeds and the domain conversion
+    # revalidates, the exact boundary the production response-validation
+    # mapping covers.
+    headline = wire_suggestion("headline", {"text": "x" * 250})
+    parsed = ProviderWireSuggestionOutput.model_validate(complete_wire([headline]))
+    with pytest.raises(ValidationError):
+        parsed.to_domain()
+    invalid_salary = wire_suggestion(
+        "salary_preference", {"salary": {"currency": "USD", "min": 90000, "max": 50000}})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(complete_wire([invalid_salary]))
+    invalid_remote = wire_suggestion("remote_preference", {"remote_preference": "onsite"})
+    with pytest.raises(ValidationError):
+        ProviderWireSuggestionOutput.model_validate(complete_wire([invalid_remote]))
+
+
+def test_openai_provider_maps_out_of_contract_wire_content_to_response_validation_failed():
+    from types import SimpleNamespace
+
+    from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
+    payload = complete_wire([wire_suggestion("headline", {"text": "x" * 250})])
+    client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(
+        status="completed", output_parsed=payload)))
+    provider = OpenAIResponsesProvider(
+        api_key="unused", model="synthetic", timeout=3,
+        max_output_tokens=1500, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "response_validation_failed" == str(caught.value)
+    assert "private CV text" not in str(caught.value)

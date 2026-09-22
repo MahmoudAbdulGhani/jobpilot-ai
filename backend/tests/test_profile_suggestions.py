@@ -207,6 +207,130 @@ def test_openai_adapter_maps_incomplete_and_transport_errors():
         OpenAIResponsesProvider(api_key="x", model="m", timeout=1, max_output_tokens=1, client=incomplete).suggest("cv")
 
 
+def test_structured_contract_categories_are_allowlisted_safe_categories():
+    """The new diagnostic labels must be in the safe set, or every one of
+    them collapses back to the opaque 'unknown' bucket."""
+    from app.services.ai_provider import SAFE_PROVIDER_FAILURE_CATEGORIES
+    for name in ("structured_output_invalid", "request_contract_invalid", "response_validation_failed"):
+        assert name in SAFE_PROVIDER_FAILURE_CATEGORIES
+    for name in ("structured_output_invalid", "request_contract_invalid", "response_validation_failed"):
+        assert ProviderFailure(name).category == name
+
+
+@pytest.mark.parametrize("status", ["incomplete", "failed", "cancelled"])
+def test_profile_provider_noncompleted_status_maps_to_structured_output_invalid(status):
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status=status, output_parsed=None)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def test_profile_provider_null_parsed_output_maps_to_structured_output_invalid():
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status="completed", output_parsed=None)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def test_profile_provider_envelope_parse_failure_maps_to_structured_output_invalid():
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    upstream = openai.APIResponseValidationError(response=httpx.Response(200, request=request), body=None)
+
+    def fail(**kwargs):
+        raise upstream
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+
+
+def test_profile_provider_local_contract_violation_maps_to_response_validation_failed():
+    """A flat-wire-validated payload that still violates the local domain
+    contract (a headline above the 200-char bound but inside the 300-char
+    wire text bound) must fail as response_validation_failed, never as the
+    opaque 'unknown' category."""
+    broken = {
+        "suggestions": [{
+            "id": "headline-1", "field": "headline",
+            "value": {"text": "x" * 250},
+            "evidence": [{"quote": "Synthetic evidence"}],
+        }],
+        "not_found": sorted(ALL_SUGGESTION_FIELDS - {"headline"}),
+    }
+    client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **kwargs: SimpleNamespace(status="completed", output_parsed=broken)))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "response_validation_failed" == str(caught.value)
+    assert "private CV text" not in str(caught.value)
+
+
+@pytest.mark.parametrize("code", ["invalid_json_schema", "json_validate_failed", "schema_validation_failed"])
+def test_profile_provider_schema_rejection_maps_to_request_contract_invalid(code):
+    def fail(**kwargs):
+        raise _status_error(400, code)
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "request_contract_invalid" == str(caught.value)
+    assert "sensitive" not in str(caught.value)
+
+
+@pytest.mark.parametrize("category", ["structured_output_invalid", "request_contract_invalid", "response_validation_failed"])
+def test_new_profile_failure_categories_persist_only_safe_label(
+    category, suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    """A provider raising any diagnostic category must land in the persisted
+    record as that exact safe label, never leaking details."""
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    resume_id = confirmed_resume(suggestion_client, owner)
+
+    class Broken:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure(category)
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Broken())
+    response = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["outcome_message"] == category
+    record = db_session.query(ProfileSuggestionSet).filter_by(owner_id=owner.id).one()
+    assert record.status == "failed"
+    assert record.outcome_message == category
+
+
 def test_profile_failure_releases_reservation_and_persists_only_category(
     suggestion_client, suggestion_users, db_session, monkeypatch
 ):
@@ -390,44 +514,55 @@ def test_valid_experience_object_parses_and_applies_to_profile():
 
 def test_suggestion_schema_constrains_per_field_values():
     """The JSON schema sent to the provider must not have the value: Any
-    loophole; each field's value is typed to the shape it will be validated
-    against downstream."""
+    loophole, and must be compatible with strict structured outputs: one flat
+    suggestion with a strictly-required nullable value bucket per field, each
+    typed to the shape it will be validated against downstream (no suggestion
+    union, and anyOf used only for nullability)."""
     from app.schemas.profile_suggestions import ProviderWireSuggestionOutput
 
     schema = ProviderWireSuggestionOutput.model_json_schema()
     defs = schema["$defs"]
     suggestions = schema["properties"]["suggestions"]
     assert suggestions["type"] == "array"
-    variants = {ref["$ref"].split("/")[-1] for ref in suggestions["items"]["anyOf"]}
-    assert variants == {
-        "HeadlineSuggestion", "LocationSuggestion", "TargetRoleSuggestion", "SkillsSuggestion",
-        "ProviderExperienceSuggestion", "EducationSuggestion", "LanguageSuggestion",
-        "RemotePreferenceSuggestion", "WorkAuthorizationSuggestion", "SalaryPreferenceSuggestion",
-    }
-    assert defs["ProviderExperienceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/ProviderExperienceEntry"}
-    assert defs["EducationSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/EducationEntry"}
-    assert defs["LanguageSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/LanguageEntry"}
-    assert defs["SalaryPreferenceSuggestion"]["properties"]["value"] == {"$ref": "#/$defs/SalaryPreference"}
-    assert defs["ProviderExperienceEntry"]["required"] == ["job_title", "organization"]
-    assert defs["HeadlineSuggestion"]["properties"]["value"]["type"] == "string"
-    assert defs["HeadlineSuggestion"]["properties"]["value"]["maxLength"] == 200
-    assert defs["SkillsSuggestion"]["properties"]["value"]["maxLength"] == 100
-    assert defs["TargetRoleSuggestion"]["properties"]["value"]["maxLength"] == 200
-    assert defs["LocationSuggestion"]["properties"]["value"]["maxLength"] == 300
-    # The wire schema drops only tautological keys and duplicated id/value
-    # min-bounds; the typed structure ("required", "$ref", enums, maxLength,
-    # additionalProperties) stays so the provider still sees the contract.
-    assert defs["HeadlineSuggestion"]["properties"]["id"] == {"type": "string"}
-    for branch in ("HeadlineSuggestion", "ProviderExperienceSuggestion"):
-        assert defs[branch]["additionalProperties"] is False
-        assert set(defs[branch]["required"]) == {"id", "field", "value", "evidence"}
-        assert "minLength" not in defs[branch]["properties"]["id"]
-        assert "maxLength" not in defs[branch]["properties"]["id"]
-        assert "pattern" not in defs[branch]["properties"]["id"]
+    # The suggestion-level union is gone; the flat contract keeps each of the
+    # ten field enums and the typed value buckets instead of anyOf branches.
+    assert suggestions["items"] == {"$ref": "#/$defs/ProviderWireSuggestion"}
+    suggestion = defs["ProviderWireSuggestion"]
+    assert set(suggestion["required"]) == {"id", "field", "evidence", "value"}
+    assert suggestion["additionalProperties"] is False
+    assert suggestion["properties"]["value"] == {"$ref": "#/$defs/ProviderWireValue"}
+    assert set(suggestion["properties"]["field"]["enum"]) == set(ALL_SUGGESTION_FIELDS)
+    assert set(defs["ProviderExperienceEntry"]["required"]) == {
+        "job_title", "organization", "period", "notes"}
+    assert defs["ProviderExperienceEntry"]["properties"]["job_title"] == {
+        "type": "string", "minLength": 1, "maxLength": 200}
+    value = defs["ProviderWireValue"]
+    assert set(value["required"]) == set(value["properties"])
+    assert value["additionalProperties"] is False
+    assert value["properties"]["experience"] == {
+        "anyOf": [{"$ref": "#/$defs/ProviderExperienceEntry"}, {"type": "null"}]}
+    assert value["properties"]["education"] == {
+        "anyOf": [{"$ref": "#/$defs/EducationEntry"}, {"type": "null"}]}
+    assert value["properties"]["language"] == {
+        "anyOf": [{"$ref": "#/$defs/LanguageEntry"}, {"type": "null"}]}
+    assert value["properties"]["salary"] == {
+        "anyOf": [{"$ref": "#/$defs/SalaryPreference"}, {"type": "null"}]}
+    text = value["properties"]["text"]
+    assert {"type": "string", "maxLength": 300} in text["anyOf"]
+    assert {"type": "null"} in text["anyOf"]
+    assert {item["type"] for item in value["properties"]["remote_preference"]["anyOf"]} == {
+        "string", "null"}
+    # The flat schema drops only tautological keys and duplicated value/id
+    # guidance; the typed structure (required, $ref, enums, maxLength,
+    # additionalProperties, nullable anyOf) stays strict on the wire.
+    id_spec = defs["ProviderWireSuggestion"]["properties"]["id"]
+    assert id_spec == {"type": "string"}
+    assert "anyOf" not in suggestions["items"]
     assert "maxItems" not in schema["properties"]["suggestions"]
-    assert "minLength" not in defs["HeadlineSuggestion"]["properties"]["value"]
     assert defs["Evidence"]["properties"]["quote"] == {"type": "string", "minLength": 1, "maxLength": 1000}
-    assert defs["HeadlineSuggestion"]["properties"]["field"] == {"type": "string", "const": "headline"}
+    for name in ("ProviderWireSuggestion", "ProviderWireValue", "ProviderExperienceEntry"):
+        assert defs[name]["additionalProperties"] is False
+        assert set(defs[name]["required"]) == set(defs[name]["properties"])
 
 
 def test_explicit_cv_fields_generate_apply_and_keep_absent_languages_empty(

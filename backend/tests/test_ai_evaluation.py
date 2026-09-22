@@ -7,6 +7,7 @@ import pytest
 
 from app.evaluation import __main__ as evaluation
 from app.evaluation.fixtures import cases
+from app.schemas.profile_suggestions import ALL_SUGGESTION_FIELDS
 from app.services.ai_provider import DeterministicTestProvider
 
 
@@ -88,6 +89,38 @@ def test_invalid_evidence_fails_evaluation(task):
         evaluation.check_output(task, output, source)
 
 
+def _wire_profile_output(output):
+    """Convert a domain ProviderSuggestionOutput into the flat OpenAI wire
+    shape the mock must hand back to the provider's suggested parse (the
+    experience entry maps title back to the provider's job_title contract)."""
+    suggestions = []
+    for item in output.suggestions:
+        if item.field in {"headline", "location", "target_roles", "skills"}:
+            bucket = {"text": item.value}
+        elif item.field == "experience":
+            bucket = {"experience": {
+                "job_title": item.value.title, "organization": item.value.organization,
+                "period": item.value.period, "notes": item.value.notes}}
+        elif item.field == "education":
+            bucket = {"education": item.value.model_dump(mode="json")}
+        elif item.field == "languages":
+            bucket = {"language": item.value.model_dump(mode="json")}
+        elif item.field in {"remote_preference", "work_authorization"}:
+            bucket = {item.field: item.value}
+        else:
+            bucket = {"salary": item.value.model_dump(mode="json")}
+        suggestions.append({
+            "id": item.id, "field": item.field, "value": bucket,
+            "evidence": [{"quote": evidence.quote} for evidence in item.evidence],
+        })
+    return {
+        "suggestions": suggestions,
+        "not_found": sorted(set(ALL_SUGGESTION_FIELDS) - {item.field for item in output.suggestions}),
+        "partial": output.partial,
+        "message": output.message,
+    }
+
+
 def fake_client(mode="success"):
     captured = []
     synthetic = DeterministicTestProvider()
@@ -105,8 +138,11 @@ def fake_client(mode="success"):
         output = evaluation.dispatch(synthetic, task, case["source"])
         if mode == "invalid_evidence" and task == "profile":
             output.suggestions[0].evidence[0].quote = "not in CV"
+        parsed = ({} if mode == "malformed" else
+                  _wire_profile_output(output) if task == "profile"
+                  else output.model_dump())
         return SimpleNamespace(status="incomplete" if mode == "incomplete" else "completed",
-            output_parsed=None if mode == "refusal" else ({} if mode == "malformed" else output.model_dump()),
+            output_parsed=None if mode == "refusal" else parsed,
             model="resolved-synthetic-model",
             usage=None if mode == "unknown_usage" else SimpleNamespace(
                 input_tokens=32001 if mode == "over_limit" else 100,

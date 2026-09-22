@@ -22,10 +22,12 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 ProviderFailureCategory = Literal[
     "authentication", "billing", "rate_limit", "model_unavailable",
     "invalid_request", "timeout", "provider_unavailable", "unknown",
+    "structured_output_invalid", "request_contract_invalid", "response_validation_failed",
 ]
 SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
     "authentication", "billing", "rate_limit", "model_unavailable",
     "invalid_request", "timeout", "provider_unavailable", "unknown",
+    "structured_output_invalid", "request_contract_invalid", "response_validation_failed",
 })
 
 
@@ -45,7 +47,9 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
     Only SDK exception type, HTTP status, and documented machine error codes
     participate. Exception messages and response bodies are never returned.
     """
-    from openai import APIConnectionError, APIStatusError, APITimeoutError
+    from openai import (
+        APIConnectionError, APIResponseValidationError, APIStatusError, APITimeoutError,
+    )
 
     if isinstance(error, (APITimeoutError, TimeoutError)):
         return "timeout"
@@ -67,6 +71,12 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
             "organization_deactivated", "project_deactivated",
         }:
             return "authentication"
+        # The provider rejected the structured-output contract itself (its
+        # strict JSON schema support or the serialized schema), not the content.
+        if machine_values & {
+            "invalid_json_schema", "json_validate_failed", "schema_validation_failed",
+        }:
+            return "request_contract_invalid"
         status = error.status_code
         if status in {401, 403}:
             return "authentication"
@@ -85,6 +95,10 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
         return "unknown"
     if isinstance(error, APIConnectionError):
         return "provider_unavailable"
+    if isinstance(error, APIResponseValidationError):
+        # The provider's response envelope could not be modeled by the SDK;
+        # the structured output did not match the request contract.
+        return "structured_output_invalid"
     return "unknown"
 
 
@@ -269,16 +283,19 @@ class OpenAIResponsesProvider:
                 **self._profile_request_options(),
             )
             if getattr(response, "status", None) != "completed":
-                raise ProviderFailure("unknown")
+                # Non-completed responses under strict structured output mean the
+                # provider could not return schema-conforming content.
+                raise ProviderFailure("structured_output_invalid")
             parsed = response.output_parsed
             if parsed is None:
-                raise ProviderFailure("unknown")
+                raise ProviderFailure("structured_output_invalid")
             try:
                 return self.profile_output_model.model_validate(parsed).to_domain()
             except ValidationError as error:
+                # The provider's parsed structure failed our local contract.
                 # The offline evaluator records only this cause's class name;
                 # production persists ProviderFailure.category, never details.
-                raise ProviderFailure("unknown") from error
+                raise ProviderFailure("response_validation_failed") from error
         except ProviderFailure:
             raise
         except Exception as error:

@@ -247,8 +247,31 @@ def test_other_ai_capabilities_do_not_get_profile_reasoning_or_schema(provider_n
 
 
 def test_schema_compression_never_merges_different_evidence_constraints():
-    from app.schemas.profile_suggestions import ProviderWireSuggestionOutput, _groq_profile_schema
-    schema = ProviderWireSuggestionOutput.model_json_schema()
-    schema["$defs"]["HeadlineSuggestion"]["properties"]["evidence"]["minItems"] = 2
+    from pydantic import BaseModel, Field
+
+    from app.schemas.profile_suggestions import (
+        GroqProfileOutput, ProviderWireSuggestionOutput, _groq_profile_schema,
+        _strict_wire_schema,
+    )
+
+    class Short(BaseModel):
+        evidence: list[dict] = Field(min_length=1)
+
+    class Long(BaseModel):
+        evidence: list[dict] = Field(min_length=2)
+
+    class Envelope(BaseModel):
+        short: Short
+        long: Long
+
     with pytest.raises(ValueError, match="different constraints"):
-        _groq_profile_schema(schema)
+        _groq_profile_schema(Envelope.model_json_schema())
+    # The real Groq union schema still shares its identical evidence arrays,
+    # and the flat OpenAI schema is already fully strict single-shape output.
+    assert _groq_profile_schema(GroqProfileOutput.model_json_schema())
+    flat = ProviderWireSuggestionOutput.model_json_schema()
+    for node in flat["$defs"].values():
+        if "properties" in node:
+            assert set(node["required"]) == set(node["properties"])
+            assert node["additionalProperties"] is False
+    assert _strict_wire_schema(flat) == flat
