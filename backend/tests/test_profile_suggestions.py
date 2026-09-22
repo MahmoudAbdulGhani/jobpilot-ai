@@ -269,6 +269,71 @@ def test_profile_provider_envelope_parse_failure_maps_to_structured_output_inval
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
 
 
+def _captured_wire_validation():
+    try:
+        ProviderWireSuggestionOutput.model_validate({"suggestions": [{}, "not-an-object"]})
+    except ValidationError as error:
+        return error
+    raise AssertionError("expected the wire contract to reject this payload")
+
+
+@pytest.mark.parametrize("upstream", [
+    _captured_wire_validation(),
+    openai.LengthFinishReasonError(completion=SimpleNamespace(usage=None)),
+    openai.ContentFilterFinishReasonError(),
+])
+def test_profile_provider_escaping_sdk_parse_failures_map_to_structured_output_invalid(upstream):
+    """A pydantic ValidationError escaping the SDK's own responses.parse
+    structured-output validation — plus the SDK's dedicated finish-reason
+    classes — must surface as structured_output_invalid, never 'unknown',
+    with no provider text leaking through."""
+    def fail(**kwargs):
+        raise upstream
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=fail))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid" == str(caught.value)
+    assert caught.value.field is None
+    assert "private CV text" not in str(caught.value)
+
+
+def test_profile_provider_reproduces_production_sdk_parse_unknown_path():
+    """Regression for the observed production 'outcome_message=unknown': a
+    real openai client whose responses.parse JSON cannot be validated by the
+    SDK's internal text_format parse (non-conforming provider output) raised a
+    raw pydantic ValidationError that was previously classified unknown."""
+    raw = {
+        "id": "resp_1", "object": "response", "created_at": 0,
+        "status": "completed",
+        "output": [{"id": "msg_1", "type": "message", "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "not-json",
+                                 "annotations": []}]}],
+    }
+
+    def handler(request):
+        return httpx.Response(200, json=raw, request=request)
+
+    transport = httpx.MockTransport(handler)
+    client = openai.OpenAI(
+        api_key="x", http_client=httpx.Client(transport=transport), max_retries=0,
+    )
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30,
+        max_output_tokens=4000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "structured_output_invalid"
+    assert "unknown" != str(caught.value)
+    assert "not-json" not in str(caught.value)
+
+
 def test_profile_provider_local_contract_violation_maps_to_invalid_field_value():
     """A flat-wire-validated payload that still violates the local domain
     contract (a headline above the 200-char bound but inside the 300-char

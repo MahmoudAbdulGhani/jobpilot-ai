@@ -59,10 +59,15 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
     """
     from openai import (
         APIConnectionError, APIResponseValidationError, APIStatusError, APITimeoutError,
+        ContentFilterFinishReasonError, LengthFinishReasonError,
     )
 
     if isinstance(error, (APITimeoutError, TimeoutError)):
         return "timeout"
+    if isinstance(error, (LengthFinishReasonError, ContentFilterFinishReasonError)):
+        # Dedicated SDK signals that the provider could not return a
+        # schema-conforming structured result (output truncated or filtered).
+        return "structured_output_invalid"
     if isinstance(error, APIStatusError):
         body = getattr(error, "body", None)
         machine_values = {
@@ -108,6 +113,12 @@ def classify_provider_failure(error: Exception) -> ProviderFailureCategory:
     if isinstance(error, APIResponseValidationError):
         # The provider's response envelope could not be modeled by the SDK;
         # the structured output did not match the request contract.
+        return "structured_output_invalid"
+    if isinstance(error, ValidationError):
+        # A pydantic ValidationError escaped the SDK's own structured-output
+        # parse inside responses.parse: the provider's JSON does not conform
+        # to the text_format model. Inputs, values, and messages never
+        # participate here — only the exception class is observed.
         return "structured_output_invalid"
     return "unknown"
 
