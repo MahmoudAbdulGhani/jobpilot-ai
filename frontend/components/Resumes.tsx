@@ -1,5 +1,4 @@
 'use client';
-import {MeteredButton} from './MeteredButton';
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle,
@@ -316,6 +315,7 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
   }
 
   async function generateSuggestions() {
+    if (pending) return;
     setPending(true);
     setAiError('');
     try {
@@ -390,8 +390,8 @@ function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => 
               <section className="ai-suggestions">
                 <h3><Sparkle size={20} />AI profile suggestions</h3>
                 <p className="muted">Provider: OpenAI when configured. Your confirmed CV text will leave JobPilot only when you request generation. Review every fact and quote before applying.</p>
-                {!suggestionSet && <MeteredButton feature="profile" className="secondary-button" disabled={pending} onClick={() => void generateSuggestions()}><Sparkle size={18} />{pending ? 'Generating…' : 'Suggest profile details with AI'}</MeteredButton>}
-                {suggestionSet?.status === 'failed' && <MeteredButton feature="profile" className="secondary-button" onClick={() => void generateSuggestions()}>Retry suggestions</MeteredButton>}
+                {!suggestionSet && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}><Sparkle size={18} />{pending ? 'Generating…' : 'Suggest profile details with AI'}</button>}
+                {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}>{pending ? 'Generating…' : 'Retry suggestions'}</button>}
                 {suggestionSet?.suggestions?.map(item => (
                   <article className="suggestion-card" key={item.id}>
                     <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet.status === 'applied'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use {item.field}</label>

@@ -1,5 +1,3 @@
-// Isolate the feature widget; entitlement enforcement has dedicated connected tests.
-vi.mock('../components/MeteredButton',()=>({MeteredButton:'button'}));
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResumesView } from '../components/Resumes';
@@ -253,7 +251,7 @@ describe('ResumesView', () => {
     expect(screen.getByRole('button', { name: 'Retry extraction' })).not.toBeNull();
   });
 
-  it('shows the AI disclosure and applies an edited selected suggestion', async () => {
+  it('clicks the enabled AI control, posts to the resume endpoint, and renders returned suggestions', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
     await screen.findByText('CV 2026');
@@ -261,17 +259,46 @@ describe('ResumesView', () => {
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     expect(await screen.findByText(/confirmed CV text will leave JobPilot/)).not.toBeNull();
-    apiMock.mockResolvedValueOnce({
+    let resolveGeneration!: (value: unknown) => void;
+    apiMock.mockReturnValueOnce(new Promise(resolve => { resolveGeneration = resolve; }));
+    const generate = screen.getByRole('button', { name: 'Suggest profile details with AI' });
+    expect(generate.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(generate);
+    expect(await screen.findByRole('button', { name: 'Generating…' })).not.toBeNull();
+    expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}`, { method: 'POST' });
+
+    resolveGeneration({
       id: 'set-1', resume_id: pdfResume.id, status: 'ready', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: null,
       suggestions: [{ id: 'headline-1', field: 'headline', value: 'Ada Lovelace', evidence: [{ quote: 'Ada Lovelace' }] }],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
     const proposed = await screen.findByLabelText('Proposed headline');
+    expect((proposed as HTMLTextAreaElement).value).toBe('Ada Lovelace');
     fireEvent.change(proposed, { target: { value: 'Computing pioneer' } });
     apiMock.mockResolvedValueOnce({
       id: 'set-1', resume_id: pdfResume.id, status: 'applied', provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, applied_at: '2026-09-14T11:00:00Z', suggestions: [],
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply selected changes' }));
     expect(await screen.findByText(/Selected profile changes applied/)).not.toBeNull();
+  });
+
+  it.each([
+    'AI data-use consent is required. Review Privacy settings before continuing.',
+    'The AI provider is currently unavailable. Try again later.',
+  ])('shows a generation error and leaves the action retryable: %s', async message => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    await screen.findByText(/confirmed CV text will leave JobPilot/);
+
+    apiMock.mockRejectedValueOnce(new Error(message));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe(message);
+    const retry = screen.getByRole('button', { name: 'Suggest profile details with AI' });
+    expect(retry.hasAttribute('disabled')).toBe(false);
+    expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}`, { method: 'POST' });
   });
 });
