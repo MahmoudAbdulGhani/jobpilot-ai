@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import openai
@@ -2027,3 +2027,214 @@ def test_openai_profile_async_timeout_releases_reservation_and_persists_safe_fai
         "http_status": None,
     }
     assert usage.active_token is None
+
+
+def _queued_openai_settings(monkeypatch):
+    settings = get_settings()
+    for name, value in {
+        "JOBPILOT_AI_ENABLED": True,
+        "JOBPILOT_AI_TEST_PROVIDER": False,
+        "JOBPILOT_AI_PROVIDER": "openai",
+        "JOBPILOT_OPENAI_API_KEY": "synthetic-key",
+        "POSTGRES_DB": settings.POSTGRES_TEST_DB,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    return settings
+
+
+def _capture_profile_worker(monkeypatch):
+    submitted = []
+    monkeypatch.setattr(
+        profile_suggestion_service._PROFILE_EXECUTOR,
+        "submit",
+        lambda *args: submitted.append(args) or object(),
+    )
+    return submitted
+
+
+def _bind_worker_session(monkeypatch, db_session):
+    from sqlalchemy.orm import Session
+
+    monkeypatch.setattr(
+        profile_suggestion_service,
+        "SessionLocal",
+        lambda: Session(
+            bind=db_session.connection(), join_transaction_mode="create_savepoint"
+        ),
+    )
+
+
+def test_async_request_finishes_before_worker_and_polling_reaches_ready(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner, "Senior Engineer")
+    _queued_openai_settings(monkeypatch)
+    _bind_worker_session(monkeypatch, db_session)
+    submitted = _capture_profile_worker(monkeypatch)
+    calls = []
+
+    class SuccessfulProvider:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            calls.append("provider")
+            return ProviderSuggestionOutput.model_validate({
+                "suggestions": [{
+                    "id": "headline-1", "field": "headline",
+                    "value": "Senior Engineer",
+                    "evidence": [{"quote": "Senior Engineer"}],
+                }],
+                "not_found": sorted(ALL_SUGGESTION_FIELDS - {"headline"}),
+            })
+
+    monkeypatch.setattr(
+        profile_suggestion_service, "provider_for", lambda settings: SuccessfulProvider()
+    )
+    created = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    assert created.status_code == 200
+    assert created.json()["status"] == "generating"
+    assert len(submitted) == 1
+    assert calls == []
+    assert suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest",
+        headers=headers(owner),
+    ).json()["status"] == "generating"
+
+    runner, *args = submitted[0]
+    runner(*args)
+    db_session.expire_all()
+    latest = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest",
+        headers=headers(owner),
+    )
+    assert calls == ["provider"]
+    assert latest.status_code == 200
+    assert latest.json()["status"] == "ready"
+
+
+def test_async_worker_provider_failure_commits_failed_and_polls_failed(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    _queued_openai_settings(monkeypatch)
+    _bind_worker_session(monkeypatch, db_session)
+    submitted = _capture_profile_worker(monkeypatch)
+
+    class FailedProvider:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure("provider_unavailable")
+
+    monkeypatch.setattr(
+        profile_suggestion_service, "provider_for", lambda settings: FailedProvider()
+    )
+    created = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    submitted[0][0](*submitted[0][1:])
+    db_session.expire_all()
+    latest = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest",
+        headers=headers(owner),
+    )
+    assert latest.status_code == 200
+    assert latest.json()["id"] == created.json()["id"]
+    assert latest.json()["status"] == "failed"
+    assert latest.json()["outcome_message"] == "provider_unavailable"
+    assert db_session.get(AIUsage, owner.id).active_token is None
+
+
+def test_async_worker_exception_is_observed_and_committed_failed(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    settings = _queued_openai_settings(monkeypatch)
+    _bind_worker_session(monkeypatch, db_session)
+    submitted = _capture_profile_worker(monkeypatch)
+    created = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    monkeypatch.setattr(
+        profile_suggestion_service,
+        "_finish_generation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("synthetic")),
+    )
+    submitted[0][0](*submitted[0][1:])
+    db_session.expire_all()
+    record = db_session.get(ProfileSuggestionSet, uuid.UUID(created.json()["id"]))
+    assert record.status == "failed"
+    assert record.outcome_message == "unknown"
+    assert record.failure_diagnostic == {
+        "request_stage": "background_worker",
+        "configured_timeout_seconds": settings.JOBPILOT_AI_TIMEOUT_SECONDS,
+        "elapsed_time_bucket": "unknown",
+        "http_status": None,
+    }
+    assert db_session.get(AIUsage, owner.id).active_token is None
+
+
+def test_stale_generating_poll_fails_releases_and_allows_one_retry(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    from sqlalchemy import func, select
+
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    settings = _queued_openai_settings(monkeypatch)
+    submitted = _capture_profile_worker(monkeypatch)
+    first = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    record = db_session.get(ProfileSuggestionSet, uuid.UUID(first.json()["id"]))
+    usage = db_session.get(AIUsage, owner.id)
+    reservation = db_session.get(UsageReservation, usage.active_token)
+    stale_at = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.JOBPILOT_AI_TIMEOUT_SECONDS + 11
+    )
+    record.created_at = stale_at
+    reservation.created_at = stale_at
+    usage.active_until = stale_at
+    db_session.commit()
+
+    latest = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest",
+        headers=headers(owner),
+    )
+    assert latest.status_code == 200
+    assert latest.json()["status"] == "failed"
+    assert latest.json()["outcome_message"] == "timeout"
+    assert latest.json()["failure_diagnostic"] == {
+        "request_stage": "background_worker",
+        "configured_timeout_seconds": settings.JOBPILOT_AI_TIMEOUT_SECONDS,
+        "elapsed_time_bucket": "over_60s" if settings.JOBPILOT_AI_TIMEOUT_SECONDS + 11 >= 60 else "30_to_60s",
+        "http_status": None,
+    }
+    db_session.refresh(reservation)
+    db_session.refresh(usage)
+    assert reservation.released_at is not None
+    assert usage.active_token is None
+
+    retry = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "generating"
+    assert retry.json()["id"] != first.json()["id"]
+    assert len(submitted) == 2
+    assert db_session.scalar(select(func.count()).select_from(ProfileSuggestionSet).where(
+        ProfileSuggestionSet.owner_id == owner.id,
+        ProfileSuggestionSet.resume_id == uuid.UUID(resume_id),
+        ProfileSuggestionSet.status == "generating",
+    )) == 1

@@ -48,7 +48,7 @@ def latest(resume_id: uuid.UUID, db: Database, current_user: CurrentUser):
     if resume is None:
         raise HTTPException(404, "Resume not found")
     record = profile_suggestion_service.latest_for_resume(
-        db, owner_id=current_user.id, resume_id=resume.id
+        db, owner_id=current_user.id, resume_id=resume.id, settings=get_settings()
     )
     if record is None:
         raise HTTPException(404, "Suggestion set not found")

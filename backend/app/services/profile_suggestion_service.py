@@ -1,15 +1,19 @@
 import hashlib
 import json
+import logging
 import re
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from concurrent.futures import CancelledError, ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models import CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction
+from app.models import (
+    CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction,
+    UsageReservation,
+)
 from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProfileSuggestion, ProviderSuggestionOutput
 from app.services.ai_provider import (
@@ -18,11 +22,14 @@ from app.services.ai_provider import (
     GroqResponsesProvider,
     PROMPT_VERSION,
     ProviderFailure,
+    _timeout_diagnostic,
 )
 from app.core.db import SessionLocal
 
 
 _PROFILE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="profile-suggestions")
+_PROFILE_JOB_GRACE_SECONDS = 10
+_operations = logging.getLogger("jobpilot.operations")
 
 
 _CONTACT_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE)
@@ -87,6 +94,56 @@ def provider_for(settings: Settings):
     )
 
 
+def _worker_event(stage: str, outcome: str) -> None:
+    # Operational lifecycle only: never include identifiers, source text,
+    # provider responses, credentials, URLs, or exception strings.
+    _operations.info("profile_suggestion_worker stage=%s outcome=%s", stage, outcome)
+
+
+def _release_stale_profile_reservations(
+    session: Session, *, record: ProfileSuggestionSet
+) -> None:
+    from app.services import ai_usage
+
+    cutoff = record.created_at + timedelta(seconds=1)
+    reservations = list(session.scalars(select(UsageReservation).where(
+        UsageReservation.owner_id == record.owner_id,
+        UsageReservation.feature == "profile",
+        UsageReservation.released_at.is_(None),
+        UsageReservation.created_at <= cutoff,
+    )))
+    for reservation in reservations:
+        ai_usage.release(session, record.owner_id, reservation.id)
+
+
+def _recover_stale_generation(
+    session: Session, *, record: ProfileSuggestionSet, settings: Settings,
+    now: datetime | None = None,
+) -> bool:
+    if record.status != "generating":
+        return False
+    current_time = now or datetime.now(timezone.utc)
+    created_at = record.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    elapsed = max(0.0, (current_time - created_at).total_seconds())
+    stale_after = settings.JOBPILOT_AI_TIMEOUT_SECONDS + _PROFILE_JOB_GRACE_SECONDS
+    if elapsed <= stale_after:
+        return False
+    diagnostic = _timeout_diagnostic(
+        "outer", settings.JOBPILOT_AI_TIMEOUT_SECONDS, elapsed
+    )
+    diagnostic["request_stage"] = "background_worker"
+    record.status = "failed"
+    record.outcome_message = "timeout"
+    record.failure_diagnostic = diagnostic
+    _release_stale_profile_reservations(session, record=record)
+    session.commit()
+    session.refresh(record)
+    _worker_event("stale_recovery", "failed_timeout")
+    return True
+
+
 def _prepare_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings):
     from app.services.privacy_service import require_consent
     require_consent(session, owner_id, "ai_profile_suggestions")
@@ -100,9 +157,12 @@ def _prepare_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume
         ProfileSuggestionSet.owner_id == owner_id,
         ProfileSuggestionSet.resume_id == resume.id,
         ProfileSuggestionSet.status == "generating",
-    ))
+    ).with_for_update())
     if existing:
-        raise SuggestionError(409, "Suggestions are already being generated for this resume.")
+        if not _recover_stale_generation(
+            session, record=existing, settings=settings
+        ):
+            raise SuggestionError(409, "Suggestions are already being generated for this resume.")
     provider_name, model, _ = provider_configuration(settings)
     from app.services import ai_usage
     try:
@@ -148,7 +208,14 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
             raise
         return record
     try:
+        _worker_event("provider", "started")
         output = ai_usage.bounded_call(lambda: provider.suggest(record.source_text), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
+        session.refresh(record)
+        if record.status != "generating":
+            ai_usage.release(session, record.owner_id, token)
+            session.commit()
+            _worker_event("provider", "discarded_after_recovery")
+            return record
         suggestions, partial = validate_output(output, record.source_text)
         suggestions.extend({
             "id": f"not-found:{field}", "field": field, "status": "not_found",
@@ -162,29 +229,86 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
         record.outcome_message = error.category
         record.failure_field = error.field
         record.failure_diagnostic = error.diagnostic
+        _worker_event("provider", "failed")
     except Exception:
         record.status = "failed"
         record.outcome_message = "unknown"
+        _worker_event("provider", "exception")
     ai_usage.release(session, record.owner_id, token)
     session.commit()
     session.refresh(record)
+    if record.status == "ready":
+        _worker_event("commit", "ready")
     return record
 
 
-def _run_queued(record_id: uuid.UUID, token, settings: Settings) -> None:
-    session = SessionLocal()
+def _persist_worker_exception(record_id: uuid.UUID, token, settings: Settings) -> None:
+    from app.services import ai_usage
+
+    recovery = SessionLocal()
     try:
+        record = recovery.get(ProfileSuggestionSet, record_id)
+        reservation = recovery.get(UsageReservation, token)
+        if record is not None and record.status == "generating":
+            record.status = "failed"
+            record.outcome_message = "unknown"
+            record.failure_diagnostic = {
+                "request_stage": "background_worker",
+                "configured_timeout_seconds": settings.JOBPILOT_AI_TIMEOUT_SECONDS,
+                "elapsed_time_bucket": "unknown",
+                "http_status": None,
+            }
+        owner_id = record.owner_id if record is not None else (
+            reservation.owner_id if reservation is not None else None
+        )
+        if owner_id is not None:
+            ai_usage.release(recovery, owner_id, token)
+        recovery.commit()
+        _worker_event("exception_recovery", "committed")
+    except Exception:
+        recovery.rollback()
+        _worker_event("exception_recovery", "failed")
+    finally:
+        recovery.close()
+
+
+def _run_queued(record_id: uuid.UUID, token, settings: Settings) -> None:
+    session = None
+    try:
+        _worker_event("worker", "started")
+        session = SessionLocal()
         record = session.get(ProfileSuggestionSet, record_id)
         if record is not None and record.status == "generating":
             _finish_generation(session, record=record, token=token, settings=settings, background=True)
+    except Exception:
+        if session is not None:
+            session.rollback()
+        _worker_event("worker", "exception")
+        _persist_worker_exception(record_id, token, settings)
     finally:
-        session.close()
+        if session is not None:
+            session.close()
+
+
+def _observe_queued(future) -> None:
+    try:
+        error = future.exception()
+    except CancelledError:
+        _worker_event("executor", "cancelled")
+        return
+    except Exception:
+        _worker_event("executor", "observer_exception")
+        return
+    _worker_event("executor", "exception" if error is not None else "completed")
 
 
 def queue_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings) -> ProfileSuggestionSet:
     record, token = _prepare_generation(session, owner_id=owner_id, resume=resume, settings=settings)
     try:
-        _PROFILE_EXECUTOR.submit(_run_queued, record.id, token, settings)
+        future = _PROFILE_EXECUTOR.submit(_run_queued, record.id, token, settings)
+        if hasattr(future, "add_done_callback"):
+            future.add_done_callback(_observe_queued)
+        _worker_event("executor", "queued")
     except Exception:
         from app.services import ai_usage
         record.status = "failed"
@@ -249,13 +373,20 @@ def get_owned(session: Session, *, owner_id: uuid.UUID, suggestion_id: uuid.UUID
     ))
 
 
-def latest_for_resume(session: Session, *, owner_id: uuid.UUID, resume_id: uuid.UUID):
-    return session.scalar(
+def latest_for_resume(
+    session: Session, *, owner_id: uuid.UUID, resume_id: uuid.UUID,
+    settings: Settings | None = None,
+):
+    record = session.scalar(
         select(ProfileSuggestionSet)
         .where(ProfileSuggestionSet.owner_id == owner_id, ProfileSuggestionSet.resume_id == resume_id)
         .order_by(ProfileSuggestionSet.created_at.desc(), ProfileSuggestionSet.id.desc())
         .limit(1)
+        .with_for_update()
     )
+    if record is not None and settings is not None:
+        _recover_stale_generation(session, record=record, settings=settings)
+    return record
 
 
 def _key(value) -> str:
