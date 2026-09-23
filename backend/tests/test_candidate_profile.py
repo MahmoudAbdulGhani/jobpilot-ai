@@ -157,6 +157,34 @@ def test_patch_is_partial_and_upserts(profile_client, profile_users):
     assert body["created_at"] == created["created_at"]
 
 
+def test_patch_round_trips_manual_target_roles_experience_and_authorization(profile_client, profile_users):
+    owner, _ = profile_users
+    payload = {
+        "headline": "Remote",
+        "location": "Tripoli, Lebanon",
+        "target_roles": ["Product Engineer"],
+        "skills": ["Python"],
+        "experience": [{"title": "Product Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": None}],
+        "education": [{"school": "State University", "degree": "BSc", "field": "Computer Science", "period": "2020"}],
+        "languages": [{"name": "English", "proficiency": "professional"}],
+        "remote_preference": "remote",
+        "work_authorization": "citizen",
+        "salary_preference": {"currency": "USD", "min": 70000, "max": 90000},
+    }
+    saved = profile_client.patch("/api/profile", json=payload, headers=auth_headers(owner))
+    assert saved.status_code == status.HTTP_200_OK
+    assert saved.json()["target_roles"] == ["Product Engineer"]
+    assert saved.json()["experience"][0]["organization"] == "Cedar Labs"
+    assert saved.json()["work_authorization"] == "citizen"
+    reloaded = profile_client.get("/api/profile", headers=auth_headers(owner))
+    assert reloaded.status_code == status.HTTP_200_OK
+    assert reloaded.json()["headline"] == "Remote"
+    assert reloaded.json()["location"] == "Tripoli, Lebanon"
+    assert reloaded.json()["target_roles"] == ["Product Engineer"]
+    assert reloaded.json()["experience"][0]["title"] == "Product Engineer"
+    assert reloaded.json()["work_authorization"] == "citizen"
+
+
 def test_patch_can_clear_fields_with_null(profile_client, profile_users):
     owner, _ = profile_users
     body = full_profile_body()

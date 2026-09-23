@@ -314,7 +314,10 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
       const value = manual[field];
       let normalized = value;
       if (field === 'target_roles' || field === 'skills') normalized = (value || []).filter((item: string) => item.trim());
-      if (field === 'experience' || field === 'education') normalized = [JSON.parse(value || '{}')];
+      if (field === 'experience' || field === 'education') {
+        const parsed = JSON.parse(value || '{}');
+        normalized = Array.isArray(parsed) ? parsed : [parsed];
+      }
       const payload = field === 'headline' || field === 'location' || field === 'remote_preference' || field === 'work_authorization'
         ? { [field]: value || null }
         : { [field]: normalized };

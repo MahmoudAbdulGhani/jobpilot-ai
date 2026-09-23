@@ -119,6 +119,57 @@ describe('ProfileView', () => {
     expect(screen.getByRole('heading', { name: 'Staff Engineer' })).not.toBeNull();
   });
 
+  it('serializes target roles, experience, and work authorization with their exact profile keys', async () => {
+    const base = { ...sampleProfile, target_roles: [], experience: [], work_authorization: null };
+    apiMock.mockResolvedValueOnce(base);
+    render(<ProfileView />);
+    await screen.findByRole('button', { name: /Edit profile/ });
+    fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    fireEvent.change(screen.getByLabelText('Target roles'), { target: { value: 'Product Engineer, Platform Engineer' } });
+    fireEvent.change(screen.getByLabelText('Work authorization'), { target: { value: 'citizen' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add experience' }));
+    const titles = screen.getAllByLabelText('Title');
+    const organizations = screen.getAllByLabelText('Organization');
+    fireEvent.change(titles.at(-1)!, { target: { value: 'Product Engineer' } });
+    fireEvent.change(organizations.at(-1)!, { target: { value: 'Cedar Labs' } });
+    const saved = { ...base, target_roles: ['Product Engineer', 'Platform Engineer'], work_authorization: 'citizen' as const, experience: [{ title: 'Product Engineer', organization: 'Cedar Labs', period: null, notes: null }] };
+    apiMock.mockResolvedValueOnce(saved);
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((apiMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.target_roles).toEqual(['Product Engineer', 'Platform Engineer']);
+    expect(body.experience).toEqual([{ title: 'Product Engineer', organization: 'Cedar Labs', period: null, notes: null }]);
+    expect(body.work_authorization).toBe('citizen');
+    expect(body.headline).toBe(base.headline);
+    expect(body.location).toBe(base.location);
+  });
+
+  it('renders headline and location separately and uses the save response immediately', async () => {
+    apiMock.mockResolvedValueOnce(sampleProfile);
+    render(<ProfileView />);
+    await screen.findByRole('heading', { name: 'Senior Backend Engineer focused on reliable APIs' });
+    expect(screen.getByText('Beirut, Lebanon')).not.toBeNull();
+    apiMock.mockResolvedValueOnce({ ...sampleProfile, headline: 'Remote', location: 'Tripoli, Lebanon' });
+    fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Remote' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Tripoli, Lebanon' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByRole('heading', { name: 'Remote' })).not.toBeNull();
+    expect(screen.getByText('Tripoli, Lebanon')).not.toBeNull();
+  });
+
+  it('does not optimistically replace profile values when the save fails', async () => {
+    apiMock.mockResolvedValueOnce(sampleProfile);
+    render(<ProfileView />);
+    await screen.findByRole('button', { name: /Edit profile/ });
+    fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Unsaved headline' } });
+    apiMock.mockRejectedValueOnce(new Error('Validation failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Validation failed');
+    expect(screen.getByRole('heading', { name: 'Edit profile' })).not.toBeNull();
+  });
+
   it('rejects a salary range where the minimum exceeds the maximum', async () => {
     apiMock.mockResolvedValueOnce(sampleProfile);
     render(<ProfileView />);

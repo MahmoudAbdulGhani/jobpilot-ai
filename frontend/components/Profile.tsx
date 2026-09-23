@@ -226,6 +226,7 @@ export function ProfileView() {
         body: JSON.stringify(buildInput(draft)),
       });
       setProfile(saved);
+      setDraft(draftFrom(saved));
       setState('ready');
       setEditing(false);
       setNotice(saved.headline ? 'Profile saved.' : 'Profile saved. Add your headline to make it stand out.');
