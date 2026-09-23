@@ -30,6 +30,7 @@ from app.schemas.profile import (
     SKILL_MAX_LENGTH,
     WORK_AUTHORIZATIONS,
 )
+from app.schemas.profile import CandidateProfileResponse
 
 SuggestionField = Literal[
     "headline", "location", "target_roles", "skills", "experience", "education",
@@ -523,6 +524,7 @@ class SuggestionSetResponse(BaseModel):
     failure_diagnostic: dict[str, Any] | None = None
     applied_at: datetime | None
     apply_result: dict[str, Any] | None
+    profile: CandidateProfileResponse | None = None
     created_at: datetime
     updated_at: datetime
 

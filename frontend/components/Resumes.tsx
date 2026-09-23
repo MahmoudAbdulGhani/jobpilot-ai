@@ -15,7 +15,7 @@ import {
 } from '@phosphor-icons/react';
 import { api, downloadResume } from '../lib/api';
 import { Dialog } from './Dialog';
-import type { ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
+import type { CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
 type PageState = 'loading' | 'ready' | 'error';
 
@@ -291,7 +291,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
     if (!suggestionSet || selected.size === 0) return;
     setPending(true); setError('');
     try {
-      adopt(await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
+      const applied = await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
         method: 'POST', body: JSON.stringify({ selections: (suggestionSet.suggestions || [])
           .filter(item => item.status !== 'not_found' && selected.has(item.id))
           .map(item => {
@@ -301,7 +301,9 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
               : draft;
             return { ...item, value };
           }) }),
-      }));
+      });
+      adopt(applied);
+      if (applied.profile) window.dispatchEvent(new CustomEvent<CandidateProfile>('jobpilot:profile-updated', { detail: applied.profile }));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not apply selected suggestions.'); }
     finally { setPending(false); }
   }
@@ -316,7 +318,8 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
       const payload = field === 'headline' || field === 'location' || field === 'remote_preference' || field === 'work_authorization'
         ? { [field]: value || null }
         : { [field]: normalized };
-      await api('/profile', { method: 'PATCH', body: JSON.stringify(payload) });
+      const saved = await api<CandidateProfile>('/profile', { method: 'PATCH', body: JSON.stringify(payload) });
+      window.dispatchEvent(new CustomEvent<CandidateProfile>('jobpilot:profile-updated', { detail: saved }));
       setManualNotice(`${fieldTitle(field)} saved as user-provided.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not save ${fieldTitle(field)}.`); }
     finally { setPending(false); }

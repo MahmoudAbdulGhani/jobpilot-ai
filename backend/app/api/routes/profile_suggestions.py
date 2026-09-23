@@ -9,7 +9,8 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import User
 from app.schemas.profile_suggestions import ApplySuggestionRequest, SuggestionSetResponse
-from app.services import profile_suggestion_service, resume_service
+from app.schemas.profile import CandidateProfileResponse
+from app.services import profile_service, profile_suggestion_service, resume_service
 
 router = APIRouter(prefix="/profile-suggestions", tags=["AI profile suggestions"])
 CurrentUser = Annotated[User, Depends(_require_bearer_user)]
@@ -63,7 +64,12 @@ def get(suggestion_id: uuid.UUID, db: Database, current_user: CurrentUser):
 def apply(suggestion_id: uuid.UUID, body: ApplySuggestionRequest, db: Database, current_user: CurrentUser):
     record = owned_or_404(db, current_user, suggestion_id)
     try:
-        return profile_suggestion_service.apply(db, record=record, selections=body.selections)
+        applied = profile_suggestion_service.apply(db, record=record, selections=body.selections)
+        response = SuggestionSetResponse.model_validate(applied)
+        profile = profile_service.get_candidate_profile(db, owner_id=current_user.id)
+        return response.model_copy(update={
+            "profile": None if profile is None else CandidateProfileResponse.model_validate(profile),
+        })
     except profile_suggestion_service.SuggestionError as error:
         raise HTTPException(error.status_code, error.message) from error
 

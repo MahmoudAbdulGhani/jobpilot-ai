@@ -79,6 +79,26 @@ describe('ProfileView', () => {
     expect(screen.getByRole('button', { name: /Edit profile/ })).not.toBeNull();
   });
 
+  it('reconciles an applied suggestion profile snapshot without a manual refresh', async () => {
+    apiMock.mockResolvedValueOnce(sampleProfile);
+    render(<ProfileView />);
+    await screen.findByRole('heading', { name: 'Senior Backend Engineer focused on reliable APIs' });
+    const updated = {
+      ...sampleProfile,
+      headline: 'Remote',
+      target_roles: ['Full Stack Developer'],
+      skills: ['Python'],
+      experience: [{ title: 'Engineer', organization: 'Cedar Labs', period: '2020-2024', notes: null }],
+      education: [{ school: 'State University', degree: 'BSc', field: 'Computer Science', period: '2020' }],
+      remote_preference: 'remote' as const,
+    };
+    window.dispatchEvent(new CustomEvent('jobpilot:profile-updated', { detail: updated }));
+    expect(await screen.findByRole('heading', { name: 'Remote' })).not.toBeNull();
+    expect(screen.getByText('Full Stack Developer')).not.toBeNull();
+    expect(screen.getByText('Python')).not.toBeNull();
+    expect(screen.getByText('Cedar Labs')).not.toBeNull();
+  });
+
   it('persists edited values through the PATCH endpoint and shows the success state', async () => {
     apiMock.mockResolvedValueOnce(sampleProfile);
     render(<ProfileView />);

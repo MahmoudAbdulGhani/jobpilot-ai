@@ -124,6 +124,19 @@ export function ProfileView() {
 
   useEffect(() => { void loadProfile(); }, []);
 
+  useEffect(() => {
+    const reconcile = (event: Event) => {
+      const next = (event as CustomEvent<CandidateProfile>).detail;
+      if (!next) return;
+      setProfile(next);
+      setState('ready');
+      setDraft(current => editing ? current : draftFrom(next));
+      setNotice('Profile updated from your saved suggestions.');
+    };
+    window.addEventListener('jobpilot:profile-updated', reconcile);
+    return () => window.removeEventListener('jobpilot:profile-updated', reconcile);
+  }, [editing]);
+
   function startEditing() {
     setDraft(draftFrom(profile));
     setFormError('');

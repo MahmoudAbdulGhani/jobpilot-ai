@@ -99,6 +99,8 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
         headers=headers(owner), json={"selections": [selection]},
     )
     assert applied.status_code == 200
+    assert applied.json()["profile"]["headline"] == "Senior Engineer"
+    assert applied.json()["profile"]["remote_preference"] is None
     assert suggestion_client.get("/api/profile", headers=headers(owner)).json()["headline"] == "Senior Engineer"
     repeated = suggestion_client.post(
         f"/api/profile-suggestions/{body['id']}/apply",
@@ -117,6 +119,59 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
     assert profile.headline == "Senior Engineer"
     assert profile.ai_provenance["headline"]["source_available"] is False
     assert "evidence" not in profile.ai_provenance["headline"]
+
+
+def test_apply_persists_all_selected_profile_field_types_without_cross_field_mapping(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    source = (
+        "Senior Engineer Beirut Full Stack Developer Python FastAPI Cedar Labs "
+        "Lebanese University BSc Computer Science Arabic native English remote citizen "
+        "USD 70000 90000 2020-2024 Built APIs"
+    )
+    resume_id = confirmed_resume(suggestion_client, owner, text=source)
+    values = [
+        {"id": "headline-1", "field": "headline", "value": "Senior Engineer", "evidence": [{"quote": source}]},
+        {"id": "location-1", "field": "location", "value": "Beirut", "evidence": [{"quote": source}]},
+        {"id": "roles-1", "field": "target_roles", "value": "Full Stack Developer", "evidence": [{"quote": source}]},
+        {"id": "skills-1", "field": "skills", "value": ["Python", "FastAPI"], "evidence": [{"quote": source}]},
+        {"id": "experience-1", "field": "experience", "value": {"title": "Senior Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": "Built APIs"}, "evidence": [{"quote": source}]},
+        {"id": "education-1", "field": "education", "value": {"school": "Lebanese University", "degree": None, "field": None, "period": None}, "evidence": [{"quote": source}]},
+        {"id": "languages-1", "field": "languages", "value": {"name": "Arabic", "proficiency": "native"}, "evidence": [{"quote": source}]},
+        {"id": "remote-1", "field": "remote_preference", "value": "remote", "evidence": [{"quote": source}]},
+        {"id": "auth-1", "field": "work_authorization", "value": "citizen", "evidence": [{"quote": source}]},
+        {"id": "salary-1", "field": "salary_preference", "value": {"currency": "USD", "min": 70000, "max": 90000}, "evidence": [{"quote": source}]},
+    ]
+
+    class AllFieldsProvider:
+        name = "deterministic-test"
+        model = "synthetic-v1"
+
+        def suggest(self, _source):
+            return ProviderSuggestionOutput.model_validate({"suggestions": values, "not_found": []})
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: AllFieldsProvider())
+    generated = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert generated.status_code == 200
+    applied = suggestion_client.post(
+        f"/api/profile-suggestions/{generated.json()['id']}/apply",
+        headers=headers(owner), json={"selections": generated.json()["suggestions"]},
+    )
+    assert applied.status_code == 200
+    profile = applied.json()["profile"]
+    assert profile["headline"] == "Senior Engineer"
+    assert profile["location"] == "Beirut"
+    assert profile["target_roles"] == ["Full Stack Developer"]
+    assert profile["skills"] == ["Python", "FastAPI"]
+    assert profile["experience"][0]["organization"] == "Cedar Labs"
+    assert profile["education"][0]["school"] == "Lebanese University"
+    assert profile["languages"] == [{"name": "Arabic", "proficiency": "native"}]
+    assert profile["remote_preference"] == "remote"
+    assert profile["work_authorization"] == "citizen"
+    assert profile["salary_preference"] == {"currency": "USD", "min": 70000, "max": 90000}
 
 
 def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_users, db_session, monkeypatch):
