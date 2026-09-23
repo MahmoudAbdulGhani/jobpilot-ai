@@ -153,7 +153,7 @@ export function ProfileView() {
     const min = minRaw === '' ? null : Number(minRaw);
     const max = maxRaw === '' ? null : Number(maxRaw);
     const hasSalary = Boolean(d.currency.trim()) || min !== null || max !== null;
-    return {
+    const payload: CandidateProfileInput = {
       headline: d.headline.trim() || null,
       target_roles: splitList(d.target_roles),
       location: d.location.trim() || null,
@@ -180,6 +180,7 @@ export function ProfileView() {
         ? { currency: d.currency.trim() || 'USD', min, max }
         : null,
     };
+    return payload;
   }
 
   function validate(d: Draft): string {

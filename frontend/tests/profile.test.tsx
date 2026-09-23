@@ -170,6 +170,35 @@ describe('ProfileView', () => {
     expect(screen.getByRole('heading', { name: 'Edit profile' })).not.toBeNull();
   });
 
+  it('round-trips one complete profile payload and renders every response field', async () => {
+    apiMock.mockResolvedValueOnce(sampleProfile);
+    render(<ProfileView />);
+    await screen.findByRole('button', { name: /Edit profile/ });
+    fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    apiMock.mockResolvedValueOnce(sampleProfile);
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    const payload = JSON.parse((apiMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(payload).toMatchObject({
+      headline: sampleProfile.headline,
+      location: sampleProfile.location,
+      target_roles: sampleProfile.target_roles,
+      skills: sampleProfile.skills,
+      experience: sampleProfile.experience,
+      education: sampleProfile.education,
+      languages: sampleProfile.languages,
+      remote_preference: sampleProfile.remote_preference,
+      work_authorization: sampleProfile.work_authorization,
+      salary_preference: sampleProfile.salary_preference,
+    });
+    expect(await screen.findByRole('heading', { name: sampleProfile.headline! })).not.toBeNull();
+    expect(screen.getByText(sampleProfile.location!)).not.toBeNull();
+    expect(screen.getByText('Python')).not.toBeNull();
+    expect(screen.getByText('Example Systems')).not.toBeNull();
+    expect(screen.getByText('English')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Remote' })).toBeNull();
+  });
+
   it('rejects a salary range where the minimum exceeds the maximum', async () => {
     apiMock.mockResolvedValueOnce(sampleProfile);
     render(<ProfileView />);
