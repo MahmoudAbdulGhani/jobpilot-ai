@@ -468,7 +468,7 @@ def test_profile_provider_never_leaks_raw_response_body_or_cv_data():
 def _transport_response(body):
     return {
         "id": "resp_1", "object": "response", "created_at": 0,
-        "status": "incomplete", "incomplete_details": {"reason": "length"},
+        "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
         "output": [{"id": "msg_1", "type": "message", "status": "incomplete",
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": body,
@@ -702,7 +702,31 @@ def test_openai_end_to_end_incomplete_status_with_truncated_json_is_structured_o
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
+    assert caught.value.diagnostic == {
+        "status": "incomplete",
+        "finish_reason": "max_output_tokens",
+        "output_shape": "malformed_json",
+        "parser_error_category": "malformed_json",
+        "validation_errors": [],
+    }
     assert body not in str(caught.value)
+
+
+def test_openai_profile_budget_accepts_complete_ten_category_response_with_incomplete_status():
+    body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))
+    captured = {}
+
+    def handler(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json=_transport_response(body), request=request)
+
+    provider = OpenAIResponsesProvider(
+        api_key="x", model="gpt-5-mini", timeout=30,
+        max_output_tokens=6000, client=_openai_client(handler),
+    )
+    output = provider.suggest("private CV text")
+    assert len(output.suggestions) == 10
+    assert captured["max_output_tokens"] == 6000
 
 
 def test_profile_provider_envelope_parse_failure_maps_to_structured_output_invalid():

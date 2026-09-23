@@ -69,11 +69,16 @@ def provider_for(settings: Settings):
     if name == "deterministic-test":
         return DeterministicTestProvider()
     provider_class = GroqResponsesProvider if name == "groq" else OpenAIResponsesProvider
+    max_output_tokens = (
+        settings.JOBPILOT_AI_MAX_OUTPUT_TOKENS
+        if name == "groq"
+        else settings.JOBPILOT_OPENAI_PROFILE_MAX_OUTPUT_TOKENS
+    )
     return provider_class(
         api_key=key,
         model=model,
         timeout=settings.JOBPILOT_AI_TIMEOUT_SECONDS,
-        max_output_tokens=settings.JOBPILOT_AI_MAX_OUTPUT_TOKENS,
+        max_output_tokens=max_output_tokens,
     )
 
 

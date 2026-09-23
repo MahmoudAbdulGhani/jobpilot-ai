@@ -98,7 +98,10 @@ def test_factory_selects_only_selected_key_and_model(provider, monkeypatch):
     assert captured["api_key"] == provider + "-test"
     assert captured["max_retries"] == 0
     assert captured["timeout"] == config.JOBPILOT_AI_TIMEOUT_SECONDS
-    assert selected.max_output_tokens == config.JOBPILOT_AI_MAX_OUTPUT_TOKENS
+    assert selected.max_output_tokens == (
+        config.JOBPILOT_AI_MAX_OUTPUT_TOKENS
+        if provider == "groq" else config.JOBPILOT_OPENAI_PROFILE_MAX_OUTPUT_TOKENS
+    )
     assert selected.model == (
         config.JOBPILOT_GROQ_MODEL if provider == "groq" else config.JOBPILOT_AI_MODEL)
     if provider == "groq":
