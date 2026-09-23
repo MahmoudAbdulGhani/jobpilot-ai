@@ -189,11 +189,16 @@ describe('ProfileView', () => {
   });
 
   it('captures every structured editor value in one PATCH payload', async () => {
-    const empty = { ...sampleProfile, skills: [], experience: [], education: [], languages: [] };
+    const empty = { ...sampleProfile, headline: null, location: null, target_roles: [], skills: [], experience: [], education: [], languages: [], remote_preference: null, work_authorization: null, salary_preference: null };
     apiMock.mockResolvedValueOnce(empty);
     render(<ProfileView />);
     await screen.findByRole('button', { name: /Edit profile/ });
     fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Product Engineer' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Tripoli, Lebanon' } });
+    fireEvent.change(screen.getByLabelText('Target roles'), { target: { value: 'Product Engineer' } });
+    fireEvent.change(screen.getByLabelText('Remote preference'), { target: { value: 'remote' } });
+    fireEvent.change(screen.getByLabelText('Work authorization'), { target: { value: 'citizen' } });
     fireEvent.change(screen.getByLabelText('Skills'), { target: { value: 'Python, FastAPI' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add experience' }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Engineer' } });
@@ -202,25 +207,46 @@ describe('ProfileView', () => {
     fireEvent.change(screen.getByLabelText('School'), { target: { value: 'State University' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add language' }));
     fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'Arabic' } });
+    fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'USD' } });
+    fireEvent.change(screen.getByLabelText(/Minimum \(yearly, optional\)/), { target: { value: '1000' } });
+    fireEvent.change(screen.getByLabelText(/Maximum \(yearly, optional\)/), { target: { value: '1500' } });
     const saved = {
       ...empty,
+      headline: 'Product Engineer', location: 'Tripoli, Lebanon', target_roles: ['Product Engineer'], remote_preference: 'remote' as const, work_authorization: 'citizen' as const,
       skills: ['Python', 'FastAPI'],
       experience: [{ title: 'Engineer', organization: 'Cedar Labs', period: null, notes: null }],
       education: [{ school: 'State University', degree: null, field: null, period: null }],
       languages: [{ name: 'Arabic', proficiency: 'professional' as const }],
+      salary_preference: { currency: 'USD', min: 1000, max: 1500 },
     };
     apiMock.mockResolvedValueOnce(saved);
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
     const body = JSON.parse((apiMock.mock.calls[1][1] as RequestInit).body as string);
-    if (process.env.NODE_ENV !== 'production') console.info('[profile-test] PATCH keys', Object.keys(body).sort());
+    if (process.env.NODE_ENV !== 'production') {
+      const typeOf = (value: unknown) => Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+      console.info('[profile-test] PATCH field types', Object.fromEntries(Object.entries(body).map(([key, value]) => [key, typeOf(value)])));
+    }
+    expect(Object.keys(body).sort()).toEqual([
+      'education', 'experience', 'headline', 'languages', 'location',
+      'remote_preference', 'salary_preference', 'skills', 'target_roles', 'work_authorization',
+    ]);
     expect(body.skills).toEqual(['Python', 'FastAPI']);
     expect(body.experience).toEqual(saved.experience);
     expect(body.education).toEqual(saved.education);
     expect(body.languages).toEqual(saved.languages);
-    expect(body).not.toHaveProperty('headline');
-    expect(body).not.toHaveProperty('location');
-    expect(body).not.toHaveProperty('remote_preference');
+    expect(body.headline).toBe('Product Engineer');
+    expect(body.location).toBe('Tripoli, Lebanon');
+    expect(body.target_roles).toEqual(['Product Engineer']);
+    expect(body.remote_preference).toBe('remote');
+    expect(body.work_authorization).toBe('citizen');
+    expect(body.salary_preference).toEqual({ currency: 'USD', min: 1000, max: 1500 });
+    expect(await screen.findByRole('heading', { name: 'Product Engineer' })).not.toBeNull();
+    expect(screen.getByText('Tripoli, Lebanon')).not.toBeNull();
+    expect(screen.getByText('Python')).not.toBeNull();
+    expect(screen.getByText('Cedar Labs')).not.toBeNull();
+    expect(screen.getByText('State University')).not.toBeNull();
+    expect(screen.getByText('Arabic')).not.toBeNull();
   });
 
   it('rejects a salary range where the minimum exceeds the maximum', async () => {

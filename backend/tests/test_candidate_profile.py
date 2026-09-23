@@ -181,14 +181,20 @@ def test_patch_round_trips_manual_target_roles_experience_and_authorization(prof
     saved = profile_client.patch("/api/profile", json=payload, headers=auth_headers(owner))
     assert saved.status_code == status.HTTP_200_OK
     assert saved.json()["target_roles"] == ["Product Engineer"]
+    assert saved.json()["skills"] == ["Python"]
     assert saved.json()["experience"][0]["organization"] == "Cedar Labs"
+    assert saved.json()["education"][0]["school"] == "State University"
+    assert saved.json()["languages"][0]["name"] == "English"
     assert saved.json()["work_authorization"] == "citizen"
     reloaded = profile_client.get("/api/profile", headers=auth_headers(owner))
     assert reloaded.status_code == status.HTTP_200_OK
     assert reloaded.json()["headline"] == "Remote"
     assert reloaded.json()["location"] == "Tripoli, Lebanon"
     assert reloaded.json()["target_roles"] == ["Product Engineer"]
+    assert reloaded.json()["skills"] == ["Python"]
     assert reloaded.json()["experience"][0]["title"] == "Product Engineer"
+    assert reloaded.json()["education"][0]["school"] == "State University"
+    assert reloaded.json()["languages"][0]["name"] == "English"
     assert reloaded.json()["work_authorization"] == "citizen"
 
 
