@@ -526,13 +526,13 @@ def _response_with_text(body, *, status="completed", reason=None):
     return payload
 
 
-@pytest.mark.parametrize(("body", "shape", "parser"), [
-    ("", "empty", "empty_output_text"),
-    ("not-json", "malformed_json", "malformed_json"),
-    ("[1, 2]", "array", "json_not_object"),
-    ("42", "scalar", "json_not_object"),
+@pytest.mark.parametrize(("body", "shape"), [
+    ("", "empty"),
+    ("not-json", "malformed_json"),
+    ("[1, 2]", "array"),
+    ("42", "scalar"),
 ])
-def test_openai_mock_transport_classifies_non_object_profile_output(body, shape, parser):
+def test_openai_mock_transport_classifies_non_object_profile_output(body, shape):
     provider = OpenAIResponsesProvider(
         api_key="synthetic", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
         client=_openai_client(
@@ -544,12 +544,12 @@ def test_openai_mock_transport_classifies_non_object_profile_output(body, shape,
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("synthetic CV")
     assert caught.value.category == "structured_output_invalid"
+    assert caught.value.diagnostic["max_output_tokens"] == 4000
     assert caught.value.diagnostic == {
+        "max_output_tokens": 4000,
         "status": "completed",
         "finish_reason": None,
         "output_shape": shape,
-        "parser_error_category": parser,
-        "validation_errors": [],
     }
     assert "synthetic CV" not in str(caught.value)
     if body:
@@ -573,6 +573,7 @@ def test_openai_mock_transport_captures_status_and_finish_reason_for_empty_outpu
     assert caught.value.diagnostic["status"] == "incomplete"
     assert caught.value.diagnostic["finish_reason"] == "max_output_tokens"
     assert caught.value.diagnostic["output_shape"] == "empty"
+    assert caught.value.diagnostic["max_output_tokens"] == 4000
 
 
 def test_openai_mock_transport_captures_validation_locations_and_types():
@@ -588,12 +589,12 @@ def test_openai_mock_transport_captures_validation_locations_and_types():
         provider.suggest("synthetic CV")
     assert caught.value.category == "response_contract_invalid"
     diagnostic = caught.value.diagnostic
-    assert diagnostic["status"] == "completed"
-    assert diagnostic["output_shape"] == "object"
-    assert diagnostic["parser_error_category"] is None
-    assert diagnostic["validation_errors"]
-    assert all(set(item) == {"location", "type"} for item in diagnostic["validation_errors"])
-    assert all("input" not in item and "msg" not in item for item in diagnostic["validation_errors"])
+    assert diagnostic == {
+        "max_output_tokens": 4000,
+        "status": "completed",
+        "finish_reason": None,
+        "output_shape": "object",
+    }
 
 
 def test_openai_mock_transport_captures_request_api_error_without_body():
@@ -612,11 +613,10 @@ def test_openai_mock_transport_captures_request_api_error_without_body():
         provider.suggest("synthetic CV")
     assert caught.value.category == "invalid_request"
     assert caught.value.diagnostic == {
+        "max_output_tokens": 4000,
         "status": 400,
         "finish_reason": None,
         "output_shape": None,
-        "parser_error_category": "api_error",
-        "validation_errors": [],
     }
     assert "sensitive detail" not in str(caught.value)
     assert "synthetic CV" not in str(caught.value)
@@ -683,7 +683,7 @@ def test_openai_sdk_400_maps_to_invalid_request_with_safe_diagnostics(monkeypatc
         }}, request=request)
 
     provider = OpenAIResponsesProvider(
-        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=12000,
         client=_openai_client(handler),
     )
     with pytest.raises(ProviderFailure) as caught:
@@ -708,7 +708,7 @@ def test_openai_end_to_end_accepts_incomplete_status_with_complete_json_object()
     finish, and the provider decodes and accepts it."""
     body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))
     provider = OpenAIResponsesProvider(
-        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=12000,
         client=_openai_client(lambda request: httpx.Response(200, json=_transport_response(body), request=request)),
     )
     output = provider.suggest("private CV text")
@@ -725,18 +725,17 @@ def test_openai_end_to_end_accepts_incomplete_status_with_complete_json_object()
 def test_openai_end_to_end_incomplete_status_with_truncated_json_is_structured_output_invalid():
     body = json.dumps(_strict_wire_output(_ten_category_wire_suggestions()))[:100]
     provider = OpenAIResponsesProvider(
-        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=4000,
+        api_key="x", model="gpt-5-mini", timeout=30, max_output_tokens=12000,
         client=_openai_client(lambda request: httpx.Response(200, json=_transport_response(body), request=request)),
     )
     with pytest.raises(ProviderFailure) as caught:
         provider.suggest("private CV text")
     assert caught.value.category == "structured_output_invalid" == str(caught.value)
     assert caught.value.diagnostic == {
+        "max_output_tokens": 12000,
         "status": "incomplete",
         "finish_reason": "max_output_tokens",
         "output_shape": "malformed_json",
-        "parser_error_category": "malformed_json",
-        "validation_errors": [],
     }
     assert body not in str(caught.value)
 
@@ -751,11 +750,11 @@ def test_openai_profile_budget_accepts_complete_ten_category_response_with_incom
 
     provider = OpenAIResponsesProvider(
         api_key="x", model="gpt-5-mini", timeout=30,
-        max_output_tokens=6000, client=_openai_client(handler),
+        max_output_tokens=12000, client=_openai_client(handler),
     )
     output = provider.suggest("private CV text")
     assert len(output.suggestions) == 10
-    assert captured["max_output_tokens"] == 6000
+    assert captured["max_output_tokens"] == 12000
 
 
 def test_profile_provider_envelope_parse_failure_maps_to_structured_output_invalid():
@@ -1127,6 +1126,7 @@ def test_profile_failure_persists_only_safe_provider_diagnostic(
     enable_fake(monkeypatch)
     resume_id = confirmed_resume(suggestion_client, owner)
     diagnostic = {
+        "max_output_tokens": 12000,
         "status": "incomplete",
         "finish_reason": "max_output_tokens",
         "output_shape": "empty",
@@ -1140,14 +1140,10 @@ def test_profile_failure_persists_only_safe_provider_diagnostic(
         "prompt": "private prompt",
     }
     expected = {
+        "max_output_tokens": 12000,
         "status": "incomplete",
         "finish_reason": "max_output_tokens",
         "output_shape": "empty",
-        "parser_error_category": "empty_output_text",
-        "validation_errors": [{
-            "location": ["suggestions", 0, "unknown"],
-            "type": "value_error",
-        }],
     }
 
     class Broken:
