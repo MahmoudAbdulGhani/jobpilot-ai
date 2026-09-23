@@ -140,8 +140,8 @@ describe('ProfileView', () => {
     expect(body.target_roles).toEqual(['Product Engineer', 'Platform Engineer']);
     expect(body.experience).toEqual([{ title: 'Product Engineer', organization: 'Cedar Labs', period: null, notes: null }]);
     expect(body.work_authorization).toBe('citizen');
-    expect(body.headline).toBe(base.headline);
-    expect(body.location).toBe(base.location);
+    expect(body).not.toHaveProperty('headline');
+    expect(body).not.toHaveProperty('location');
   });
 
   it('renders headline and location separately and uses the save response immediately', async () => {
@@ -170,7 +170,7 @@ describe('ProfileView', () => {
     expect(screen.getByRole('heading', { name: 'Edit profile' })).not.toBeNull();
   });
 
-  it('round-trips one complete profile payload and renders every response field', async () => {
+  it('preserves the complete response when no manual fields changed', async () => {
     apiMock.mockResolvedValueOnce(sampleProfile);
     render(<ProfileView />);
     await screen.findByRole('button', { name: /Edit profile/ });
@@ -179,18 +179,7 @@ describe('ProfileView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
     const payload = JSON.parse((apiMock.mock.calls[1][1] as RequestInit).body as string);
-    expect(payload).toMatchObject({
-      headline: sampleProfile.headline,
-      location: sampleProfile.location,
-      target_roles: sampleProfile.target_roles,
-      skills: sampleProfile.skills,
-      experience: sampleProfile.experience,
-      education: sampleProfile.education,
-      languages: sampleProfile.languages,
-      remote_preference: sampleProfile.remote_preference,
-      work_authorization: sampleProfile.work_authorization,
-      salary_preference: sampleProfile.salary_preference,
-    });
+    expect(payload).toEqual({});
     expect(await screen.findByRole('heading', { name: sampleProfile.headline! })).not.toBeNull();
     expect(screen.getByText(sampleProfile.location!)).not.toBeNull();
     expect(screen.getByText('Python')).not.toBeNull();
@@ -229,9 +218,9 @@ describe('ProfileView', () => {
     expect(body.experience).toEqual(saved.experience);
     expect(body.education).toEqual(saved.education);
     expect(body.languages).toEqual(saved.languages);
-    expect(body.headline).toBe(empty.headline);
-    expect(body.location).toBe(empty.location);
-    expect(body.remote_preference).toBe(empty.remote_preference);
+    expect(body).not.toHaveProperty('headline');
+    expect(body).not.toHaveProperty('location');
+    expect(body).not.toHaveProperty('remote_preference');
   });
 
   it('rejects a salary range where the minimum exceeds the maximum', async () => {

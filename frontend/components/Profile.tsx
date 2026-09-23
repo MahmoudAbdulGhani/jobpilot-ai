@@ -203,6 +203,18 @@ export function ProfileView() {
     return payload;
   }
 
+  function buildChangedInput(d: Draft, current: CandidateProfile | null): Partial<CandidateProfileInput> {
+    const full = buildInput(d);
+    if (!current) return full;
+    const changed: Partial<CandidateProfileInput> = {};
+    for (const field of Object.keys(full) as Array<keyof CandidateProfileInput>) {
+      if (JSON.stringify(full[field]) !== JSON.stringify(current[field])) {
+        changed[field] = full[field] as never;
+      }
+    }
+    return changed;
+  }
+
   function validate(d: Draft): string {
     if (d.experience.some(entry => !entry.title.trim() || !entry.organization.trim())) {
       return 'Every experience entry needs a title and an organization.';
@@ -244,7 +256,7 @@ export function ProfileView() {
     try {
       const saved = await api<CandidateProfile>('/profile', {
         method: 'PATCH',
-        body: JSON.stringify(buildInput(draft)),
+        body: JSON.stringify(buildChangedInput(draft, profile)),
       });
       setProfile(saved);
       setDraft(draftFrom(saved));
