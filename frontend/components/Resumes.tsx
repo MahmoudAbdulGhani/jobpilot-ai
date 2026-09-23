@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle,
@@ -40,6 +41,7 @@ export function ResumesView() {
   const [renameTarget, setRenameTarget] = useState<Resume | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
   const [reviewTarget, setReviewTarget] = useState<Resume | null>(null);
+  const [confirmedResumeIds, setConfirmedResumeIds] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -214,6 +216,7 @@ export function ResumesView() {
                   <Trash size={20} />Delete
                 </button>
               </div>
+              <ProfileSuggestionsPanel resume={resume} enabled={confirmedResumeIds.has(resume.id)} />
             </li>
           ))}
         </ul>
@@ -225,50 +228,155 @@ export function ResumesView() {
         <DeleteResumeDialog resume={deleteTarget} onClose={() => setDeleteTarget(null)} onDelete={deleteResume} />
       )}
       {reviewTarget && (
-        <ExtractionDialog key={reviewTarget.id} resume={reviewTarget} onClose={() => setReviewTarget(null)} />
+        <ExtractionDialog key={reviewTarget.id} resume={reviewTarget} onClose={() => setReviewTarget(null)} onConfirmed={() => setConfirmedResumeIds(current => new Set(current).add(reviewTarget.id))} />
       )}
     </div>
   );
 }
 
-function ExtractionDialog({ resume, onClose }: { resume: Resume; onClose: () => void }) {
+const PROFILE_FIELDS = [
+  'headline', 'location', 'target_roles', 'skills', 'experience', 'education',
+  'languages', 'remote_preference', 'work_authorization', 'salary_preference',
+] as const;
+
+const fieldTitle = (field: string) => field.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+
+function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled: boolean }) {
+  const [extraction, setExtraction] = useState<ResumeExtraction | null>(null);
+  const [suggestionSet, setSuggestionSet] = useState<ProfileSuggestionSet | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [drafts, setDrafts] = useState<Record<string, any>>({});
+  const [manual, setManual] = useState<Record<string, any>>({});
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const [manualNotice, setManualNotice] = useState('');
+
+  const adopt = (result: ProfileSuggestionSet) => {
+    if (result.resume_id !== resume.id) return;
+    setSuggestionSet(result);
+    const proposed = (result.suggestions || []).filter(item => item.status !== 'not_found');
+    setSelected(new Set(proposed.map(item => item.id)));
+    setDrafts(Object.fromEntries(proposed.map(item => [item.id, item.value])));
+  };
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    setExtraction({ reviewed_at: new Date().toISOString() } as ResumeExtraction);
+    void Promise.resolve(api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`))
+              .then(latest => { if (alive) adopt(latest); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [enabled, resume.id]);
+
+  async function generate() {
+    if (pending) return;
+    setPending(true); setError(''); setManualNotice('');
+    try {
+      let result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' });
+      adopt(result);
+      for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+        result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
+        adopt(result);
+      }
+      if (result.status === 'generating') throw new Error('Suggestions are still processing.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
+      try { adopt(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`)); } catch { /* retain error */ }
+    } finally { setPending(false); }
+  }
+
+  async function applySuggestions() {
+    if (!suggestionSet || selected.size === 0) return;
+    setPending(true); setError('');
+    try {
+      adopt(await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
+        method: 'POST', body: JSON.stringify({ selections: (suggestionSet.suggestions || [])
+          .filter(item => item.status !== 'not_found' && selected.has(item.id))
+          .map(item => {
+            const draft = drafts[item.id];
+            const value = item.field === 'skills' || ['experience', 'education', 'languages', 'salary_preference'].includes(item.field)
+              ? (typeof draft === 'string' ? JSON.parse(draft) : draft)
+              : draft;
+            return { ...item, value };
+          }) }),
+      }));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not apply selected suggestions.'); }
+    finally { setPending(false); }
+  }
+
+  async function saveManual(field: string) {
+    setPending(true); setError(''); setManualNotice('');
+    try {
+      const value = manual[field];
+      let normalized = value;
+      if (field === 'target_roles' || field === 'skills') normalized = (value || []).filter((item: string) => item.trim());
+      if (field === 'experience' || field === 'education') normalized = [JSON.parse(value || '{}')];
+      const payload = field === 'headline' || field === 'location' || field === 'remote_preference' || field === 'work_authorization'
+        ? { [field]: value || null }
+        : { [field]: normalized };
+      await api('/profile', { method: 'PATCH', body: JSON.stringify(payload) });
+      setManualNotice(`${fieldTitle(field)} saved as user-provided.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not save ${fieldTitle(field)}.`); }
+    finally { setPending(false); }
+  }
+
+  const notFound = new Set((suggestionSet?.suggestions || []).filter(item => item.status === 'not_found').map(item => item.field));
+  const grouped = PROFILE_FIELDS.map(field => ({ field, items: (suggestionSet?.suggestions || []).filter(item => item.field === field && item.status !== 'not_found') })).filter(group => group.items.length);
+
+  if (!extraction?.reviewed_at) return null;
+
+  return (
+    <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
+      <div className="panel-heading"><div><p className="eyebrow">Profile suggestions</p><h3><Sparkle size={20} />Review profile details</h3></div><span className={`status-badge ${suggestionSet?.status === 'ready' ? 'is-confirmed' : ''}`}>{suggestionSet?.status || 'idle'}</span></div>
+      <p className="muted">Provider: OpenAI when configured. Confirmed CV text is sent only when you request suggestions. Review every fact and quote before applying.</p>
+      {!suggestionSet && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}><Sparkle size={18} />Generate suggestions</button>}
+      {suggestionSet?.status === 'generating' && <p className="muted" role="status">Generating suggestions… This page will update automatically.</p>}
+      {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button>}
+      {suggestionSet?.status === 'failed' && suggestionSet.outcome_message && <p className="form-error" role="alert">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
+      {grouped.map(group => (
+        <div className="suggestion-field-group" key={group.field}><h4>{fieldTitle(group.field)}</h4>
+          {group.items.map(item => <article className="suggestion-card" key={item.id}>
+            <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet?.status !== 'ready'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use this AI suggestion</label>
+            {item.field === 'skills' && Array.isArray(drafts[item.id]) ? <div>{(drafts[item.id] as string[]).map((skill, index) => <input key={`${item.id}-${index}`} aria-label={`Proposed skill ${index + 1}`} value={skill} maxLength={100} disabled={suggestionSet?.status !== 'ready'} onChange={event => setDrafts(current => ({ ...current, [item.id]: current[item.id].map((value: string, itemIndex: number) => itemIndex === index ? event.target.value : value) }))} />)}</div> : <textarea aria-label={`Proposed ${item.field}`} value={typeof drafts[item.id] === 'string' ? drafts[item.id] : JSON.stringify(drafts[item.id], null, 2)} disabled={suggestionSet?.status !== 'ready'} onChange={event => setDrafts(current => ({ ...current, [item.id]: event.target.value }))} rows={3} />}
+            {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
+          </article>)}
+        </div>
+      ))}
+      {PROFILE_FIELDS.filter(field => notFound.has(field)).map(field => <ManualField key={field} field={field} value={manual[field]} setValue={value => setManual(current => ({ ...current, [field]: value }))} save={() => void saveManual(field)} pending={pending} />)}
+      {suggestionSet?.status === 'ready' && <button className="primary-button" disabled={pending || selected.size === 0} onClick={() => void applySuggestions()}>Apply selected AI suggestions</button>}
+      {suggestionSet?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Selected AI suggestions applied.</p>}
+      {manualNotice && <p className="profile-notice" role="status">{manualNotice}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+function ManualField({ field, value, setValue, save, pending }: { field: string; value: any; setValue: (value: any) => void; save: () => void; pending: boolean }) {
+  const rows = Array.isArray(value) ? value : [''];
+  const updateRow = (index: number, next: any) => setValue(rows.map((row, rowIndex) => rowIndex === index ? next : row));
+  const addRow = () => setValue([...rows, '']);
+  const removeRow = (index: number) => setValue(rows.filter((_, rowIndex) => rowIndex !== index));
+  return <div className="manual-field"><h4>{fieldTitle(field)}</h4><p className="muted">Not found in CV — add manually. <span className="user-provided">User-provided</span></p>
+    {field === 'headline' || field === 'location' ? <input aria-label={`Manual ${field}`} value={value || ''} maxLength={field === 'headline' ? 200 : 300} onChange={event => setValue(event.target.value)} /> : null}
+    {field === 'target_roles' || field === 'skills' ? <>{rows.map((row, index) => <div className="repeatable-row" key={index}><input aria-label={`Manual ${field} ${index + 1}`} value={row} maxLength={field === 'skills' ? 100 : 200} onChange={event => updateRow(index, event.target.value)} /><button type="button" className="action-button" onClick={() => removeRow(index)}>Remove</button></div>)}<button type="button" className="action-button" onClick={addRow}>Add another</button></> : null}
+    {field === 'languages' ? <>{(Array.isArray(value) ? value : [{ name: '', proficiency: 'professional' }]).map((row, index) => <div className="repeatable-row" key={index}><input aria-label={`Manual language ${index + 1}`} value={row.name} onChange={event => updateRow(index, { ...row, name: event.target.value })} /><select aria-label={`Manual language proficiency ${index + 1}`} value={row.proficiency} onChange={event => updateRow(index, { ...row, proficiency: event.target.value })}><option>basic</option><option>conversational</option><option>professional</option><option>native</option></select><button type="button" className="action-button" onClick={() => removeRow(index)}>Remove</button></div>)}<button type="button" className="action-button" onClick={() => setValue([...(Array.isArray(value) ? value : []), { name: '', proficiency: 'professional' }])}>Add language</button></> : null}
+    {field === 'remote_preference' && <select aria-label="Manual remote preference" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="office">Office</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select>}
+    {field === 'work_authorization' && <select aria-label="Manual work authorization" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="citizen">Citizen</option><option value="permanent_resident">Permanent resident</option><option value="work_visa">Work visa</option><option value="needs_sponsorship">Needs sponsorship</option><option value="other">Other</option></select>}
+    {field === 'salary_preference' && <div className="repeatable-row"><input aria-label="Manual salary currency" maxLength={12} placeholder="Currency" value={value?.currency || ''} onChange={event => setValue({ ...(value || {}), currency: event.target.value })} /><input aria-label="Manual salary minimum" type="number" value={value?.min ?? ''} onChange={event => setValue({ ...(value || {}), min: event.target.value ? Number(event.target.value) : null })} /><input aria-label="Manual salary maximum" type="number" value={value?.max ?? ''} onChange={event => setValue({ ...(value || {}), max: event.target.value ? Number(event.target.value) : null })} /></div>}
+    {field === 'experience' && <textarea aria-label="Manual experience" placeholder="JSON: title, organization, period, notes" value={value || ''} onChange={event => setValue(event.target.value)} />}
+    {field === 'education' && <textarea aria-label="Manual education" placeholder="JSON: school, degree, field, period" value={value || ''} onChange={event => setValue(event.target.value)} />}
+    <button type="button" className="secondary-button" disabled={pending} onClick={save}>Save user-provided {fieldTitle(field)}</button>
+  </div>;
+}
+
+function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; onClose: () => void; onConfirmed: () => void }) {
   const [extraction, setExtraction] = useState<ResumeExtraction | null>(null);
   const [draft, setDraft] = useState('');
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const [suggestionSet, setSuggestionSet] = useState<ProfileSuggestionSet | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [suggestionDrafts, setSuggestionDrafts] = useState<Record<string, string>>({});
-  const [aiError, setAiError] = useState('');
-
-function adoptSuggestions(result: ProfileSuggestionSet) {
-    if (result.resume_id !== resume.id) return;
-    setSuggestionSet(result);
-    const suggestions = result.suggestions || [];
-    const proposed = suggestions.filter(item => item.status !== 'not_found');
-    setSelected(new Set(proposed.map(item => item.id)));
-    setSuggestionDrafts(Object.fromEntries(proposed.map(item => [
-      item.id,
-      typeof item.value === 'string' ? item.value : JSON.stringify(item.value, null, 2),
-    ])));
-  }
-
-  async function refreshLatest() {
-    try {
-      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`));
-    } catch {
-      // Keep whatever is already displayed; the reported error stays primary.
-    }
-  }
-
-  async function loadLatest() {
-    try {
-      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`));
-    } catch (cause) {
-      if ((cause as { status?: number }).status !== 404) setAiError(cause instanceof Error ? cause.message : 'Could not load suggestions.');
-    }
-  }
 
   async function extract() {
     setPending(true);
@@ -279,7 +387,6 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
       setExtraction(result);
       setDraft(result.draft_text || '');
       setState('ready');
-      if (result.reviewed_at) await loadLatest();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not extract this resume.');
       setState('error');
@@ -317,6 +424,7 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
     try {
       const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction/confirm`, { method: 'POST' });
       setExtraction(result);
+      onConfirmed();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not confirm the extracted text.');
     } finally {
@@ -324,48 +432,6 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
     }
   }
 
-  async function generateSuggestions() {
-    if (pending) return;
-    setPending(true);
-    setAiError('');
-    try {
-      let result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' });
-      adoptSuggestions(result);
-      for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 1000));
-        result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
-        adoptSuggestions(result);
-      }
-      if (result.status === 'generating') throw new Error('Profile suggestions are still processing.');
-    } catch (cause) {
-      setAiError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
-      await refreshLatest();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function applySuggestions() {
-    if (!suggestionSet) return;
-    setPending(true);
-    setAiError('');
-    try {
-      const stringFields = new Set(['headline', 'location', 'target_roles', 'remote_preference', 'work_authorization']);
-      const selections = (suggestionSet.suggestions || []).filter(item => item.status !== 'not_found' && selected.has(item.id)).map(item => ({
-        ...item,
-        value: stringFields.has(item.field)
-          ? suggestionDrafts[item.id]
-          : JSON.parse(suggestionDrafts[item.id]),
-      }));
-      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
-        method: 'POST', body: JSON.stringify({ selections }),
-      }));
-    } catch (cause) {
-      setAiError(cause instanceof Error ? cause.message : 'Could not apply the selected changes.');
-    } finally {
-      setPending(false);
-    }
-  }
 
   const savedDraft = extraction?.draft_text || '';
   const hasUnsavedChanges = draft !== savedDraft;
@@ -405,30 +471,6 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
               rows={18}
               maxLength={200000}
             />
-            {isConfirmed && (
-              <section className="ai-suggestions">
-                <h3><Sparkle size={20} />AI profile suggestions</h3>
-                <p className="muted">Provider: OpenAI when configured. Your confirmed CV text will leave JobPilot only when you request generation. Review every fact and quote before applying.</p>
-                {!suggestionSet && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}><Sparkle size={18} />{pending ? 'Generating…' : 'Suggest profile details with AI'}</button>}
-                {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void generateSuggestions()}>{pending ? 'Generating…' : 'Retry suggestions'}</button>}
-                {suggestionSet?.suggestions?.map(item => item.status === 'not_found' ? (
-                  <article className="suggestion-card" key={item.id}>
-                    <strong>{item.field.replaceAll('_', ' ')}</strong>
-                    <p className="muted">Not found in the confirmed CV.</p>
-                  </article>
-                ) : (
-                  <article className="suggestion-card" key={item.id}>
-                    <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet.status === 'applied'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use {item.field.replaceAll('_', ' ')}</label>
-                    <textarea aria-label={`Proposed ${item.field}`} value={suggestionDrafts[item.id] || ''} disabled={suggestionSet.status === 'applied'} onChange={event => setSuggestionDrafts(current => ({ ...current, [item.id]: event.target.value }))} rows={3} />
-                    {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
-                  </article>
-                ))}
-                {suggestionSet?.outcome_message && <p className="muted">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
-                {suggestionSet?.status === 'ready' && <button className="primary-button" disabled={pending || selected.size === 0} onClick={() => void applySuggestions()}>{pending ? 'Applying…' : 'Apply selected changes'}</button>}
-                {suggestionSet?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Selected profile changes applied.</p>}
-                {aiError && <p className="form-error" role="alert">{aiError}</p>}
-              </section>
-            )}
             {error && <p className="form-error" role="alert">{error}</p>}
           </>
         )}
