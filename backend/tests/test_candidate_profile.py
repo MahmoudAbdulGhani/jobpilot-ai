@@ -130,10 +130,17 @@ def test_patch_creates_then_persists_profile(profile_client, profile_users, db_s
     )
     assert stored is not None
     assert stored.skills == ["Python", "FastAPI", "PostgreSQL"]
+    assert stored.experience == profile["experience"]
+    assert stored.education == profile["education"]
+    assert stored.languages == profile["languages"]
 
     retrieved = profile_client.get("/api/profile", headers=auth_headers(owner))
     assert retrieved.status_code == status.HTTP_200_OK
     assert retrieved.json() == profile
+    assert retrieved.json()["skills"] == stored.skills
+    assert retrieved.json()["experience"] == stored.experience
+    assert retrieved.json()["education"] == stored.education
+    assert retrieved.json()["languages"] == stored.languages
 
 
 def test_patch_is_partial_and_upserts(profile_client, profile_users):

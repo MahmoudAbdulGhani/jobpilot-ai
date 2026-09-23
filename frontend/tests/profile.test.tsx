@@ -199,6 +199,41 @@ describe('ProfileView', () => {
     expect(screen.queryByRole('heading', { name: 'Remote' })).toBeNull();
   });
 
+  it('captures every structured editor value in one PATCH payload', async () => {
+    const empty = { ...sampleProfile, skills: [], experience: [], education: [], languages: [] };
+    apiMock.mockResolvedValueOnce(empty);
+    render(<ProfileView />);
+    await screen.findByRole('button', { name: /Edit profile/ });
+    fireEvent.click(screen.getByRole('button', { name: /Edit profile/ }));
+    fireEvent.change(screen.getByLabelText('Skills'), { target: { value: 'Python, FastAPI' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add experience' }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Engineer' } });
+    fireEvent.change(screen.getByLabelText('Organization'), { target: { value: 'Cedar Labs' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add education' }));
+    fireEvent.change(screen.getByLabelText('School'), { target: { value: 'State University' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add language' }));
+    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'Arabic' } });
+    const saved = {
+      ...empty,
+      skills: ['Python', 'FastAPI'],
+      experience: [{ title: 'Engineer', organization: 'Cedar Labs', period: null, notes: null }],
+      education: [{ school: 'State University', degree: null, field: null, period: null }],
+      languages: [{ name: 'Arabic', proficiency: 'professional' as const }],
+    };
+    apiMock.mockResolvedValueOnce(saved);
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((apiMock.mock.calls[1][1] as RequestInit).body as string);
+    if (process.env.NODE_ENV !== 'production') console.info('[profile-test] PATCH keys', Object.keys(body).sort());
+    expect(body.skills).toEqual(['Python', 'FastAPI']);
+    expect(body.experience).toEqual(saved.experience);
+    expect(body.education).toEqual(saved.education);
+    expect(body.languages).toEqual(saved.languages);
+    expect(body.headline).toBe(empty.headline);
+    expect(body.location).toBe(empty.location);
+    expect(body.remote_preference).toBe(empty.remote_preference);
+  });
+
   it('rejects a salary range where the minimum exceeds the maximum', async () => {
     apiMock.mockResolvedValueOnce(sampleProfile);
     render(<ProfileView />);

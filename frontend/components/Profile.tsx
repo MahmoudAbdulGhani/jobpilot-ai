@@ -143,8 +143,28 @@ export function ProfileView() {
     setEditing(true);
   }
 
-  function setListField(field: 'experience' | 'education' | 'languages', next: Draft['experience'] | Draft['education'] | Draft['languages']) {
-    setDraft(current => ({ ...current, [field]: next }));
+  function updateExperience(index: number, patch: Partial<ExperienceEntry>) {
+    setDraft(current => {
+      const next = [...current.experience];
+      next[index] = { ...next[index], ...patch };
+      return { ...current, experience: next };
+    });
+  }
+
+  function updateEducation(index: number, patch: Partial<EducationEntry>) {
+    setDraft(current => {
+      const next = [...current.education];
+      next[index] = { ...next[index], ...patch };
+      return { ...current, education: next };
+    });
+  }
+
+  function updateLanguage(index: number, patch: Partial<LanguageEntry>) {
+    setDraft(current => {
+      const next = [...current.languages];
+      next[index] = { ...next[index], ...patch };
+      return { ...current, languages: next };
+    });
   }
 
   function buildInput(d: Draft): CandidateProfileInput {
@@ -355,9 +375,7 @@ export function ProfileView() {
                       maxLength={200}
                       placeholder="Backend Engineer"
                       onChange={event => {
-                        const next = [...draft.experience];
-                        next[index] = { ...entry, title: event.target.value };
-                        setListField('experience', next);
+                        updateExperience(index, { title: event.target.value });
                       }}
                     /></label>
                     <label>Organization<input
@@ -365,9 +383,7 @@ export function ProfileView() {
                       maxLength={200}
                       placeholder="Example Systems"
                       onChange={event => {
-                        const next = [...draft.experience];
-                        next[index] = { ...entry, organization: event.target.value };
-                        setListField('experience', next);
+                        updateExperience(index, { organization: event.target.value });
                       }}
                     /></label>
                   </div>
@@ -377,9 +393,7 @@ export function ProfileView() {
                       maxLength={100}
                       placeholder="2022 — present"
                       onChange={event => {
-                        const next = [...draft.experience];
-                        next[index] = { ...entry, period: event.target.value };
-                        setListField('experience', next);
+                        updateExperience(index, { period: event.target.value });
                       }}
                     /></label>
                     <label>Notes<input
@@ -387,18 +401,16 @@ export function ProfileView() {
                       maxLength={2000}
                       placeholder="Short summary"
                       onChange={event => {
-                        const next = [...draft.experience];
-                        next[index] = { ...entry, notes: event.target.value };
-                        setListField('experience', next);
+                        updateExperience(index, { notes: event.target.value });
                       }}
                     /></label>
                   </div>
-                  <button type="button" className="entry-remove" aria-label={`Remove experience entry ${index + 1}`} onClick={() => setListField('experience', draft.experience.filter((_, item) => item !== index))}>
+                  <button type="button" className="entry-remove" aria-label={`Remove experience entry ${index + 1}`} onClick={() => setDraft(current => ({ ...current, experience: current.experience.filter((_, item) => item !== index) }))}>
                     <Trash size={18} />Remove
                   </button>
                 </div>
               ))}
-              <button type="button" className="text-button" disabled={draft.experience.length >= MAX_EXPERIENCE} onClick={() => setListField('experience', [...draft.experience, { title: '', organization: '', period: null, notes: null }])}>
+              <button type="button" className="text-button" disabled={draft.experience.length >= MAX_EXPERIENCE} onClick={() => setDraft(current => ({ ...current, experience: [...current.experience, { title: '', organization: '', period: null, notes: null }] }))}>
                 <Plus size={18} />Add experience
               </button>
             </div>
@@ -413,9 +425,7 @@ export function ProfileView() {
                       maxLength={200}
                       placeholder="State University"
                       onChange={event => {
-                        const next = [...draft.education];
-                        next[index] = { ...entry, school: event.target.value };
-                        setListField('education', next);
+                        updateEducation(index, { school: event.target.value });
                       }}
                     /></label>
                     <label>Degree<input
@@ -423,9 +433,7 @@ export function ProfileView() {
                       maxLength={200}
                       placeholder="B.Sc."
                       onChange={event => {
-                        const next = [...draft.education];
-                        next[index] = { ...entry, degree: event.target.value };
-                        setListField('education', next);
+                        updateEducation(index, { degree: event.target.value });
                       }}
                     /></label>
                   </div>
@@ -435,9 +443,7 @@ export function ProfileView() {
                       maxLength={200}
                       placeholder="Computer Science"
                       onChange={event => {
-                        const next = [...draft.education];
-                        next[index] = { ...entry, field: event.target.value };
-                        setListField('education', next);
+                        updateEducation(index, { field: event.target.value });
                       }}
                     /></label>
                     <label>Period<input
@@ -445,18 +451,16 @@ export function ProfileView() {
                       maxLength={100}
                       placeholder="2016 — 2020"
                       onChange={event => {
-                        const next = [...draft.education];
-                        next[index] = { ...entry, period: event.target.value };
-                        setListField('education', next);
+                        updateEducation(index, { period: event.target.value });
                       }}
                     /></label>
                   </div>
-                  <button type="button" className="entry-remove" aria-label={`Remove education entry ${index + 1}`} onClick={() => setListField('education', draft.education.filter((_, item) => item !== index))}>
+                  <button type="button" className="entry-remove" aria-label={`Remove education entry ${index + 1}`} onClick={() => setDraft(current => ({ ...current, education: current.education.filter((_, item) => item !== index) }))}>
                     <Trash size={18} />Remove
                   </button>
                 </div>
               ))}
-              <button type="button" className="text-button" disabled={draft.education.length >= MAX_EDUCATION} onClick={() => setListField('education', [...draft.education, { school: '', degree: null, field: null, period: null }])}>
+              <button type="button" className="text-button" disabled={draft.education.length >= MAX_EDUCATION} onClick={() => setDraft(current => ({ ...current, education: [...current.education, { school: '', degree: null, field: null, period: null }] }))}>
                 <Plus size={18} />Add education
               </button>
             </div>
@@ -471,28 +475,24 @@ export function ProfileView() {
                       maxLength={100}
                       placeholder="English"
                       onChange={event => {
-                        const next = [...draft.languages];
-                        next[index] = { ...entry, name: event.target.value };
-                        setListField('languages', next);
+                        updateLanguage(index, { name: event.target.value });
                       }}
                     /></label>
                     <label>Proficiency<select
                       value={entry.proficiency}
                       onChange={event => {
-                        const next = [...draft.languages];
-                        next[index] = { ...entry, proficiency: event.target.value as LanguageProficiency };
-                        setListField('languages', next);
+                        updateLanguage(index, { proficiency: event.target.value as LanguageProficiency });
                       }}
                     >
                       {PROFICIENCY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select></label>
                   </div>
-                  <button type="button" className="entry-remove" aria-label={`Remove language ${index + 1}`} onClick={() => setListField('languages', draft.languages.filter((_, item) => item !== index))}>
+                  <button type="button" className="entry-remove" aria-label={`Remove language ${index + 1}`} onClick={() => setDraft(current => ({ ...current, languages: current.languages.filter((_, item) => item !== index) }))}>
                     <Trash size={18} />Remove
                   </button>
                 </div>
               ))}
-              <button type="button" className="text-button" disabled={draft.languages.length >= MAX_LANGUAGES} onClick={() => setListField('languages', [...draft.languages, { name: '', proficiency: 'professional' }])}>
+              <button type="button" className="text-button" disabled={draft.languages.length >= MAX_LANGUAGES} onClick={() => setDraft(current => ({ ...current, languages: [...current.languages, { name: '', proficiency: 'professional' }] }))}>
                 <Plus size={18} />Add language
               </button>
             </div>
