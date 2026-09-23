@@ -1,5 +1,6 @@
 """Shared AI request budget and bounded in-flight calls, without source payloads."""
 import uuid
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta, timezone
 
@@ -59,11 +60,16 @@ def dispatch_guard(session, owner_id):
 def bounded_call(operation, timeout):
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-request")
     future = executor.submit(operation)
+    started = time.monotonic()
     try:
         return future.result(timeout=timeout)
     except TimeoutError:
         future.cancel()
-        raise ProviderFailure("timeout") from None
+        from app.services.ai_provider import _timeout_diagnostic
+        raise ProviderFailure(
+            "timeout",
+            diagnostic=_timeout_diagnostic("outer", timeout, time.monotonic() - started),
+        ) from None
     finally:
         # A late worker returns data only; it has no DB session or write callback.
         executor.shutdown(wait=False, cancel_futures=True)

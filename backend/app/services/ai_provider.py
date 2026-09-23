@@ -1,5 +1,6 @@
 """Typed, tool-free AI provider boundary for explicit user-requested tasks."""
 import json
+import time
 from typing import Any, Literal, Protocol, cast
 
 from pydantic import ValidationError
@@ -49,6 +50,8 @@ SAFE_PARSER_ERROR_CATEGORIES = frozenset({
     "empty_output_text", "malformed_json", "json_not_object", "validation_error",
     "response_envelope_invalid", "finish_reason", "api_error",
 })
+SAFE_TIMEOUT_SOURCES = frozenset({"sdk", "outer"})
+SAFE_ELAPSED_TIME_BUCKETS = frozenset({"under_1s", "1_to_5s", "5_to_15s", "15_to_30s", "30_to_60s", "over_60s"})
 SAFE_VALIDATION_LOCATION_PARTS = frozenset({
     "suggestions", "not_found", "partial", "message", "id", "field", "evidence",
     "value", "text", "skills", "experience", "education", "language",
@@ -129,12 +132,41 @@ def _diagnostic(*, response=None, output_shape=None, parser_error_category=None,
 def _sanitize_diagnostic(value) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
+    if "timeout_source" in value:
+        source = value.get("timeout_source")
+        configured = value.get("configured_timeout_seconds")
+        bucket = value.get("elapsed_time_bucket")
+        return {
+            "timeout_source": source if isinstance(source, str) and source in SAFE_TIMEOUT_SOURCES else "unknown",
+            "configured_timeout_seconds": configured if isinstance(configured, (int, float)) and configured > 0 else None,
+            "elapsed_time_bucket": bucket if isinstance(bucket, str) and bucket in SAFE_ELAPSED_TIME_BUCKETS else "unknown",
+        }
     return _diagnostic(
         status=value.get("status"),
         finish_reason=value.get("finish_reason"),
         output_shape=value.get("output_shape"),
         parser_error_category=value.get("parser_error_category"),
     ) | {"validation_errors": _safe_validation_entries(value.get("validation_errors"))}
+
+
+def _timeout_diagnostic(source: str, configured_timeout_seconds: float, elapsed_seconds: float) -> dict[str, object]:
+    if elapsed_seconds < 1:
+        bucket = "under_1s"
+    elif elapsed_seconds < 5:
+        bucket = "1_to_5s"
+    elif elapsed_seconds < 15:
+        bucket = "5_to_15s"
+    elif elapsed_seconds < 30:
+        bucket = "15_to_30s"
+    elif elapsed_seconds < 60:
+        bucket = "30_to_60s"
+    else:
+        bucket = "over_60s"
+    return {
+        "timeout_source": source,
+        "configured_timeout_seconds": configured_timeout_seconds,
+        "elapsed_time_bucket": bucket,
+    }
 
 
 def _exception_diagnostic(error: Exception) -> dict[str, object] | None:
@@ -614,6 +646,7 @@ class OpenAIResponsesProvider:
         }}
 
     def suggest(self, source_text: str) -> ProviderSuggestionOutput:
+        started = time.monotonic()
         try:
             response = self.client.responses.create(
                 model=self.model,
@@ -651,8 +684,12 @@ class OpenAIResponsesProvider:
         except ProviderFailure:
             raise
         except Exception as error:
+            category = classify_provider_failure(error)
+            diagnostic = _exception_diagnostic(error)
+            if category == "timeout":
+                diagnostic = _timeout_diagnostic("sdk", self.timeout, time.monotonic() - started)
             raise ProviderFailure(
-                classify_provider_failure(error), diagnostic=_exception_diagnostic(error),
+                category, diagnostic=diagnostic,
             ) from None
 
     def _suggest_via_structured_output(self, source_text: str) -> ProviderSuggestionOutput:

@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -20,7 +21,7 @@ from app.schemas.profile_suggestions import (
     SuggestionSetResponse, _normalize_skills,
 )
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure, _profile_failure_field
-from app.services import profile_suggestion_service
+from app.services import ai_usage, profile_suggestion_service
 from consent_helpers import grant_consent
 from tests.test_resume_extraction import pdf_bytes
 
@@ -213,6 +214,34 @@ def test_profile_provider_exposes_only_safe_failure_category(upstream, category)
     assert str(caught.value) == category
     assert caught.value.category == category
     assert "sensitive" not in str(caught.value)
+
+
+def test_openai_sdk_timeout_persists_only_safe_timeout_diagnostic():
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    client = SimpleNamespace(responses=SimpleNamespace(
+        create=lambda **kwargs: (_ for _ in ()).throw(openai.APITimeoutError(request))
+    ))
+    provider = OpenAIResponsesProvider(
+        api_key="synthetic-key", model="gpt-5-mini", timeout=60,
+        max_output_tokens=6000, client=client,
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        provider.suggest("private CV text")
+    assert caught.value.category == "timeout"
+    assert caught.value.diagnostic == {
+        "timeout_source": "sdk",
+        "configured_timeout_seconds": 60,
+        "elapsed_time_bucket": "under_1s",
+    }
+
+
+def test_outer_timeout_persists_only_safe_timeout_diagnostic():
+    with pytest.raises(ProviderFailure) as caught:
+        ai_usage.bounded_call(lambda: time.sleep(0.05), 0.001)
+    assert caught.value.category == "timeout"
+    assert caught.value.diagnostic["timeout_source"] == "outer"
+    assert caught.value.diagnostic["configured_timeout_seconds"] == 0.001
+    assert caught.value.diagnostic["elapsed_time_bucket"] == "under_1s"
 
 
 def test_openai_adapter_maps_incomplete_and_transport_errors():
