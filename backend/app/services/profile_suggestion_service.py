@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -18,6 +19,10 @@ from app.services.ai_provider import (
     PROMPT_VERSION,
     ProviderFailure,
 )
+from app.core.db import SessionLocal
+
+
+_PROFILE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="profile-suggestions")
 
 
 _CONTACT_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE)
@@ -82,6 +87,114 @@ def provider_for(settings: Settings):
     )
 
 
+def _prepare_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings):
+    from app.services.privacy_service import require_consent
+    require_consent(session, owner_id, "ai_profile_suggestions")
+    extraction = session.scalar(select(ResumeExtraction).where(ResumeExtraction.resume_id == resume.id))
+    if extraction is None or extraction.status != "succeeded" or extraction.reviewed_at is None:
+        raise SuggestionError(409, "Confirm the extracted CV text before requesting suggestions.")
+    source = extraction.draft_text or ""
+    if not source or len(source) > settings.JOBPILOT_AI_MAX_INPUT_CHARS:
+        raise SuggestionError(413, "The confirmed CV text exceeds the AI input limit.")
+    existing = session.scalar(select(ProfileSuggestionSet).where(
+        ProfileSuggestionSet.owner_id == owner_id,
+        ProfileSuggestionSet.resume_id == resume.id,
+        ProfileSuggestionSet.status == "generating",
+    ))
+    if existing:
+        raise SuggestionError(409, "Suggestions are already being generated for this resume.")
+    provider_name, model, _ = provider_configuration(settings)
+    from app.services import ai_usage
+    try:
+        token = ai_usage.reserve(session, owner_id, settings, feature="profile")
+    except ai_usage.AIUsageError as error:
+        raise SuggestionError(error.status_code, error.message) from None
+    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id))
+    record = ProfileSuggestionSet(
+        owner_id=owner_id, resume_id=resume.id, extraction_id=extraction.id,
+        source_text=source, source_hash=source_hash(source), source_reviewed_at=extraction.reviewed_at,
+        profile_revision=profile_revision(profile), status="generating", suggestions=None,
+        provider=provider_name, model=model, prompt_version=PROMPT_VERSION,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record, token
+
+
+def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token, settings: Settings, provider=None, background=False):
+    from app.services.privacy_service import require_consent
+    from app.services import ai_usage
+    if provider is None:
+        try:
+            provider = provider_for(settings)
+        except Exception:
+            record.status = "failed"
+            record.outcome_message = "unknown"
+            ai_usage.release(session, record.owner_id, token)
+            session.commit()
+            if not background:
+                raise
+            return record
+    try:
+        ai_usage.dispatch_guard(session, record.owner_id)
+        require_consent(session, record.owner_id, "ai_profile_suggestions")
+    except Exception:
+        record.status = "failed"
+        record.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
+        ai_usage.release(session, record.owner_id, token)
+        session.commit()
+        if not background:
+            raise
+        return record
+    try:
+        output = ai_usage.bounded_call(lambda: provider.suggest(record.source_text), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
+        suggestions, partial = validate_output(output, record.source_text)
+        suggestions.extend({
+            "id": f"not-found:{field}", "field": field, "status": "not_found",
+            "value": None, "evidence": [],
+        } for field in output.not_found)
+        record.status = "ready"
+        record.suggestions = suggestions
+        record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
+    except ProviderFailure as error:
+        record.status = "failed"
+        record.outcome_message = error.category
+        record.failure_field = error.field
+        record.failure_diagnostic = error.diagnostic
+    except Exception:
+        record.status = "failed"
+        record.outcome_message = "unknown"
+    ai_usage.release(session, record.owner_id, token)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def _run_queued(record_id: uuid.UUID, token, settings: Settings) -> None:
+    session = SessionLocal()
+    try:
+        record = session.get(ProfileSuggestionSet, record_id)
+        if record is not None and record.status == "generating":
+            _finish_generation(session, record=record, token=token, settings=settings, background=True)
+    finally:
+        session.close()
+
+
+def queue_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings) -> ProfileSuggestionSet:
+    record, token = _prepare_generation(session, owner_id=owner_id, resume=resume, settings=settings)
+    try:
+        _PROFILE_EXECUTOR.submit(_run_queued, record.id, token, settings)
+    except Exception:
+        from app.services import ai_usage
+        record.status = "failed"
+        record.outcome_message = "unknown"
+        ai_usage.release(session, owner_id, token)
+        session.commit()
+        raise SuggestionError(503, "Could not queue profile suggestions.") from None
+    return record
+
+
 def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list[dict], bool]:
     from app.services.evidence_validation import normalize, supported_claim, value_text
     accepted: list[dict] = []
@@ -125,69 +238,9 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
 
 
 def generate(session: Session, *, owner_id: uuid.UUID, resume: Resume, settings: Settings) -> ProfileSuggestionSet:
-    from app.services.privacy_service import require_consent
-    require_consent(session, owner_id, "ai_profile_suggestions")
-    extraction = session.scalar(select(ResumeExtraction).where(ResumeExtraction.resume_id == resume.id))
-    if extraction is None or extraction.status != "succeeded" or extraction.reviewed_at is None:
-        raise SuggestionError(409, "Confirm the extracted CV text before requesting suggestions.")
-    source = extraction.draft_text or ""
-    if not source or len(source) > settings.JOBPILOT_AI_MAX_INPUT_CHARS:
-        raise SuggestionError(413, "The confirmed CV text exceeds the AI input limit.")
-    existing = session.scalar(select(ProfileSuggestionSet).where(
-        ProfileSuggestionSet.owner_id == owner_id,
-        ProfileSuggestionSet.resume_id == resume.id,
-        ProfileSuggestionSet.status == "generating",
-    ))
-    if existing:
-        raise SuggestionError(409, "Suggestions are already being generated for this resume.")
+    record, token = _prepare_generation(session, owner_id=owner_id, resume=resume, settings=settings)
     provider = provider_for(settings)
-    from app.services import ai_usage
-    try:
-        token = ai_usage.reserve(session, owner_id, settings, feature="profile")
-    except ai_usage.AIUsageError as error:
-        raise SuggestionError(error.status_code, error.message) from None
-    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id))
-    record = ProfileSuggestionSet(
-        owner_id=owner_id, resume_id=resume.id, extraction_id=extraction.id,
-        source_text=source, source_hash=source_hash(source), source_reviewed_at=extraction.reviewed_at,
-        profile_revision=profile_revision(profile), status="generating", suggestions=None,
-        provider=provider.name, model=provider.model, prompt_version=PROMPT_VERSION,
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    from app.services.ai_usage import dispatch_guard
-    try:
-        dispatch_guard(session, owner_id)
-        require_consent(session, owner_id, "ai_profile_suggestions")
-    except Exception:
-        record.status = "failed"
-        record.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
-        ai_usage.release(session, owner_id, token)
-        session.commit()
-        raise
-    try:
-        output = ai_usage.bounded_call(lambda: provider.suggest(source), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
-        suggestions, partial = validate_output(output, source)
-        suggestions.extend({
-            "id": f"not-found:{field}", "field": field, "status": "not_found",
-            "value": None, "evidence": [],
-        } for field in output.not_found)
-        record.status = "ready"
-        record.suggestions = suggestions
-        record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
-    except ProviderFailure as error:
-        record.status = "failed"
-        record.outcome_message = error.category
-        record.failure_field = error.field
-        record.failure_diagnostic = error.diagnostic
-    except Exception:
-        record.status = "failed"
-        record.outcome_message = "unknown"
-    ai_usage.release(session, owner_id, token)
-    session.commit()
-    session.refresh(record)
-    return record
+    return _finish_generation(session, record=record, token=token, settings=settings, provider=provider)
 
 
 def get_owned(session: Session, *, owner_id: uuid.UUID, suggestion_id: uuid.UUID) -> ProfileSuggestionSet | None:

@@ -29,7 +29,14 @@ def generate(resume_id: uuid.UUID, db: Database, current_user: CurrentUser):
     if resume is None:
         raise HTTPException(404, "Resume not found")
     try:
-        return profile_suggestion_service.generate(db, owner_id=current_user.id, resume=resume, settings=get_settings())
+        settings = get_settings()
+        if settings.JOBPILOT_AI_PROVIDER == "openai" and not settings.JOBPILOT_AI_TEST_PROVIDER:
+            return profile_suggestion_service.queue_generation(
+                db, owner_id=current_user.id, resume=resume, settings=settings,
+            )
+        return profile_suggestion_service.generate(
+            db, owner_id=current_user.id, resume=resume, settings=settings,
+        )
     except profile_suggestion_service.SuggestionError as error:
         raise HTTPException(error.status_code, error.message) from error
 

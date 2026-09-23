@@ -329,7 +329,14 @@ function adoptSuggestions(result: ProfileSuggestionSet) {
     setPending(true);
     setAiError('');
     try {
-      adoptSuggestions(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' }));
+      let result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' });
+      adoptSuggestions(result);
+      for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+        result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
+        adoptSuggestions(result);
+      }
+      if (result.status === 'generating') throw new Error('Profile suggestions are still processing.');
     } catch (cause) {
       setAiError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
       await refreshLatest();

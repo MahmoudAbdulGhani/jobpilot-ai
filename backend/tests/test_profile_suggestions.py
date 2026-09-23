@@ -229,9 +229,10 @@ def test_openai_sdk_timeout_persists_only_safe_timeout_diagnostic():
         provider.suggest("private CV text")
     assert caught.value.category == "timeout"
     assert caught.value.diagnostic == {
-        "timeout_source": "sdk",
+        "request_stage": "openai_sdk",
         "configured_timeout_seconds": 60,
         "elapsed_time_bucket": "under_1s",
+        "http_status": None,
     }
 
 
@@ -239,9 +240,10 @@ def test_outer_timeout_persists_only_safe_timeout_diagnostic():
     with pytest.raises(ProviderFailure) as caught:
         ai_usage.bounded_call(lambda: time.sleep(0.05), 0.001)
     assert caught.value.category == "timeout"
-    assert caught.value.diagnostic["timeout_source"] == "outer"
+    assert caught.value.diagnostic["request_stage"] == "outer_bounded_call"
     assert caught.value.diagnostic["configured_timeout_seconds"] == 0.001
     assert caught.value.diagnostic["elapsed_time_bucket"] == "under_1s"
+    assert caught.value.diagnostic["http_status"] is None
 
 
 def test_openai_adapter_maps_incomplete_and_transport_errors():
@@ -1770,3 +1772,116 @@ def test_profile_consent_revoked_after_reservation_cancels_and_allows_retry(
     retried = suggestion_client.post(
         f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
     assert retried.status_code == 200 and retried.json()["status"] == "ready"
+
+
+def test_openai_profile_async_queue_polls_without_duplicate_provider_calls(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    settings = get_settings()
+    for name, value in {
+        "JOBPILOT_AI_ENABLED": True,
+        "JOBPILOT_AI_TEST_PROVIDER": False,
+        "JOBPILOT_AI_PROVIDER": "openai",
+        "JOBPILOT_OPENAI_API_KEY": "synthetic-key",
+        "POSTGRES_DB": settings.POSTGRES_TEST_DB,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    submitted = []
+    monkeypatch.setattr(
+        profile_suggestion_service._PROFILE_EXECUTOR,
+        "submit",
+        lambda *args: submitted.append(args) or object(),
+    )
+    first = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert first.status_code == 200 and first.json()["status"] == "generating"
+    assert len(submitted) == 1
+    latest = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest", headers=headers(owner))
+    assert latest.status_code == 200 and latest.json()["status"] == "generating"
+    duplicate = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
+    assert duplicate.status_code == 409
+    assert len(submitted) == 1
+
+
+def test_openai_profile_async_worker_completes_and_releases_reservation(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    settings = get_settings()
+    for name, value in {
+        "JOBPILOT_AI_ENABLED": True,
+        "JOBPILOT_AI_TEST_PROVIDER": False,
+        "JOBPILOT_AI_PROVIDER": "openai",
+        "JOBPILOT_OPENAI_API_KEY": "synthetic-key",
+        "POSTGRES_DB": settings.POSTGRES_TEST_DB,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    monkeypatch.setattr(profile_suggestion_service._PROFILE_EXECUTOR, "submit", lambda *args: object())
+    created = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)).json()
+    record = db_session.get(ProfileSuggestionSet, uuid.UUID(created["id"]))
+    usage = db_session.get(AIUsage, owner.id)
+    token = usage.active_token
+    profile_suggestion_service._finish_generation(
+        db_session, record=record, token=token, settings=settings,
+        provider=_json_flow_provider(_strict_wire_output(_ten_category_wire_suggestions())),
+        background=True,
+    )
+    assert record.status == "ready"
+    assert record.suggestions == []
+    assert usage.active_token is None
+
+
+def test_openai_profile_async_timeout_releases_reservation_and_persists_safe_failure(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    resume_id = confirmed_resume(suggestion_client, owner)
+    settings = get_settings()
+    for name, value in {
+        "JOBPILOT_AI_ENABLED": True,
+        "JOBPILOT_AI_TEST_PROVIDER": False,
+        "JOBPILOT_AI_PROVIDER": "openai",
+        "JOBPILOT_OPENAI_API_KEY": "synthetic-key",
+        "POSTGRES_DB": settings.POSTGRES_TEST_DB,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    monkeypatch.setattr(profile_suggestion_service._PROFILE_EXECUTOR, "submit", lambda *args: object())
+    created = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)).json()
+    record = db_session.get(ProfileSuggestionSet, uuid.UUID(created["id"]))
+    usage = db_session.get(AIUsage, owner.id)
+    token = usage.active_token
+
+    class TimedOut:
+        name = "openai"
+        model = "gpt-5-mini"
+
+        def suggest(self, source):
+            raise ProviderFailure("timeout", diagnostic={
+                "request_stage": "outer_bounded_call",
+                "configured_timeout_seconds": 30,
+                "elapsed_time_bucket": "over_60s",
+                "http_status": None,
+            })
+
+    profile_suggestion_service._finish_generation(
+        db_session, record=record, token=token, settings=settings,
+        provider=TimedOut(), background=True,
+    )
+    assert record.status == "failed" and record.outcome_message == "timeout"
+    assert record.failure_diagnostic == {
+        "request_stage": "outer_bounded_call",
+        "configured_timeout_seconds": 30,
+        "elapsed_time_bucket": "over_60s",
+        "http_status": None,
+    }
+    assert usage.active_token is None

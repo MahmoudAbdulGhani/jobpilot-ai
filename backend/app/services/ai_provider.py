@@ -137,6 +137,17 @@ def _diagnostic(*, response=None, output_shape=None, parser_error_category=None,
 def _sanitize_diagnostic(value) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
+    if "request_stage" in value:
+        stage = value.get("request_stage")
+        configured = value.get("configured_timeout_seconds")
+        bucket = value.get("elapsed_time_bucket")
+        status = value.get("http_status")
+        return {
+            "request_stage": stage if isinstance(stage, str) and stage in {"openai_sdk", "outer_bounded_call"} else "unknown",
+            "configured_timeout_seconds": configured if isinstance(configured, (int, float)) and configured > 0 else None,
+            "elapsed_time_bucket": bucket if isinstance(bucket, str) and bucket in SAFE_ELAPSED_TIME_BUCKETS else "unknown",
+            "http_status": _safe_response_status(status),
+        }
     if "max_output_tokens" in value:
         return {
             "max_output_tokens": value.get("max_output_tokens") if isinstance(value.get("max_output_tokens"), int) and value.get("max_output_tokens") > 0 else None,
@@ -161,7 +172,7 @@ def _sanitize_diagnostic(value) -> dict[str, object] | None:
     ) | {"validation_errors": _safe_validation_entries(value.get("validation_errors"))}
 
 
-def _timeout_diagnostic(source: str, configured_timeout_seconds: float, elapsed_seconds: float) -> dict[str, object]:
+def _timeout_diagnostic(source: str, configured_timeout_seconds: float, elapsed_seconds: float, http_status=None) -> dict[str, object]:
     if elapsed_seconds < 1:
         bucket = "under_1s"
     elif elapsed_seconds < 5:
@@ -175,9 +186,10 @@ def _timeout_diagnostic(source: str, configured_timeout_seconds: float, elapsed_
     else:
         bucket = "over_60s"
     return {
-        "timeout_source": source,
+        "request_stage": "openai_sdk" if source == "sdk" else "outer_bounded_call",
         "configured_timeout_seconds": configured_timeout_seconds,
         "elapsed_time_bucket": bucket,
+        "http_status": http_status,
     }
 
 
@@ -720,7 +732,10 @@ class OpenAIResponsesProvider:
             category = classify_provider_failure(error)
             diagnostic = _exception_diagnostic(error)
             if category == "timeout":
-                diagnostic = _timeout_diagnostic("sdk", self.timeout, time.monotonic() - started)
+                diagnostic = _timeout_diagnostic(
+                    "sdk", self.timeout, time.monotonic() - started,
+                    getattr(error, "status_code", None),
+                )
             elif diagnostic is not None:
                 diagnostic = {
                     "max_output_tokens": self.max_output_tokens,
