@@ -174,6 +174,93 @@ def test_apply_persists_all_selected_profile_field_types_without_cross_field_map
     assert profile["salary_preference"] == {"currency": "USD", "min": 70000, "max": 90000}
 
 
+def test_apply_six_ai_fields_preserves_manual_profile_and_round_trips_database(
+    suggestion_client, suggestion_users, db_session, monkeypatch
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    manual = {
+        "target_roles": ["Manual Product Role"],
+        "remote_preference": "remote",
+        "work_authorization": "other",
+        "salary_preference": {"currency": "USD", "min": 1000, "max": 1500},
+    }
+    assert suggestion_client.patch(
+        "/api/profile", headers=headers(owner), json=manual
+    ).status_code == 200
+    source = (
+        "Senior Engineer Beirut Python FastAPI Senior Engineer at Cedar Labs "
+        "2020-2024 Built APIs BSc at State University Arabic native"
+    )
+    resume_id = confirmed_resume(suggestion_client, owner, text=source)
+    values = [
+        {"id": "headline-1", "field": "headline", "value": "Senior Engineer", "evidence": [{"quote": source}]},
+        {"id": "location-1", "field": "location", "value": "Beirut", "evidence": [{"quote": source}]},
+        {"id": "skills-1", "field": "skills", "value": ["Python", "FastAPI"], "evidence": [{"quote": source}]},
+        {"id": "experience-1", "field": "experience", "value": {"title": "Senior Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": "Built APIs"}, "evidence": [{"quote": source}]},
+        {"id": "education-1", "field": "education", "value": {"school": "State University", "degree": "BSc", "field": None, "period": None}, "evidence": [{"quote": source}]},
+        {"id": "languages-1", "field": "languages", "value": {"name": "Arabic", "proficiency": "native"}, "evidence": [{"quote": source}]},
+    ]
+
+    class SixFieldsProvider:
+        name = "deterministic-test"
+        model = "synthetic-v1"
+
+        def suggest(self, _source):
+            return ProviderSuggestionOutput.model_validate({
+                "suggestions": values,
+                "not_found": [
+                    "target_roles", "remote_preference", "work_authorization",
+                    "salary_preference",
+                ],
+            })
+
+    monkeypatch.setattr(
+        profile_suggestion_service, "provider_for", lambda settings: SixFieldsProvider()
+    )
+    generated = suggestion_client.post(
+        f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner)
+    )
+    assert generated.status_code == 200
+    selections = [
+        item for item in generated.json()["suggestions"]
+        if item.get("status") != "not_found"
+    ]
+    print("apply fields/ids", [(item["field"], item["id"]) for item in selections])
+    applied = suggestion_client.post(
+        f"/api/profile-suggestions/{generated.json()['id']}/apply",
+        headers=headers(owner), json={"selections": selections},
+    )
+    assert applied.status_code == 200
+
+    expected_ai = {
+        "headline": "Senior Engineer",
+        "location": "Beirut",
+        "skills": ["Python", "FastAPI"],
+        "experience": [{"title": "Senior Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": "Built APIs"}],
+        "education": [{"school": "State University", "degree": "BSc", "field": None, "period": None}],
+        "languages": [{"name": "Arabic", "proficiency": "native"}],
+    }
+    response_profile = applied.json()["profile"]
+    for field, value in expected_ai.items():
+        assert response_profile[field] == value
+    for field, value in manual.items():
+        assert response_profile[field] == value
+
+    db_session.expire_all()
+    stored = db_session.query(CandidateProfile).filter_by(owner_id=owner.id).one()
+    for field, value in expected_ai.items():
+        assert getattr(stored, field) == value
+    for field, value in manual.items():
+        assert getattr(stored, field) == value
+
+    final_profile = suggestion_client.get("/api/profile", headers=headers(owner))
+    assert final_profile.status_code == 200
+    for field, value in {**manual, **expected_ai}.items():
+        assert final_profile.json()[field] == value
+
+
 def test_ownership_source_conflict_and_discard(suggestion_client, suggestion_users, db_session, monkeypatch):
     owner, other = suggestion_users
     grant_consent(db_session, owner.id, "ai_profile_suggestions")

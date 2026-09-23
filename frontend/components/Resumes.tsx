@@ -299,7 +299,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
             const value = item.field === 'skills' || ['experience', 'education', 'languages', 'salary_preference'].includes(item.field)
               ? (typeof draft === 'string' ? JSON.parse(draft) : draft)
               : draft;
-            return { ...item, value };
+            return { id: item.id, field: item.field, value, evidence: item.evidence };
           }) }),
       });
       adopt(applied);

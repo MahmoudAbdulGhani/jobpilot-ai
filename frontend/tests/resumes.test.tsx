@@ -427,6 +427,62 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     expect(screen.getByText('“Python and TypeScript”')).not.toBeNull();
   });
 
+  it('posts every checked AI field using only the apply contract keys', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    render(<ResumesView />);
+    await screen.findByText('CV 2026');
+    apiMock.mockResolvedValueOnce(extraction);
+    fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
+    await screen.findByLabelText('Extracted resume text');
+    apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
+    await screen.findByRole('button', { name: 'Generate suggestions' });
+
+    const suggestions = [
+      { id: 'headline-1', field: 'headline', status: 'suggested', value: 'Senior Engineer', evidence: [{ quote: 'Senior Engineer' }] },
+      { id: 'location-1', field: 'location', status: 'suggested', value: 'Beirut', evidence: [{ quote: 'Beirut' }] },
+      { id: 'skills-1', field: 'skills', status: 'suggested', value: ['Python', 'FastAPI'], evidence: [{ quote: 'Python FastAPI' }] },
+      { id: 'experience-1', field: 'experience', status: 'suggested', value: { title: 'Engineer', organization: 'Cedar Labs', period: null, notes: null }, evidence: [{ quote: 'Engineer at Cedar Labs' }] },
+      { id: 'education-1', field: 'education', status: 'suggested', value: { school: 'State University', degree: 'BSc', field: null, period: null }, evidence: [{ quote: 'BSc State University' }] },
+      { id: 'languages-1', field: 'languages', status: 'suggested', value: { name: 'Arabic', proficiency: 'native' }, evidence: [{ quote: 'Arabic native' }] },
+    ];
+    apiMock.mockResolvedValueOnce({
+      id: 'set-apply', resume_id: pdfResume.id, status: 'ready', provider: 'openai', model: 'gpt-5-mini',
+      outcome_message: null, failure_field: null, applied_at: null, suggestions,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate suggestions' }));
+    await screen.findByRole('button', { name: 'Apply selected AI suggestions' });
+
+    apiMock.mockResolvedValueOnce({
+      id: 'set-apply', resume_id: pdfResume.id, status: 'applied', provider: 'openai', model: 'gpt-5-mini',
+      outcome_message: null, failure_field: null, applied_at: '2026-09-14T11:00:00Z', suggestions,
+      profile: {
+        headline: 'Senior Engineer', location: 'Beirut', target_roles: ['Manual role'],
+        skills: ['Python', 'FastAPI'], experience: [suggestions[3].value], education: [suggestions[4].value],
+        languages: [suggestions[5].value], remote_preference: 'remote', work_authorization: 'other',
+        salary_preference: { currency: 'USD', min: 1000, max: 1500 },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected AI suggestions' }));
+    await screen.findByText('Selected AI suggestions applied.');
+
+    const applyCall = apiMock.mock.calls.find(([path]) => path === '/profile-suggestions/set-apply/apply');
+    expect(applyCall).toBeDefined();
+    const selections = JSON.parse((applyCall![1] as RequestInit).body as string).selections;
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[profile-apply-test] selected fields and ids', selections.map((item: { field: string; id: string }) => ({ field: item.field, id: item.id })));
+    }
+    expect(selections.map((item: { field: string }) => item.field)).toEqual([
+      'headline', 'location', 'skills', 'experience', 'education', 'languages',
+    ]);
+    expect(selections.map((item: { id: string }) => item.id)).toEqual([
+      'headline-1', 'location-1', 'skills-1', 'experience-1', 'education-1', 'languages-1',
+    ]);
+    for (const selection of selections) {
+      expect(Object.keys(selection).sort()).toEqual(['evidence', 'field', 'id', 'value']);
+    }
+  });
+
   it('shows manual editors for every not-found field and saves user values independently', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
