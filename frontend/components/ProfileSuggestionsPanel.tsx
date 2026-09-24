@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, Sparkle } from '@phosphor-icons/react';
 import { api } from '../lib/api';
-import type { CandidateProfile, ProfileChanges, ProfileChangeReview, ProfileSuggestion, ProfileSuggestionSet, Resume } from '../lib/types';
+import type { CandidateProfile, ExperienceEntry, ProfileChanges, ProfileChangeReview, ProfileSuggestion, ProfileSuggestionSet, Resume } from '../lib/types';
 
 const FIELDS: ProfileSuggestion['field'][] = ['headline', 'location', 'target_roles', 'skills', 'experience', 'education', 'languages', 'remote_preference', 'work_authorization', 'salary_preference'];
 const title = (field: string) => field.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -17,6 +17,8 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
   const [set, setSet] = useState<ProfileSuggestionSet | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, any>>({});
+  const [editedExperience, setEditedExperience] = useState<Set<string>>(new Set());
+  const [extraExperience, setExtraExperience] = useState<ExperienceEntry[]>([]);
   const [profile, setProfile] = useState<CandidateProfile | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -39,6 +41,8 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
     const accepted = new Map((applied || []).map(item => [item.id, item.value]));
     setSelected(new Set((applied ?? proposed.filter(item => !Object.hasOwn(manualDrafts.current, item.field))).map(item => item.id)));
     setDrafts(Object.fromEntries(proposed.map(item => [item.id, accepted.has(item.id) ? accepted.get(item.id) : item.value])));
+    setEditedExperience(new Set());
+    setExtraExperience([]);
   }, [resume.id]);
 
   const loadProfile = useCallback(async () => {
@@ -111,7 +115,9 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
       if (['headline', 'location', 'remote_preference', 'work_authorization'].includes(field)) return [field, value || null];
       return [field, value];
     }));
-    return { selections, manual_fields: manualFields };
+    const edited = (set?.suggestions || []).filter(item => item.field === 'experience' && editedExperience.has(item.id))
+      .map(item => drafts[item.id] as ExperienceEntry);
+    return { selections, manual_fields: manualFields, manual_experience_entries: [...edited, ...extraExperience] };
   }
 
   async function reviewChanges() {
@@ -166,10 +172,15 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
       const manualOverride = Object.hasOwn(manual, field) || (set?.status === 'applied' && Object.hasOwn(set.apply_result?.manual_fields || {}, field));
       return <div className="suggestion-field-group" key={field}><h4>{title(field)}</h4>
         {items.map(item => <article className="suggestion-card" key={item.id}>
-          <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={disabled} onChange={() => { edit(); if (!selected.has(item.id) && manualOverride) setManual(current => { const next = { ...current }; delete next[field]; return next; }); setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; }); }} />Use this AI suggestion</label>
-          <ValueEditor field={field} value={drafts[item.id]} disabled={disabled} prefix="Proposed" onChange={value => { edit(); setDrafts(current => ({ ...current, [item.id]: value })); }} />
+          <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id) || editedExperience.has(item.id)} disabled={disabled} onChange={() => { edit(); if (!selected.has(item.id) && !editedExperience.has(item.id) && manualOverride) setManual(current => { const next = { ...current }; delete next[field]; return next; }); if (editedExperience.has(item.id)) setEditedExperience(current => { const next = new Set(current); next.delete(item.id); return next; }); if (!selected.has(item.id) && !editedExperience.has(item.id) && field === 'experience') setDrafts(current => ({ ...current, [item.id]: item.value })); setSelected(current => { const next = new Set(current); if (next.has(item.id) || editedExperience.has(item.id)) next.delete(item.id); else next.add(item.id); return next; }); }} />{editedExperience.has(item.id) ? 'Include edited role' : 'Use this AI suggestion'}</label>
+          {field === 'experience' && editedExperience.has(item.id) && <><span className="user-provided">User-edited</span><button type="button" className="action-button" disabled={disabled} onClick={() => { edit(); setDrafts(current => ({ ...current, [item.id]: item.value })); setEditedExperience(current => { const next = new Set(current); next.delete(item.id); return next; }); setSelected(current => new Set(current).add(item.id)); }}>Restore AI suggestion</button></>}
+          <ValueEditor field={field} value={drafts[item.id]} disabled={disabled} prefix="Proposed" onChange={value => { edit(); setDrafts(current => ({ ...current, [item.id]: value })); if (field === 'experience') { setEditedExperience(current => new Set(current).add(item.id)); setSelected(current => { const next = new Set(current); next.delete(item.id); return next; }); } }} />
           {item.evidence.map((evidence, index) => <blockquote key={index}>“{evidence.quote}”</blockquote>)}
         </article>)}
+        {field === 'experience' && items.length > 0 && ready && <div className="manual-field"><p className="muted">Add another role from your CV or your own history. <span className="user-provided">User-provided</span></p>
+          <ValueEditor field="experience" value={extraExperience} disabled={disabled} prefix="Added" list onChange={value => { edit(); setExtraExperience(value); }} />
+        </div>}
+        {field === 'experience' && set?.status === 'applied' && !!profile?.experience?.length && <section aria-label="Saved experience"><h5>Saved experience</h5><ExperienceList entries={profile.experience} /></section>}
         {(!items.length || manualOverride) && <div className="manual-field">
           <p className="muted">{items.length ? (ready ? 'Your manual value is selected. Choose an AI suggestion above to replace it.' : 'Saved as your manual value.') : availability === 'not_found' ? 'Not found in CV — add manually.' : 'No usable AI suggestion — review and add manually.'} <span className="user-provided">User-provided</span></p>
           <ValueEditor field={field} value={Object.hasOwn(manual, field) ? manual[field] : profile?.[field]} prefix="Manual" disabled={disabled} list={['target_roles', 'skills', 'experience', 'education', 'languages'].includes(field)} onChange={value => { edit(); setManual(current => ({ ...current, [field]: value })); }} />
@@ -179,15 +190,30 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
     })}
     {error && <p className="form-error" role="alert">{error}</p>}
     {notice && <p className="profile-notice" role="status">{notice}</p>}
-    {ready && !review && <button className="primary-button" disabled={disabled || (selected.size === 0 && Object.keys(manual).length === 0)} onClick={() => void reviewChanges()}>Review profile changes</button>}
+    {ready && !review && <button className="primary-button" disabled={disabled || (selected.size === 0 && editedExperience.size === 0 && extraExperience.length === 0 && Object.keys(manual).length === 0)} onClick={() => void reviewChanges()}>Review profile changes</button>}
     {ready && review && <section className="profile-save-review" aria-label="Profile change comparison">
       <h4>Review profile changes</h4>
       <p>Selected suggestions and edited manual fields will be saved together. Other saved details stay as shown in your profile.</p>
-      {review.result.changed_fields.map(field => <div className="suggestion-card" key={field}><h5>{title(field)}</h5><dl><dt>Currently saved</dt><dd><DisplayValue value={review.result.current_profile?.[field]} /></dd><dt>After saving</dt><dd><DisplayValue value={review.result.proposed_profile[field]} /></dd></dl></div>)}
+      {review.result.changed_fields.map(field => <div className="suggestion-card" key={field}><h5>{title(field)}</h5>{field === 'experience' ? <div className="experience-review"><div><h6>Currently saved</h6><ExperienceList entries={review.result.current_profile?.experience} /></div><div><h6>After saving</h6><ExperienceList entries={review.result.proposed_profile.experience} changes={review.changes} /></div></div> : <dl><dt>Currently saved</dt><dd><DisplayValue value={review.result.current_profile?.[field]} /></dd><dt>After saving</dt><dd><DisplayValue value={review.result.proposed_profile[field]} /></dd></dl>}</div>)}
       <div className="dialog-footer"><button className="secondary-button" disabled={pending} onClick={() => setReview(null)}>Back to editing</button><button className="primary-button" disabled={pending} onClick={() => void saveChanges()}>{pending ? 'Saving…' : 'Save profile changes'}</button></div>
     </section>}
     {set?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Profile changes saved. <a href="/profile">View your profile</a></p>}
   </section>;
+}
+
+function ExperienceList({ entries, changes }: { entries: ExperienceEntry[] | null | undefined; changes?: ProfileChanges }) {
+  if (!entries?.length) return <p className="muted">No roles saved</p>;
+  return <div className="experience-review-list">{entries.map((entry, index) => {
+    const suggestion = changes?.selections.find(item => item.field === 'experience' && JSON.stringify(item.value) === JSON.stringify(entry));
+    const added = changes?.manual_experience_entries?.some(item => JSON.stringify(item) === JSON.stringify(entry));
+    return <article className="experience-review-role" key={`${entry.title}-${entry.organization}-${index}`}>
+      <strong>{entry.title} · {entry.organization}</strong>
+      {entry.period && <p>{entry.period}</p>}{entry.notes && <p>{entry.notes}</p>}
+      {suggestion && <><span className="status-badge is-confirmed">From CV</span>{suggestion.evidence.map((item, evidenceIndex) => <blockquote key={evidenceIndex}>“{item.quote}”</blockquote>)}</>}
+      {added && <span className="user-provided">User-provided</span>}
+      {!changes && <span className="muted">Already saved</span>}
+    </article>;
+  })}</div>;
 }
 
 function DisplayValue({ value }: { value: any }) {

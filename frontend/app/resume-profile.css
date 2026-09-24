@@ -243,6 +243,13 @@
 .profile-workspace .profile-salary-grid { grid-template-columns: .65fr 1fr 1fr; }
 .profile-workspace .profile-form .dialog-footer { position: sticky; bottom: 0; z-index: 1; display: flex; gap: 10px; padding: 18px 28px; border-top: 1px solid #e2e8dc; background: #fcfdfa; border-radius: 0 0 12px 12px; box-shadow: 0 -3px 15px rgb(35 56 25 / 2%); }
 .profile-save-note { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; color: var(--muted); font-size: 14px; }
+.experience-review { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 14px; }
+.experience-review h6 { margin-bottom: 8px; font-size: 14px; }
+.experience-review-list { display: grid; gap: 10px; }
+.experience-review-role { min-width: 0; padding: 13px; border: 1px solid var(--rp-line, var(--line)); border-radius: 7px; background: #fff; }
+.experience-review-role p { margin: 6px 0; overflow-wrap: anywhere; }
+.experience-review-role blockquote { margin: 9px 0 0; padding-left: 10px; border-left: 2px solid #c8d7ce; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .experience-review { grid-template-columns: 1fr; } }
 .profile-workspace .profile-form .dialog-footer button { font-size: 14px; }
 
 @media (max-width: 1180px) {

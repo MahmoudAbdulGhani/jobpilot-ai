@@ -41,11 +41,11 @@ export type ProfileSuggestionSet = {
   id: string; resume_id: string; status: 'generating'|'ready'|'failed'|'applied';
   suggestions: ProfileSuggestion[] | null; provider: string; model: string;
   outcome_message: string | null; failure_field: string | null; applied_at: string | null;
-  apply_result?: { applied: ProfileSuggestion[]; profile_id: string; manual_fields?: Partial<CandidateProfileInput> } | null;
+  apply_result?: { applied: ProfileSuggestion[]; profile_id: string; manual_fields?: Partial<CandidateProfileInput>; manual_experience_entries?: ExperienceEntry[] } | null;
   field_statuses?: Partial<Record<ProfileSuggestion['field'], 'suggested'|'not_found'|'needs_review'>>;
   profile?: CandidateProfile | null;
 };
-export type ProfileChanges = { selections: ProfileSuggestion[]; manual_fields?: Partial<CandidateProfileInput> };
+export type ProfileChanges = { selections: ProfileSuggestion[]; manual_fields?: Partial<CandidateProfileInput>; manual_experience_entries?: ExperienceEntry[] };
 export type ProfileChangeReview = {
   current_profile: CandidateProfile | null;
   proposed_profile: CandidateProfileInput;

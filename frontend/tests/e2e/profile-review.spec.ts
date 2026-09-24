@@ -35,7 +35,7 @@ test('review stale AI suggestions and manual edits, commit all values, and reloa
   expect(uploaded.ok()).toBeTruthy();
   const resume = await uploaded.json();
   expect((await request.post(`${API}/resumes/${resume.id}/extract`, { headers: auth })).ok()).toBeTruthy();
-  const source = 'Tripoli Python SQL Cedar University BSc Computer Science 2022 Academy AWS 2026 Arabic Native English Professional';
+  const source = 'Tripoli Python SQL Cedar University BSc Computer Science 2022 Academy AWS 2026 Arabic Native English Professional\nPROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\nPROJECT EXPERIENCE\nDemo project 2025';
   expect((await request.patch(`${API}/resumes/${resume.id}/extraction`, { headers: auth, data: { draft_text: source } })).ok()).toBeTruthy();
   expect((await request.post(`${API}/resumes/${resume.id}/extraction/confirm`, { headers: auth })).ok()).toBeTruthy();
   const values = [
@@ -44,9 +44,10 @@ test('review stale AI suggestions and manual edits, commit all values, and reloa
     { field: 'education', value: { school: 'Academy', degree: 'AWS', field: null, period: '2026' } },
     { field: 'languages', value: { name: 'Arabic', proficiency: 'native' } },
     { field: 'languages', value: { name: 'English', proficiency: 'professional' } },
+    { field: 'experience', value: { title: 'Developer', organization: 'Cedar Labs', period: 'June 2022 - July 2024', notes: 'Built APIs' } },
   ];
   const seeded = database({ action: 'seed', email: user.email, resume_id: resume.id, output: {
-    suggestions: values.map((item, i) => ({ ...item, id: `s-${i}`, evidence: [{ quote: source }] })),
+    suggestions: values.map((item, i) => ({ ...item, id: `s-${i}`, evidence: item.field === 'experience' ? [{ quote: 'Developer - Cedar Labs June 2022 - July 2024' }, { quote: 'Built APIs' }] : [{ quote: source }] })),
     not_found: ['target_roles', 'remote_preference', 'work_authorization', 'salary_preference'],
   } });
   // Exactly the reported ordering: manual profile creation makes the ready set stale.
@@ -60,13 +61,15 @@ test('review stale AI suggestions and manual edits, commit all values, and reloa
   await expect(page.getByLabel('Proposed languages name').first()).toHaveValue('Arabic');
   await page.getByLabel('Manual headline').fill('Full-Stack Engineer');
   await page.getByRole('button', { name: 'Add Experience' }).click();
-  await page.getByLabel('Manual 1 experience title').fill('Developer');
-  await page.getByLabel('Manual 1 experience organization').fill('Manual Company');
+  await page.getByLabel('Added 1 experience title').fill('Developer');
+  await page.getByLabel('Added 1 experience organization').fill('Manual Company');
   await page.getByLabel('Manual salary_preference currency').fill('USD');
   await page.getByLabel('Manual salary_preference min').fill('60000');
   await page.getByLabel('Manual salary_preference max').fill('80000');
   await page.getByRole('button', { name: 'Review profile changes' }).click();
   await expect(page.getByRole('region', { name: 'Profile change comparison' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Profile change comparison' }).getByText('Developer · Cedar Labs')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Profile change comparison' }).getByText('Developer · Manual Company')).toBeVisible();
   expect(database({ action: 'check', email: user.email, set_id: seeded.id, status: 'ready', expected: { headline: null, languages: null, skills: null } }).matched).toBe(true);
   // A second save between review and confirmation must force another review.
   expect((await request.patch(`${API}/profile`, { headers: auth, data: { work_authorization: 'citizen' } })).ok()).toBeTruthy();
@@ -79,7 +82,7 @@ test('review stale AI suggestions and manual edits, commit all values, and reloa
   const response = await responsePromise;
   expect(response.ok()).toBeTruthy();
   await expect(page.getByRole('link', { name: 'View your profile' })).toBeVisible();
-  const expected = { headline: 'Full-Stack Engineer', target_roles: ['Full-Stack Developer'], location: 'Tripoli', skills: ['Python', 'SQL'], experience: [{ title: 'Developer', organization: 'Manual Company', period: null, notes: null }], education: [values[2].value, values[3].value], languages: [values[4].value, values[5].value], remote_preference: 'remote', work_authorization: 'citizen', salary_preference: { currency: 'USD', min: 60000, max: 80000 } };
+  const expected = { headline: 'Full-Stack Engineer', target_roles: ['Full-Stack Developer'], location: 'Tripoli', skills: ['Python', 'SQL'], experience: [values[6].value, { title: 'Developer', organization: 'Manual Company', period: null, notes: null }], education: [values[2].value, values[3].value], languages: [values[4].value, values[5].value], remote_preference: 'remote', work_authorization: 'citizen', salary_preference: { currency: 'USD', min: 60000, max: 80000 } };
   expect((await response.json()).profile).toMatchObject(expected);
   expect(database({ action: 'check', email: user.email, set_id: seeded.id, status: 'applied', expected })).toEqual({ matched: true, fields: 10 });
   expect(await (await request.get(`${API}/profile`, { headers: auth })).json()).toMatchObject(expected);
@@ -87,11 +90,14 @@ test('review stale AI suggestions and manual edits, commit all values, and reloa
   await page.reload();
   await expect(page.getByLabel('Manual headline')).toHaveValue('Full-Stack Engineer');
   await expect(page.getByLabel('Proposed languages proficiency').first()).toHaveValue('native');
+  await expect(page.getByRole('region', { name: 'Saved experience' }).getByText('Developer · Manual Company')).toBeVisible();
   await page.getByRole('link', { name: 'View your profile' }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Full-Stack Engineer', exact: true })).toBeVisible();
   await expect(page.getByText('Arabic', { exact: true })).toBeVisible();
   await expect(page.getByText('English', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Cedar Labs · June 2022/)).toBeVisible();
+  await expect(page.getByText('Manual Company', { exact: true })).toBeVisible();
   await expect(page.getByText('Cedar University · 2022', { exact: true })).toBeVisible();
   await expect(page.getByText('Academy · 2026', { exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('saved-profile.png'), fullPage: true });

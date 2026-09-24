@@ -27,8 +27,9 @@ describe('combined profile review and save', () => {
     reviewMock = vi.fn(async (changes: ProfileChanges) => {
       const proposed: any = structuredClone(saved);
       for (const item of changes.selections) proposed[item.field] = ['target_roles', 'experience', 'education', 'languages'].includes(item.field) ? [item.value] : item.value;
+      if (changes.manual_experience_entries?.length) proposed.experience = [...(proposed.experience || []), ...changes.manual_experience_entries];
       Object.assign(proposed, changes.manual_fields);
-      return { current_profile: saved, proposed_profile: proposed, reviewed_profile_revision: 'revision-2', changed_fields: [...new Set([...changes.selections.map(item => item.field), ...Object.keys(changes.manual_fields || {})])] };
+      return { current_profile: saved, proposed_profile: proposed, reviewed_profile_revision: 'revision-2', changed_fields: [...new Set([...changes.selections.map(item => item.field), ...Object.keys(changes.manual_fields || {}), ...(changes.manual_experience_entries?.length ? ['experience'] : [])])] };
     });
     applyMock = vi.fn(async (changes: ProfileChanges) => ({ ...record, status: 'applied', apply_result: { applied: changes.selections, profile_id: saved.id, manual_fields: changes.manual_fields }, profile: { ...saved, ...(await reviewMock(changes)).proposed_profile } }));
     generationMock = vi.fn(async () => record);
@@ -54,7 +55,8 @@ describe('combined profile review and save', () => {
     await screen.findByRole('region', { name: 'Profile change comparison' });
     expect(calls('/apply')).toHaveLength(0); expect(generationMock).not.toHaveBeenCalled();
     const payload = reviewMock.mock.calls[0][0];
-    expect(Object.fromEntries(payload.selections.map((item: any) => [item.field, item.value]))).toEqual(changes);
+    expect(Object.fromEntries(payload.selections.map((item: any) => [item.field, item.value]))).toEqual(Object.fromEntries(Object.entries(changes).filter(([field]) => field !== 'experience')));
+    expect(payload.manual_experience_entries).toEqual([changes.experience]);
     expect(payload.manual_fields).toEqual({});
     expect(screen.getAllByText('Currently saved')).toHaveLength(10);
     fireEvent.click(screen.getByRole('button', { name: 'Save profile changes' }));
@@ -88,6 +90,20 @@ describe('combined profile review and save', () => {
     expect((screen.getByLabelText('Manual headline') as HTMLTextAreaElement).value).toBe('My headline');
   });
 
+  it('keeps a CV role and a user-added role distinct through review', async () => {
+    view(); await ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Experience' }));
+    input('Added 1 experience title', 'Mentor');
+    input('Added 1 experience organization', 'Community Lab');
+    fireEvent.click(screen.getByRole('button', { name: 'Review profile changes' }));
+    const region = await screen.findByRole('region', { name: 'Profile change comparison' });
+    const payload = reviewMock.mock.calls[0][0];
+    expect(payload.selections.some((item: any) => item.field === 'experience' && item.value.organization === 'Cedar')).toBe(true);
+    expect(payload.manual_experience_entries).toEqual([{ title: 'Mentor', organization: 'Community Lab' }]);
+    expect(within(region).getByText('Engineer · Cedar')).toBeTruthy();
+    expect(within(region).getByText('Mentor · Community Lab')).toBeTruthy();
+  });
+
   it('supports a manual-only save and explicit clearing without resubmitting untouched values', async () => {
     record.suggestions = [];
     saved = { ...saved, headline: 'Clear', location: 'Keep', salary_preference: { currency: 'USD', min: 1, max: 2 } };
@@ -96,7 +112,7 @@ describe('combined profile review and save', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear salary preference' }));
     fireEvent.click(screen.getByRole('button', { name: 'Review profile changes' }));
     await screen.findByRole('button', { name: 'Save profile changes' });
-    expect(reviewMock.mock.calls[0][0]).toEqual({ selections: [], manual_fields: { headline: null, salary_preference: null } });
+    expect(reviewMock.mock.calls[0][0]).toEqual({ selections: [], manual_fields: { headline: null, salary_preference: null }, manual_experience_entries: [] });
     fireEvent.click(screen.getByRole('button', { name: 'Save profile changes' }));
     await screen.findByRole('link', { name: 'View your profile' });
     expect((screen.getByLabelText('Manual location') as HTMLTextAreaElement).value).toBe('Keep');
