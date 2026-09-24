@@ -18,7 +18,7 @@ from app.schemas.profile_suggestions import (
 )
 from app.schemas.qa import ProviderQaOutput
 
-PROMPT_VERSION = "profile-suggestions-v3"
+PROMPT_VERSION = "profile-suggestions-v4"
 JOB_FIT_PROMPT_VERSION = "job-fit-v1"
 PACK_PROMPT_VERSION = "application-pack-v2"
 QA_PROMPT_VERSION = "qa-answer-v1"
