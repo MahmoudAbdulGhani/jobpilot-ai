@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CandidateProfile
+from app.models import CandidateProfile, User
 from app.schemas.profile import CandidateProfileUpdate
 
 
@@ -18,7 +18,9 @@ def get_candidate_profile(
 def upsert_candidate_profile(
     session: Session, *, owner_id: uuid.UUID, data: CandidateProfileUpdate
 ) -> CandidateProfile:
-    profile = get_candidate_profile(session, owner_id=owner_id)
+    session.scalar(select(User.id).where(User.id == owner_id).with_for_update())
+    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id)
+                             .execution_options(populate_existing=True))
     if profile is None:
         values = data.model_dump(mode="json")
         profile = CandidateProfile(

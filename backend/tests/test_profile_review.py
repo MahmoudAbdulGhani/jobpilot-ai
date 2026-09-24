@@ -1,0 +1,180 @@
+"""Review is read-only; confirmed saves persist the complete accepted form."""
+import uuid
+
+import pytest
+from sqlalchemy import select
+
+from app.models import CandidateProfile, ProfileSuggestionSet
+from app.schemas.profile_suggestions import ProviderSuggestionOutput
+from app.services import profile_suggestion_service
+from consent_helpers import grant_consent
+from tests.test_profile_suggestions import (
+    suggestion_client, suggestion_users, confirmed_resume, headers, enable_fake,
+)
+
+
+@pytest.fixture()
+def ready(suggestion_client, suggestion_users, db_session, monkeypatch):
+    owner, other = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    source = "Tripoli Python SQL Cedar University BSc Computer Science 2022 Academy AWS 2026 Arabic Native English Professional"
+    resume = confirmed_resume(suggestion_client, owner, source)
+    values = [
+        ("location", "Tripoli"), ("skills", ["Python", "SQL"]),
+        ("education", {"school": "Cedar University", "degree": "BSc", "field": "Computer Science", "period": "2022"}),
+        ("education", {"school": "Academy", "degree": "AWS", "field": None, "period": "2026"}),
+        ("languages", {"name": "Arabic", "proficiency": "native"}),
+        ("languages", {"name": "English", "proficiency": "professional"}),
+    ]
+    class Provider:
+        name = "deterministic-test"
+        model = "synthetic-v1"
+        def suggest(self, _source):
+            return ProviderSuggestionOutput.model_validate({"suggestions": [
+                {"id": f"s-{i}", "field": field, "value": value, "evidence": [{"quote": source}]}
+                for i, (field, value) in enumerate(values)
+            ], "not_found": ["target_roles", "remote_preference", "work_authorization", "salary_preference"]})
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Provider())
+    response = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume}", headers=headers(owner))
+    assert response.status_code == 200
+    body = response.json()
+    selections = [item for item in body["suggestions"] if item.get("status") != "not_found"]
+    # A review/save must not dispatch generation, including with a stale profile.
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: pytest.fail("Unexpected AI call"))
+    return owner, other, body, selections
+
+
+def stored(db, owner):
+    db.expire_all()
+    return db.connection().execute(select(CandidateProfile.__table__).where(
+        CandidateProfile.owner_id == owner.id)).mappings().one_or_none()
+
+
+def test_stale_set_reviews_and_saves_all_fields_with_manual_edits(ready, suggestion_client, db_session):
+    owner, _, record, selections = ready
+    auth = headers(owner)
+    before = {"target_roles": ["Old role"], "remote_preference": "remote", "work_authorization": "other"}
+    assert suggestion_client.patch("/api/profile", headers=auth, json=before).status_code == 200
+    manual = {"target_roles": ["Full-Stack Developer"], "headline": "Engineer", "remote_preference": "hybrid",
+              "work_authorization": "citizen", "salary_preference": {"currency": "USD", "min": 50000, "max": 75000},
+              "experience": [{"title": "Developer", "organization": "Manual company", "period": "2020-2024", "notes": "Built APIs"}]}
+    payload = {"selections": selections, "manual_fields": manual}
+    url = f"/api/profile-suggestions/{record['id']}"
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 409
+    review = suggestion_client.post(url + "/review", headers=auth, json=payload)
+    assert review.status_code == 200
+    preview = review.json()
+    original = stored(db_session, owner)
+    assert original["skills"] is None and original["languages"] is None
+    assert original["target_roles"] == ["Old role"]
+    unchanged = db_session.get(ProfileSuggestionSet, uuid.UUID(record["id"]))
+    assert unchanged.applied_at is None and unchanged.status == "ready"
+    assert record["field_statuses"]["headline"] == "needs_review"
+    assert record["field_statuses"]["experience"] == "needs_review"
+    assert record["field_statuses"]["target_roles"] == "not_found"
+    assert len(record["field_statuses"]) == 10
+    payload["reviewed_profile_revision"] = preview["reviewed_profile_revision"]
+    response = suggestion_client.post(url + "/apply", headers=auth, json=payload)
+    assert response.status_code == 200
+    saved = stored(db_session, owner)
+    expected = {**manual, "location": "Tripoli", "skills": ["Python", "SQL"],
+                "education": [selections[2]["value"], selections[3]["value"]],
+                "languages": [{"name": "Arabic", "proficiency": "native"}, {"name": "English", "proficiency": "professional"}]}
+    for field, value in expected.items():
+        assert saved[field] == value
+        assert preview["proposed_profile"][field] == value
+        assert response.json()["profile"][field] == value
+    assert saved["ai_provenance"]["headline"] == {"origin": "user"}
+    assert saved["ai_provenance"]["languages"][0]["origin"] == "ai"
+    get = suggestion_client.get("/api/profile", headers=auth).json()
+    assert {field: get[field] for field in expected} == expected
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
+    payload["manual_fields"]["headline"] = "Different"
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 409
+
+
+def test_manual_only_clear_and_untouched_fields(ready, suggestion_client, db_session):
+    owner, _, record, _ = ready
+    auth = headers(owner)
+    suggestion_client.patch("/api/profile", headers=auth, json={"headline": "Keep", "skills": ["SQL"], "location": "Clear me"})
+    url = f"/api/profile-suggestions/{record['id']}"
+    payload = {"manual_fields": {"location": None}}
+    review = suggestion_client.post(url + "/review", headers=auth, json=payload)
+    assert review.status_code == 200
+    payload["reviewed_profile_revision"] = review.json()["reviewed_profile_revision"]
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
+    row = stored(db_session, owner)
+    assert row["location"] is None and row["headline"] == "Keep" and row["skills"] == ["SQL"]
+
+
+def test_revision_conflict_preserves_data_and_can_be_reviewed_again(ready, suggestion_client, db_session):
+    owner, _, record, selections = ready
+    auth = headers(owner)
+    url = f"/api/profile-suggestions/{record['id']}"
+    payload = {"selections": selections}
+    review = suggestion_client.post(url + "/review", headers=auth, json=payload).json()
+    assert stored(db_session, owner) is None
+    suggestion_client.patch("/api/profile", headers=auth, json={"headline": "Changed elsewhere"})
+    payload["reviewed_profile_revision"] = review["reviewed_profile_revision"]
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 409
+    assert stored(db_session, owner)["languages"] is None
+    updated = suggestion_client.post(url + "/review", headers=auth, json={"selections": selections}).json()
+    payload["reviewed_profile_revision"] = updated["reviewed_profile_revision"]
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
+    assert stored(db_session, owner)["headline"] == "Changed elsewhere"
+
+
+@pytest.mark.parametrize("case", ["overlap", "evidence", "changed_field", "empty", "limit", "salary"])
+def test_invalid_form_is_atomic_and_identifies_field(ready, suggestion_client, db_session, case):
+    owner, _, record, selections = ready
+    payload = {"selections": selections, "manual_fields": {"headline": "Must not save"}}
+    expected = ""
+    if case == "overlap": payload["manual_fields"]["languages"] = []; expected = "languages"
+    if case == "evidence": selections[-1]["value"]["name"] = "Unsupported"; expected = "languages"
+    if case == "changed_field": selections[0]["field"] = "headline"; payload["manual_fields"] = {}; expected = "field"
+    if case == "empty": payload = {"selections": [], "manual_fields": {}}
+    if case == "salary": payload["manual_fields"]["salary_preference"] = {"min": 10, "max": 1}
+    if case == "limit":
+        suggestion_client.patch("/api/profile", headers=headers(owner), json={"skills": [f"Existing {i}" for i in range(50)]})
+        expected = "skills"
+    url = f"/api/profile-suggestions/{record['id']}"
+    result = suggestion_client.post(url + "/review", headers=headers(owner), json=payload)
+    assert result.status_code == 422
+    if expected: assert expected in result.text
+    row = stored(db_session, owner)
+    revision = "none" if row is None else row["updated_at"].isoformat()
+    result = suggestion_client.post(url + "/apply", headers=headers(owner), json={**payload, "reviewed_profile_revision": revision})
+    assert result.status_code == 422
+    row = stored(db_session, owner)
+    assert row is None or row["headline"] is None
+    assert db_session.get(ProfileSuggestionSet, uuid.UUID(record["id"])).applied_at is None
+
+
+def test_source_change_and_ownership_still_block_review_and_save(ready, suggestion_client, db_session):
+    owner, other, record, selections = ready
+    url = f"/api/profile-suggestions/{record['id']}"
+    payload = {"selections": selections}
+    review = suggestion_client.post(url + "/review", headers=headers(owner), json=payload).json()
+    for suffix in ["/review", "/apply"]:
+        assert suggestion_client.post(url + suffix, headers=headers(other), json=payload).status_code == 404
+    suggestion_client.patch(f"/api/resumes/{record['resume_id']}/extraction", headers=headers(owner), json={"draft_text": "Changed source"})
+    for suffix in ["/review", "/apply"]:
+        data = {**payload, "reviewed_profile_revision": review["reviewed_profile_revision"]} if suffix == "/apply" else payload
+        response = suggestion_client.post(url + suffix, headers=headers(owner), json=data)
+        assert response.status_code == 409
+        assert "CV text changed" in response.text
+    assert stored(db_session, owner) is None
+
+
+def test_unchecked_language_and_duplicate_skills(ready, suggestion_client, db_session):
+    owner, _, record, selections = ready
+    suggestion_client.patch("/api/profile", headers=headers(owner), json={"skills": ["Python"]})
+    selections = selections[:-1]
+    url = f"/api/profile-suggestions/{record['id']}"
+    review = suggestion_client.post(url + "/review", headers=headers(owner), json={"selections": selections}).json()
+    result = suggestion_client.post(url + "/apply", headers=headers(owner), json={"selections": selections, "reviewed_profile_revision": review["reviewed_profile_revision"]})
+    assert result.status_code == 200
+    row = stored(db_session, owner)
+    assert row["skills"] == ["Python", "SQL"]
+    assert row["languages"] == [{"name": "Arabic", "proficiency": "native"}]

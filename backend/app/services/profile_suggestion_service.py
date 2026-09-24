@@ -8,11 +8,12 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.models import (
     CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction,
-    UsageReservation,
+    UsageReservation, User,
 )
 from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import ProfileSuggestion, ProviderSuggestionOutput
@@ -393,27 +394,33 @@ def _key(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).casefold()
 
 
-def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[ProfileSuggestion]) -> ProfileSuggestionSet:
-    selection_hash = source_hash(json.dumps([s.model_dump(mode="json") for s in selections], sort_keys=True))
-    if record.applied_at:
-        if record.applied_selection_hash == selection_hash:
-            return record
-        raise SuggestionError(409, "This suggestion set was already applied with different selections.")
-    extraction = session.scalar(select(ResumeExtraction).where(ResumeExtraction.id == record.extraction_id))
+def _check_source(session: Session, record: ProfileSuggestionSet, *, lock=False):
+    query = select(ResumeExtraction).where(ResumeExtraction.id == record.extraction_id)
+    if lock:
+        query = query.with_for_update()
+    extraction = session.scalar(query.execution_options(populate_existing=True))
     if extraction is None or extraction.reviewed_at != record.source_reviewed_at or source_hash(extraction.draft_text or "") != record.source_hash:
         raise SuggestionError(409, "The confirmed CV text changed. Generate fresh suggestions.")
-    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == record.owner_id).with_for_update())
-    if profile_revision(profile) != record.profile_revision:
-        raise SuggestionError(409, "The profile changed. Refresh and review the suggestions again.")
+
+
+def _merge_changes(record, profile, selections, manual_fields):
+    manual = manual_fields.model_dump(mode="json", exclude_unset=True) if manual_fields else {}
+    if not selections and not manual:
+        raise SuggestionError(422, "Select at least one suggestion or edit a manual field.")
+    overlap = set(manual) & {item.field for item in selections}
+    if overlap:
+        raise SuggestionError(422, f"{', '.join(sorted(overlap))}: choose either AI suggestions or manual changes for this field.")
     offered = {
-        item["id"] for item in (record.suggestions or [])
+        item["id"]: item["field"] for item in (record.suggestions or [])
         if item.get("status") != "not_found"
     }
-    if any(item.id not in offered for item in selections):
-        raise SuggestionError(422, "A selected suggestion is not part of this suggestion set.")
+    if any(offered.get(item.id) != item.field for item in selections):
+        raise SuggestionError(422, "A selected suggestion is not part of this suggestion set or its field changed.")
     valid, partial = validate_output(ProviderSuggestionOutput(suggestions=selections), record.source_text)
     if partial or len(valid) != len(selections):
-        raise SuggestionError(422, "A selected value is invalid or lacks source evidence.")
+        accepted = {item["id"] for item in valid}
+        fields = sorted({item.field for item in selections if item.id not in accepted})
+        raise SuggestionError(422, f"{', '.join(fields) or 'selections'}: A selected value is invalid or lacks source evidence.")
     profile_fields = CandidateProfileUpdate.model_fields
     current = CandidateProfileUpdate.model_validate(
         {name: getattr(profile, name) for name in profile_fields} if profile else {}
@@ -435,7 +442,57 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
                 values.append(value)
             current[field] = values
         applied.append(item)
-    final = CandidateProfileUpdate.model_validate(current)
+    current.update(manual)
+    try:
+        final = CandidateProfileUpdate.model_validate(current)
+    except ValidationError as error:
+        messages = [f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+                    for item in error.errors(include_input=False)]
+        raise SuggestionError(422, "; ".join(messages)) from error
+    return final, applied, manual
+
+
+def review(session: Session, *, record: ProfileSuggestionSet, selections, manual_fields=None):
+    if record.status != "ready" or record.applied_at:
+        raise SuggestionError(409, "This suggestion set is not available for review.")
+    _check_source(session, record)
+    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == record.owner_id))
+    final, applied, manual = _merge_changes(record, profile, selections, manual_fields)
+    return {
+        "current_profile": profile,
+        "proposed_profile": final,
+        "reviewed_profile_revision": profile_revision(profile),
+        "changed_fields": sorted({item["field"] for item in applied} | set(manual)),
+    }
+
+
+def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[ProfileSuggestion],
+          manual_fields: CandidateProfileUpdate | None = None,
+          reviewed_profile_revision: str | None = None) -> ProfileSuggestionSet:
+    # Serialize profile writes even when the profile does not exist yet.
+    session.scalar(select(User.id).where(User.id == record.owner_id).with_for_update())
+    record = session.scalar(select(ProfileSuggestionSet).where(ProfileSuggestionSet.id == record.id)
+                            .with_for_update().execution_options(populate_existing=True))
+    if record is None:
+        raise SuggestionError(404, "Suggestion set not found")
+    manual = manual_fields.model_dump(mode="json", exclude_unset=True) if manual_fields else {}
+    serialized = [s.model_dump(mode="json") for s in selections]
+    # Preserve legacy hashes when no manual fields were submitted.
+    hash_input = {"selections": serialized, "manual_fields": manual} if manual else serialized
+    selection_hash = source_hash(json.dumps(hash_input, sort_keys=True))
+    if record.applied_at:
+        if record.applied_selection_hash == selection_hash:
+            return record
+        raise SuggestionError(409, "This suggestion set was already applied with different selections.")
+    if record.status != "ready":
+        raise SuggestionError(409, "This suggestion set is not ready to save.")
+    _check_source(session, record, lock=True)
+    profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == record.owner_id)
+                             .with_for_update().execution_options(populate_existing=True))
+    expected = reviewed_profile_revision if reviewed_profile_revision is not None else record.profile_revision
+    if profile_revision(profile) != expected:
+        raise SuggestionError(409, "The profile changed. Review profile changes again before saving.")
+    final, applied, manual = _merge_changes(record, profile, selections, manual_fields)
     if profile is None:
         profile = CandidateProfile(owner_id=record.owner_id)
         session.add(profile)
@@ -457,12 +514,15 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
             provenance[item["field"]] = [*entries, entry]
         else:
             provenance[item["field"]] = entry
+    for field in manual:
+        provenance[field] = {"origin": "user"}
     profile.ai_provenance = provenance
     session.flush()
     record.status = "applied"
     record.applied_at = datetime.now(timezone.utc)
     record.applied_selection_hash = selection_hash
-    record.apply_result = {"applied": applied, "profile_id": str(profile.id)}
+    record.apply_result = {"applied": applied, "manual_fields": manual, "profile_id": str(profile.id),
+                           "reviewed_profile_revision": expected}
     session.commit()
     session.refresh(record)
     return record

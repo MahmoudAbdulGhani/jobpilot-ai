@@ -10,6 +10,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     model_validator,
+    computed_field,
 )
 
 from app.schemas.profile import (
@@ -30,7 +31,7 @@ from app.schemas.profile import (
     SKILL_MAX_LENGTH,
     WORK_AUTHORIZATIONS,
 )
-from app.schemas.profile import CandidateProfileResponse
+from app.schemas.profile import CandidateProfileResponse, CandidateProfileUpdate
 
 SuggestionField = Literal[
     "headline", "location", "target_roles", "skills", "experience", "education",
@@ -528,7 +529,38 @@ class SuggestionSetResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @computed_field
+    @property
+    def field_statuses(self) -> dict[str, str]:
+        result = {field: "needs_review" for field in sorted(ALL_SUGGESTION_FIELDS)}
+        for item in self.suggestions or []:
+            field = item.get("field")
+            if field in result:
+                if item.get("status") != "not_found":
+                    result[field] = "suggested"
+                elif result[field] != "suggested":
+                    result[field] = "not_found"
+        return result
 
-class ApplySuggestionRequest(BaseModel):
+
+class ReviewSuggestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    selections: list[ProfileSuggestion] = Field(min_length=1, max_length=50)
+    selections: list[ProfileSuggestion] = Field(default_factory=list, max_length=50)
+    manual_fields: CandidateProfileUpdate | None = None
+
+    @model_validator(mode="after")
+    def require_changes(self):
+        if not self.selections and not (self.manual_fields and self.manual_fields.model_fields_set):
+            raise ValueError("Select at least one suggestion or edit a manual field.")
+        return self
+
+
+class ApplySuggestionRequest(ReviewSuggestionRequest):
+    reviewed_profile_revision: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class SuggestionReviewResponse(BaseModel):
+    current_profile: CandidateProfileResponse | None
+    proposed_profile: CandidateProfileUpdate
+    reviewed_profile_revision: str
+    changed_fields: list[SuggestionField]
