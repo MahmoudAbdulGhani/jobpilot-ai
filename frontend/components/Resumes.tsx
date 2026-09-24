@@ -1,6 +1,6 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle,
@@ -270,9 +270,21 @@ export function ResumesView() {
       {deleteTarget && (
         <DeleteResumeDialog resume={deleteTarget} onClose={() => setDeleteTarget(null)} onDelete={deleteResume} />
       )}
-      {reviewTarget && (
-        <ExtractionDialog key={reviewTarget.id} resume={reviewTarget} onClose={() => setReviewTarget(null)} onConfirmed={() => setConfirmedResumeIds(current => new Set(current).add(reviewTarget.id))} />
-      )}
+        {reviewTarget && (
+          <ExtractionDialog
+            key={reviewTarget.id}
+            resume={reviewTarget}
+            onClose={() => setReviewTarget(null)}
+            onConfirmed={() => {
+              setConfirmedResumeIds(current => new Set(current).add(reviewTarget.id));
+              // Keep the in-memory resume record in sync so the suggestions panel
+              // becomes available immediately after extraction is confirmed.
+              setItems(current => current.map(item => item.id === reviewTarget.id
+                ? { ...item, extraction: { reviewed_at: new Date().toISOString() } as ResumeExtraction }
+                : item));
+            }}
+          />
+        )}
     </div>
   );
 }
@@ -294,13 +306,13 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   const [error, setError] = useState('');
   const [manualNotice, setManualNotice] = useState('');
 
-  const adopt = (result: ProfileSuggestionSet) => {
+  const adopt = useCallback((result: ProfileSuggestionSet) => {
     if (!result || result.resume_id !== resume.id) return;
     setSuggestionSet(result);
     const proposed = (result.suggestions || []).filter(item => item.status !== 'not_found');
     setSelected(new Set(proposed.map(item => item.id)));
     setDrafts(Object.fromEntries(proposed.map(item => [item.id, item.value])));
-  };
+  }, [resume.id]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -310,7 +322,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
               .then(latest => { if (alive) adopt(latest); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [enabled, resume.id]);
+  }, [adopt, enabled, resume.id]);
 
   async function generate() {
     if (pending) return;
@@ -380,7 +392,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
     <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
       <div className="panel-heading"><div><p className="eyebrow">Profile suggestions</p><h3><Sparkle size={20} />Review profile details</h3></div><span className={`status-badge ${suggestionSet?.status === 'ready' ? 'is-confirmed' : ''}`}>{suggestionSet?.status || 'idle'}</span></div>
       <p className="muted">Provider: {suggestionSet?.provider || 'OpenAI when configured'}{suggestionSet?.model ? ` · ${suggestionSet.model}` : ''}. Your confirmed resume text is shared only when you request suggestions. Check each detail against the source before applying it.</p>
-      {!suggestionSet && <button type="button" className="secondary-button" aria-label="Suggest profile details with AI" disabled={pending} onClick={() => void generate()}><Sparkle size={18} />{pending ? 'Generating…' : 'Generate suggestions'}</button>}
+      {!suggestionSet && <button type="button" className="secondary-button" aria-label={pending ? 'Generating…' : 'Suggest profile details with AI'} disabled={pending} onClick={() => void generate()}><Sparkle size={18} />{pending ? 'Generating…' : 'Generate suggestions'}</button>}
       {suggestionSet?.status === 'generating' && <p className="muted" role="status">Generating suggestions… This page will update automatically.</p>}
       {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button>}
       {suggestionSet?.status === 'failed' && suggestionSet.outcome_message && <p className="form-error" role="alert">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
