@@ -218,10 +218,25 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
             _worker_event("provider", "discarded_after_recovery")
             return record
         suggestions, partial = validate_output(output, record.source_text)
+        from app.services.evidence_validation import experience_section
+        work_text = experience_section(record.source_text)
+        if work_text and not any(item["field"] == "experience" for item in suggestions):
+            # One focused retry belongs to this explicit generation request.
+            try:
+                focused = ai_usage.bounded_call(lambda: provider.suggest(work_text), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
+                recovered, rejected = validate_output(
+                    ProviderSuggestionOutput(suggestions=[item for item in focused.suggestions if item.field == "experience"]),
+                    record.source_text,
+                )
+                suggestions.extend(item for item in recovered if item["field"] == "experience")
+                partial = partial or rejected
+            except Exception:
+                partial = True
+                _worker_event("experience_retry", "failed")
         suggestions.extend({
             "id": f"not-found:{field}", "field": field, "status": "not_found",
             "value": None, "evidence": [],
-        } for field in output.not_found)
+        } for field in output.not_found if not any(item["field"] == field for item in suggestions))
         record.status = "ready"
         record.suggestions = suggestions
         record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
@@ -321,7 +336,7 @@ def queue_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, s
 
 
 def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list[dict], bool]:
-    from app.services.evidence_validation import normalize, supported_claim, value_text
+    from app.services.evidence_validation import normalize, supported_claim, supported_experience, value_text
     accepted: list[dict] = []
     partial = output.partial
     seen: set[str] = set()
@@ -342,9 +357,12 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
             if any(_is_contact_details(skill) for skill in suggestion.value):
                 partial = True
                 continue
+        supported = (supported_experience(suggestion.value, quotes, source)
+                     if suggestion.field == "experience" else
+                     supported_claim(value_text(suggestion.value), quotes,
+                                     single_passage=suggestion.field == "education"))
         if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
-                or not supported_claim(value_text(suggestion.value), quotes,
-                                       single_passage=suggestion.field in {"experience", "education"})):
+                or not supported):
             partial = True
             continue
         try:
@@ -403,10 +421,13 @@ def _check_source(session: Session, record: ProfileSuggestionSet, *, lock=False)
         raise SuggestionError(409, "The confirmed CV text changed. Generate fresh suggestions.")
 
 
-def _merge_changes(record, profile, selections, manual_fields):
+def _merge_changes(record, profile, selections, manual_fields, manual_experience_entries=()):
     manual = manual_fields.model_dump(mode="json", exclude_unset=True) if manual_fields else {}
-    if not selections and not manual:
+    additions = [item.model_dump(mode="json") for item in manual_experience_entries]
+    if not selections and not manual and not additions:
         raise SuggestionError(422, "Select at least one suggestion or edit a manual field.")
+    if additions and "experience" in manual:
+        raise SuggestionError(422, "experience: choose either a replacement list or added experience entries.")
     overlap = set(manual) & {item.field for item in selections}
     if overlap:
         raise SuggestionError(422, f"{', '.join(sorted(overlap))}: choose either AI suggestions or manual changes for this field.")
@@ -442,6 +463,16 @@ def _merge_changes(record, profile, selections, manual_fields):
                 values.append(value)
             current[field] = values
         applied.append(item)
+    accepted_additions = []
+    if additions:
+        entries = current.get("experience") or []
+        seen_entries = {_key(entry) for entry in entries}
+        for entry in additions:
+            if _key(entry) not in seen_entries:
+                entries.append(entry)
+                accepted_additions.append(entry)
+                seen_entries.add(_key(entry))
+        current["experience"] = entries
     current.update(manual)
     try:
         final = CandidateProfileUpdate.model_validate(current)
@@ -449,25 +480,27 @@ def _merge_changes(record, profile, selections, manual_fields):
         messages = [f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
                     for item in error.errors(include_input=False)]
         raise SuggestionError(422, "; ".join(messages)) from error
-    return final, applied, manual
+    return final, applied, manual, accepted_additions
 
 
-def review(session: Session, *, record: ProfileSuggestionSet, selections, manual_fields=None):
+def review(session: Session, *, record: ProfileSuggestionSet, selections, manual_fields=None,
+           manual_experience_entries=()):
     if record.status != "ready" or record.applied_at:
         raise SuggestionError(409, "This suggestion set is not available for review.")
     _check_source(session, record)
     profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == record.owner_id))
-    final, applied, manual = _merge_changes(record, profile, selections, manual_fields)
+    final, applied, manual, additions = _merge_changes(record, profile, selections, manual_fields, manual_experience_entries)
     return {
         "current_profile": profile,
         "proposed_profile": final,
         "reviewed_profile_revision": profile_revision(profile),
-        "changed_fields": sorted({item["field"] for item in applied} | set(manual)),
+        "changed_fields": sorted({item["field"] for item in applied} | set(manual) | ({"experience"} if additions else set())),
     }
 
 
 def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[ProfileSuggestion],
           manual_fields: CandidateProfileUpdate | None = None,
+          manual_experience_entries=(),
           reviewed_profile_revision: str | None = None) -> ProfileSuggestionSet:
     # Serialize profile writes even when the profile does not exist yet.
     session.scalar(select(User.id).where(User.id == record.owner_id).with_for_update())
@@ -476,9 +509,12 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
     if record is None:
         raise SuggestionError(404, "Suggestion set not found")
     manual = manual_fields.model_dump(mode="json", exclude_unset=True) if manual_fields else {}
+    additions_input = [item.model_dump(mode="json") for item in manual_experience_entries]
     serialized = [s.model_dump(mode="json") for s in selections]
     # Preserve legacy hashes when no manual fields were submitted.
-    hash_input = {"selections": serialized, "manual_fields": manual} if manual else serialized
+    hash_input = ({"selections": serialized, "manual_fields": manual,
+                   "manual_experience_entries": additions_input} if additions_input else
+                  {"selections": serialized, "manual_fields": manual} if manual else serialized)
     selection_hash = source_hash(json.dumps(hash_input, sort_keys=True))
     if record.applied_at:
         if record.applied_selection_hash == selection_hash:
@@ -492,7 +528,7 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
     expected = reviewed_profile_revision if reviewed_profile_revision is not None else record.profile_revision
     if profile_revision(profile) != expected:
         raise SuggestionError(409, "The profile changed. Review profile changes again before saving.")
-    final, applied, manual = _merge_changes(record, profile, selections, manual_fields)
+    final, applied, manual, additions = _merge_changes(record, profile, selections, manual_fields, manual_experience_entries)
     if profile is None:
         profile = CandidateProfile(owner_id=record.owner_id)
         session.add(profile)
@@ -516,12 +552,17 @@ def apply(session: Session, *, record: ProfileSuggestionSet, selections: list[Pr
             provenance[item["field"]] = entry
     for field in manual:
         provenance[field] = {"origin": "user"}
+    if additions:
+        entries = provenance.get("experience")
+        entries = entries if isinstance(entries, list) else []
+        provenance["experience"] = [*entries, *({"origin": "user", "value": entry} for entry in additions)]
     profile.ai_provenance = provenance
     session.flush()
     record.status = "applied"
     record.applied_at = datetime.now(timezone.utc)
     record.applied_selection_hash = selection_hash
-    record.apply_result = {"applied": applied, "manual_fields": manual, "profile_id": str(profile.id),
+    record.apply_result = {"applied": applied, "manual_fields": manual,
+                           "manual_experience_entries": additions, "profile_id": str(profile.id),
                            "reviewed_profile_revision": expected}
     session.commit()
     session.refresh(record)

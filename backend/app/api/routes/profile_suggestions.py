@@ -68,6 +68,7 @@ def review(suggestion_id: uuid.UUID, body: ReviewSuggestionRequest, db: Database
     try:
         return profile_suggestion_service.review(
             db, record=record, selections=body.selections, manual_fields=body.manual_fields,
+            manual_experience_entries=body.manual_experience_entries,
         )
     except profile_suggestion_service.SuggestionError as error:
         raise HTTPException(error.status_code, error.message) from error
@@ -79,6 +80,7 @@ def apply(suggestion_id: uuid.UUID, body: ApplySuggestionRequest, db: Database, 
     try:
         applied = profile_suggestion_service.apply(
             db, record=record, selections=body.selections, manual_fields=body.manual_fields,
+            manual_experience_entries=body.manual_experience_entries,
             reviewed_profile_revision=body.reviewed_profile_revision,
         )
         response = SuggestionSetResponse.model_validate(applied)

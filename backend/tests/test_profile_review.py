@@ -51,6 +51,63 @@ def stored(db, owner):
         CandidateProfile.owner_id == owner.id)).mappings().one_or_none()
 
 
+def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, suggestion_users, db_session, monkeypatch):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    source = ("PROFESSIONAL EXPERIENCE\n"
+              "Developer - Cedar Labs June 2022 - July 2024\nBuilt APIs\n"
+              "Engineer - Pine Works Jan 2020 - May 2022\nBuilt tests\n"
+              "PROJECT EXPERIENCE\nDeveloper - Demo App 2025\nBuilt a prototype")
+    resume = confirmed_resume(suggestion_client, owner, source)
+    calls = []
+
+    class Provider:
+        name = "deterministic-test"
+        model = "synthetic-v1"
+
+        def suggest(self, text):
+            calls.append(text)
+            if len(calls) == 1:
+                return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
+            return ProviderSuggestionOutput.model_validate({"suggestions": [
+                {"id": "role-1", "field": "experience",
+                 "value": {"title": "Developer", "organization": "Cedar Labs", "period": "June 2022 - July 2024", "notes": "Built APIs"},
+                 "evidence": [{"quote": "Developer - Cedar Labs June 2022 - July 2024"}, {"quote": "Built APIs"}]},
+                {"id": "role-2", "field": "experience",
+                 "value": {"title": "Engineer", "organization": "Pine Works", "period": "Jan 2020 - May 2022", "notes": "Built tests"},
+                 "evidence": [{"quote": "Engineer - Pine Works Jan 2020 - May 2022"}, {"quote": "Built tests"}]},
+            ]})
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Provider())
+    auth = headers(owner)
+    record = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume}", headers=auth).json()
+    assert len(calls) == 2 and "PROJECT EXPERIENCE" not in calls[1]
+    selected = [item for item in record["suggestions"] if item["field"] == "experience" and item.get("status") != "not_found"]
+    assert len(selected) == 2 and record["field_statuses"]["experience"] == "suggested"
+    added = {"title": "Mentor", "organization": "Community Lab", "period": None, "notes": None}
+    payload = {"selections": selected, "manual_experience_entries": [added]}
+    url = f"/api/profile-suggestions/{record['id']}"
+    review = suggestion_client.post(url + "/review", headers=auth, json=payload)
+    assert review.status_code == 200
+    assert stored(db_session, owner) is None
+    assert len(review.json()["proposed_profile"]["experience"]) == 3
+    payload["reviewed_profile_revision"] = review.json()["reviewed_profile_revision"]
+    saved = suggestion_client.post(url + "/apply", headers=auth, json=payload)
+    assert saved.status_code == 200
+    assert len(stored(db_session, owner)["experience"]) == 3
+    assert [entry["origin"] for entry in stored(db_session, owner)["ai_provenance"]["experience"]] == ["ai", "ai", "user"]
+    assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
+
+
+def test_experience_evidence_cannot_combine_roles():
+    from app.services.evidence_validation import supported_experience
+    source = ("PROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\n"
+              "Engineer - Pine Works Jan 2020 - May 2022\nBuilt tests\nPROJECT EXPERIENCE\nDemo 2025")
+    value = {"title": "Developer", "organization": "Pine Works", "period": None, "notes": "Built APIs"}
+    assert not supported_experience(value, ["Developer - Cedar Labs June 2022 - July 2024", "Engineer - Pine Works Jan 2020 - May 2022", "Built APIs"], source)
+
+
 def test_stale_set_reviews_and_saves_all_fields_with_manual_edits(ready, suggestion_client, db_session):
     owner, _, record, selections = ready
     auth = headers(owner)

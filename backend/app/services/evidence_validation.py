@@ -47,6 +47,58 @@ def supported_claim(text, passages, *, single_passage=False):
     return True
 
 
+_WORK_HEADING = re.compile(r"(?im)^\s*(?:professional|work|employment)\s+(?:experience|history)\s*$")
+_NEXT_HEADING = re.compile(r"(?im)^\s*(?:project|education|technical|skills|languages|certifications|awards|volunteer)\b[^\n]{0,60}$")
+_ROLE_DATE = re.compile(r"\b(?:19|20)\d{2}\b|\bpresent\b", re.I)
+_MONTH = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", re.I)
+
+
+def experience_section(source: str) -> str | None:
+    """Return a bounded employment section, never the following projects section."""
+    heading = _WORK_HEADING.search(source)
+    if not heading:
+        return None
+    remainder = source[heading.end():]
+    end = _NEXT_HEADING.search(remainder)
+    section = remainder[:end.start() if end else len(remainder)].strip()
+    return section[:12000] if section else None
+
+
+def experience_role_blocks(source: str) -> list[str]:
+    section = experience_section(source)
+    if not section:
+        return []
+    blocks: list[list[str]] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        # A role header contains a date and employer/title text; duty bullets do not.
+        header = (bool(_ROLE_DATE.search(stripped)) and len(stripped) < 300
+                  and not stripped.startswith(("-", "•", "*"))
+                  and bool(_MONTH.search(stripped) or " - " in stripped or "–" in stripped or "—" in stripped))
+        if header:
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+    return ["\n".join(block) for block in blocks]
+
+
+def supported_experience(value, passages, source: str) -> bool:
+    """Support a role with multiple quotes, all belonging to one role block."""
+    claim = value_text(value)
+    claim_terms = terms(claim)
+    if (not passages or not claim_terms
+            or not claim_terms <= set().union(*(terms(quote) for quote in passages))
+            or any(not claim_terms.intersection(terms(quote)) for quote in passages)
+            or not set(NUMBER.findall(normalize(claim))) <= set(NUMBER.findall(normalize("\n".join(passages))))
+            or any(terms(quote) & {"no", "not", "never", "without"} for quote in passages)):
+        return False
+    for block in experience_role_blocks(source):
+        if all(quote in block for quote in passages):
+            return supported_claim(claim, [block], single_passage=True)
+    # Older CVs without recognizable section headers keep the original rule.
+    return not experience_section(source) and supported_claim(claim, passages, single_passage=True)
+
+
 def value_text(value):
     if isinstance(value, BaseModel):
         value = value.model_dump(exclude_none=True)

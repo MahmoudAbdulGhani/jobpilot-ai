@@ -24,6 +24,7 @@ from app.schemas.profile import (
     LanguageEntry,
     ExperienceEntry,
     MAX_SKILLS,
+    MAX_EXPERIENCE_ENTRIES,
     REMOTE_PREFERENCES,
     ROLE_MAX_LENGTH,
     SalaryPreference,
@@ -547,10 +548,11 @@ class ReviewSuggestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selections: list[ProfileSuggestion] = Field(default_factory=list, max_length=50)
     manual_fields: CandidateProfileUpdate | None = None
+    manual_experience_entries: list[ExperienceEntry] = Field(default_factory=list, max_length=MAX_EXPERIENCE_ENTRIES)
 
     @model_validator(mode="after")
     def require_changes(self):
-        if not self.selections and not (self.manual_fields and self.manual_fields.model_fields_set):
+        if not self.selections and not self.manual_experience_entries and not (self.manual_fields and self.manual_fields.model_fields_set):
             raise ValueError("Select at least one suggestion or edit a manual field.")
         return self
 
