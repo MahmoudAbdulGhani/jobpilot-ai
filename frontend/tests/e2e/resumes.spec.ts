@@ -92,11 +92,12 @@ test('connected resume library workflow', async ({ browser, request }) => {
   await page.getByRole('button', { name: 'Suggest profile details with AI' }).click();
   await expect(page.getByLabel('Proposed headline')).toHaveValue('Connected resume text');
   await page.getByLabel('Proposed headline').fill('AI-reviewed connected profile');
-  await page.getByRole('button', { name: 'Apply selected AI suggestions' }).click();
-  await expect(page.getByText('A selected value is invalid or lacks source evidence.')).toBeVisible();
+  await page.getByRole('button', { name: 'Review profile changes' }).click();
+  await expect(page.getByText(/A selected value is invalid or lacks source evidence\./)).toBeVisible();
   await page.getByLabel('Proposed headline').fill('Resume text');
-  await page.getByRole('button', { name: 'Apply selected AI suggestions' }).click();
-  await expect(page.getByText('Selected AI suggestions applied.')).toBeVisible();
+  await page.getByRole('button', { name: 'Review profile changes' }).click();
+  await page.getByRole('button', { name: 'Save profile changes' }).click();
+  await expect(page.getByRole('link', { name: 'View your profile' })).toBeVisible();
   await page.goto('/profile');
   await expect(page.getByRole('heading', { name: 'Resume text', exact: true })).toBeVisible();
   await page.reload();

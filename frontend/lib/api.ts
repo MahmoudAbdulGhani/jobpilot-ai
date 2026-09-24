@@ -2,6 +2,15 @@ const API = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'produc
 let token: string | null = null;
 let refreshFlight: Promise<boolean> | null = null;
 
+function validationMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string') return detail;
+  if (!Array.isArray(detail)) return fallback;
+  return detail.map((issue: { loc?: Array<string | number>; msg?: string }) => {
+    const field = issue.loc?.filter(part => part !== 'body').join('.');
+    return `${field ? `${field}: ` : ''}${issue.msg || fallback}`;
+  }).join('; ') || fallback;
+}
+
 export const setAccessToken = (value: string | null) => { token = value; };
 function csrf() { return document.cookie.split('; ').find(v => v.startsWith('jobpilot_csrf='))?.split('=').slice(1).join('=') || ''; }
 async function refresh() {
@@ -15,7 +24,7 @@ export async function api<T>(path:string, init:RequestInit = {}, retry=true):Pro
   const response = await fetch(`${API}${path}`, {...init, headers, credentials:'include'});
   if (typeof window!=='undefined' && init.method==='POST' && /profile-suggestions|fit-analyses|application-packs|\/advance$|\/voice\/(transcribe|speak)/.test(path)) window.dispatchEvent(new Event('jobpilot:usage-changed'));
   if (response.status === 401 && retry && path !== '/auth/login' && await refresh()) return api<T>(path, init, false);
-  if (!response.ok) { let message=`Request failed (${response.status})`; try { const b=await response.json(); message=typeof b.detail==='string'?b.detail:(b.detail?.[0]?.msg||message); } catch {} const err = new Error(message) as Error & {status?: number}; err.status = response.status; throw err; }
+  if (!response.ok) { let message=`Request failed (${response.status})`; try { const b=await response.json(); message=validationMessage(b.detail,message); } catch {} const err = new Error(message) as Error & {status?: number}; err.status = response.status; throw err; }
   return response.status === 204 ? undefined as T : response.json();
 }
 export async function downloadResume(path:string):Promise<Blob> {

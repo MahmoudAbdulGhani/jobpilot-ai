@@ -38,4 +38,13 @@ describe('profile-suggestion API requests', () => {
     await expect(api('/profile-suggestions/resumes/resume-1', { method: 'POST' }))
       .rejects.toMatchObject({ message: detail, status });
   });
+
+  it('retains field paths for invalid manual fields', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: [
+      { loc: ['body', 'manual_fields', 'salary_preference'], msg: 'minimum salary must not exceed maximum salary' },
+    ] }), { status: 422, headers: { 'Content-Type': 'application/json' } })));
+    await expect(api('/profile-suggestions/set-1/review', { method: 'POST' })).rejects.toMatchObject({
+      status: 422, message: 'manual_fields.salary_preference: minimum salary must not exceed maximum salary',
+    });
+  });
 });

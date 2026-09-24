@@ -219,10 +219,12 @@ for the guards, skipped coverage and live JobTech smoke evidence.
 
 After confirming extracted CV text, choose **Suggest profile details with AI**.
 JobPilot shows the configured provider, proposed values, and exact supporting
-passages together. Select and edit the facts you accept, then use **Apply selected
-changes**; generation alone never changes the candidate profile. Supported fields
-are headline, candidate location, skills, experience, education, and languages.
-Target roles, salary, remote preference, and work authorization remain manual.
+passages together. Select and edit the facts you accept, then use **Review profile
+changes** and **Save profile changes**. Checked suggestions and edited manual
+fields are saved in one transaction; generation and review never change the profile.
+All ten profile categories are displayed. Fields without usable suggestions remain
+available for manual entry, including headline and experience. Existing saved values
+are loaded into the form, and untouched values are preserved.
 
 AI is disabled by default. To opt in, set `JOBPILOT_AI_ENABLED=true`, choose a
 Structured-Outputs-capable `JOBPILOT_AI_MODEL`, and set
@@ -236,10 +238,14 @@ enabling the service.
 
 Lists append selected entries and skip exact normalized duplicates; they are
 never fuzzily merged or automatically removed. Scalars show explicit replacement.
-Apply is atomic and rejects stale profile or confirmed-CV revisions. Accepted
+Saving is atomic. If the profile changed after generation, review the existing
+suggestions against the current profile without another AI call. Changes made after
+review require another review; changed confirmed CV text requires fresh suggestions.
+Accepted
 facts retain provenance; later manual field edits relabel that field as user-edited.
 Deleting the source CV removes suggestion snapshots while retaining applied profile
 values with the source marked unavailable and without retained evidence quotes.
+See [profile review and save](docs/profile-review.md) for the API and verification flow.
 
 The deterministic provider is available only when both `E2E_TEST_MODE=true` and
 `JOBPILOT_AI_TEST_PROVIDER=true` run against `POSTGRES_TEST_DB`; it is never a

@@ -1,6 +1,5 @@
 'use client';
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle,
@@ -16,10 +15,11 @@ import {
   UploadSimple,
 } from '@phosphor-icons/react';
 import { api, downloadResume } from '../lib/api';
+import { ProfileSuggestionsPanel } from './ProfileSuggestionsPanel';
 import { Dialog } from './Dialog';
 import { PageHeader } from './ui/page-header';
 import '../app/resume-profile.css';
-import type { CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
+import type { Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
 type ReviewedResume = Resume & { extraction?: ResumeExtraction | null };
 
@@ -291,172 +291,6 @@ export function ResumesView() {
         )}
     </div>
   );
-}
-
-const PROFILE_FIELDS = [
-  'headline', 'location', 'target_roles', 'skills', 'experience', 'education',
-  'languages', 'remote_preference', 'work_authorization', 'salary_preference',
-] as const;
-
-const fieldTitle = (field: string) => field.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
-
-function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled: boolean }) {
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const [suggestionSet, setSuggestionSet] = useState<ProfileSuggestionSet | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [drafts, setDrafts] = useState<Record<string, any>>({});
-  const [manual, setManual] = useState<Record<string, any>>({});
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
-  const [manualNotice, setManualNotice] = useState('');
-
-  const adopt = useCallback((result: ProfileSuggestionSet) => {
-    if (!result || result.resume_id !== resume.id) return;
-    setSuggestionSet(result);
-    const proposed = (result.suggestions || []).filter(item => item.status !== 'not_found');
-    setSelected(new Set(proposed.map(item => item.id)));
-    setDrafts(Object.fromEntries(proposed.map(item => [item.id, item.value])));
-  }, [resume.id]);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-    let alive = true;
-    void Promise.resolve(api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`))
-              .then(latest => { if (alive) adopt(latest); })
-      .catch(() => undefined);
-    return () => { alive = false; };
-  }, [adopt, enabled, resume.id]);
-
-  async function generate() {
-    if (pending) return;
-    setPending(true); setError(''); setManualNotice('');
-    try {
-      let result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' });
-      adopt(result);
-      for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 1000));
-        if (!alive.current) return;
-        result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
-        if (!alive.current) return;
-        adopt(result);
-      }
-      if (result.status === 'generating') throw new Error('Suggestions are still processing.');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not generate profile suggestions.');
-      try { adopt(await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`)); } catch { /* retain error */ }
-    } finally { setPending(false); }
-  }
-
-  async function applySuggestions() {
-    if (!suggestionSet || selected.size === 0) return;
-    setPending(true); setError('');
-    try {
-      const applied = await api<ProfileSuggestionSet>(`/profile-suggestions/${suggestionSet.id}/apply`, {
-        method: 'POST', body: JSON.stringify({ selections: (suggestionSet.suggestions || [])
-          .filter(item => item.status !== 'not_found' && selected.has(item.id))
-          .map(item => {
-            const draft = drafts[item.id];
-            const value = item.field === 'skills' || ['experience', 'education', 'languages', 'salary_preference'].includes(item.field)
-              ? (typeof draft === 'string' ? JSON.parse(draft) : draft)
-              : draft;
-            return { id: item.id, field: item.field, value, evidence: item.evidence };
-          }) }),
-      });
-      adopt(applied);
-      if (applied.profile) window.dispatchEvent(new CustomEvent<CandidateProfile>('jobpilot:profile-updated', { detail: applied.profile }));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not apply selected suggestions.'); }
-    finally { setPending(false); }
-  }
-
-  async function saveManual(field: string) {
-    setPending(true); setError(''); setManualNotice('');
-    try {
-      const value = manual[field];
-      let normalized = value;
-      if (field === 'target_roles' || field === 'skills') normalized = (value || []).filter((item: string) => item.trim());
-      if (field === 'experience' || field === 'education') {
-        const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value || [];
-        normalized = Array.isArray(parsed) ? parsed : [parsed];
-      }
-      const payload = field === 'headline' || field === 'location' || field === 'remote_preference' || field === 'work_authorization'
-        ? { [field]: value || null }
-        : { [field]: normalized };
-      const saved = await api<CandidateProfile>('/profile', { method: 'PATCH', body: JSON.stringify(payload) });
-      window.dispatchEvent(new CustomEvent<CandidateProfile>('jobpilot:profile-updated', { detail: saved }));
-      setManualNotice(`${fieldTitle(field)} saved as user-provided.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not save ${fieldTitle(field)}.`); }
-    finally { setPending(false); }
-  }
-
-  const notFound = new Set((suggestionSet?.suggestions || []).filter(item => item.status === 'not_found').map(item => item.field));
-  const grouped = PROFILE_FIELDS.map(field => ({ field, items: (suggestionSet?.suggestions || []).filter(item => item.field === field && item.status !== 'not_found') })).filter(group => group.items.length);
-
-  if (!enabled) return null;
-
-  return (
-    <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
-      <div className="panel-heading"><div><p className="eyebrow">Profile suggestions</p><h3><Sparkle size={20} />Review profile details</h3></div><span className={`status-badge ${suggestionSet?.status === 'ready' ? 'is-confirmed' : ''}`}>{suggestionSet?.status || 'idle'}</span></div>
-      <p className="muted">Provider: {suggestionSet?.provider || 'OpenAI when configured'}{suggestionSet?.model ? ` · ${suggestionSet.model}` : ''}. Your confirmed resume text is shared only when you request suggestions. Check each detail against the source before applying it.</p>
-      {!suggestionSet && <button type="button" className="secondary-button" aria-label={pending ? 'Generating…' : 'Suggest profile details with AI'} disabled={pending} onClick={() => void generate()}><Sparkle size={18} />{pending ? 'Generating…' : 'Generate suggestions'}</button>}
-      {suggestionSet?.status === 'generating' && <p className="muted" role="status">Generating suggestions… This page will update automatically.</p>}
-      {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button>}
-      {suggestionSet?.status === 'failed' && suggestionSet.outcome_message && <p className="form-error" role="alert">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
-      {grouped.map(group => (
-        <div className="suggestion-field-group" key={group.field}><h4>{fieldTitle(group.field)}</h4>
-          {group.items.map(item => <article className="suggestion-card" key={item.id}>
-            <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet?.status !== 'ready'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use this AI suggestion</label>
-            <SuggestionEditor field={item.field} value={drafts[item.id]} disabled={suggestionSet?.status !== 'ready' || pending} onChange={value => setDrafts(current => ({ ...current, [item.id]: value }))} />
-            {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
-          </article>)}
-        </div>
-      ))}
-      {PROFILE_FIELDS.filter(field => notFound.has(field)).map(field => <ManualField key={field} field={field} value={manual[field]} setValue={value => setManual(current => ({ ...current, [field]: value }))} save={() => void saveManual(field)} pending={pending} />)}
-      {suggestionSet?.status === 'ready' && <button className="primary-button" disabled={pending || selected.size === 0} onClick={() => void applySuggestions()}>Apply selected AI suggestions</button>}
-      {suggestionSet?.status === 'applied' && <p className="profile-notice" role="status"><CheckCircle size={18} />Selected AI suggestions applied.</p>}
-      {manualNotice && <p className="profile-notice" role="status">{manualNotice}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
-    </section>
-  );
-}
-
-function SuggestionEditor({ field, value, disabled, onChange, prefix = 'Proposed' }: { field: string; value: any; disabled: boolean; onChange: (value: any) => void; prefix?: string }) {
-  const structured: Record<string, { key: string; label: string; placeholder?: string; numeric?: boolean }[]> = {
-    experience: [{ key: 'title', label: 'Job title', placeholder: 'e.g. Product Engineer' }, { key: 'organization', label: 'Organization' }, { key: 'period', label: 'Period', placeholder: 'e.g. 2022 – present' }, { key: 'notes', label: 'Responsibilities and achievements' }],
-    education: [{ key: 'school', label: 'School' }, { key: 'degree', label: 'Degree' }, { key: 'field', label: 'Field of study' }, { key: 'period', label: 'Period' }],
-    languages: [{ key: 'name', label: 'Language' }, { key: 'proficiency', label: 'Proficiency' }],
-    salary_preference: [{ key: 'currency', label: 'Currency', placeholder: 'USD' }, { key: 'min', label: 'Annual minimum', numeric: true }, { key: 'max', label: 'Annual maximum', numeric: true }],
-  };
-  if (field === 'skills' || (field === 'target_roles' && Array.isArray(value))) {
-    const values = Array.isArray(value) ? value : [value || ''];
-    return <div className="suggestion-skills" aria-label={`${prefix} ${field}`}>{values.map((item, index) => <input key={index} aria-label={`${prefix} ${field === 'skills' ? 'skill' : 'target role'} ${index + 1}`} value={item} maxLength={field === 'skills' ? 100 : 200} disabled={disabled} onChange={event => onChange(values.map((current, itemIndex) => itemIndex === index ? event.target.value : current))} />)}</div>;
-  }
-  if (structured[field]) {
-    const entries = Array.isArray(value) ? value : [value || {}];
-    return <div className="suggestion-skills" aria-label={`${prefix} ${field}`}>{entries.map((entry, entryIndex) => <div className="suggestion-fields" key={entryIndex}>{structured[field].map(spec => <label className={spec.key === 'notes' ? 'suggestion-field-full' : ''} key={spec.key}>{spec.label}{spec.key === 'proficiency' ? <select aria-label={`${prefix} ${field} ${spec.key}`} disabled={disabled} value={entry[spec.key] || 'professional'} onChange={event => { const next = { ...entry, [spec.key]: event.target.value }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }}><option value="basic">Basic</option><option value="conversational">Conversational</option><option value="professional">Professional</option><option value="native">Native</option></select> : spec.key === 'notes' ? <textarea rows={3} disabled={disabled} aria-label={`${prefix} ${field} ${spec.key}`} value={entry[spec.key] || ''} onChange={event => { const next = { ...entry, [spec.key]: event.target.value || null }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }} /> : <input aria-label={`${prefix} ${field} ${spec.key}`} disabled={disabled} type={spec.numeric ? 'number' : 'text'} min={spec.numeric ? 0 : undefined} maxLength={spec.key === 'period' ? 100 : 200} placeholder={spec.placeholder} value={entry[spec.key] ?? ''} onChange={event => { const next = { ...entry, [spec.key]: spec.numeric ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value || null }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }} />}</label>)}</div>)}</div>;
-  }
-  if (field === 'remote_preference' || field === 'work_authorization') {
-    const options = field === 'remote_preference' ? [['office', 'On site'], ['hybrid', 'Hybrid'], ['remote', 'Remote']] : [['citizen', 'Citizen'], ['permanent_resident', 'Permanent resident'], ['work_visa', 'Work visa holder'], ['needs_sponsorship', 'Needs sponsorship'], ['other', 'Other']];
-    return <select aria-label={`${prefix} ${field}`} value={value || ''} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="">Choose a preference</option>{options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>;
-  }
-  return <textarea aria-label={`${prefix} ${field}`} value={typeof value === 'string' ? value : ''} disabled={disabled} onChange={event => onChange(event.target.value)} rows={2} />;
-}
-
-function ManualField({ field, value, setValue, save, pending }: { field: string; value: any; setValue: (value: any) => void; save: () => void; pending: boolean }) {
-  const rows = Array.isArray(value) ? value : field === 'languages' ? [{ name: '', proficiency: 'professional' }] : [''];
-  const updateRow = (index: number, next: any) => setValue(rows.map((row, rowIndex) => rowIndex === index ? next : row));
-  const addRow = () => setValue([...rows, '']);
-  const removeRow = (index: number) => setValue(rows.filter((_, rowIndex) => rowIndex !== index));
-  return <div className="manual-field"><h4>{fieldTitle(field)}</h4><p className="muted">Not found in CV — add manually. <span className="user-provided">User-provided</span></p>
-    {field === 'headline' || field === 'location' ? <input aria-label={`Manual ${field}`} value={value || ''} maxLength={field === 'headline' ? 200 : 300} onChange={event => setValue(event.target.value)} /> : null}
-    {field === 'target_roles' || field === 'skills' ? <>{rows.map((row, index) => <div className="repeatable-row" key={index}><input aria-label={`Manual ${field} ${index + 1}`} value={row} maxLength={field === 'skills' ? 100 : 200} onChange={event => updateRow(index, event.target.value)} /><button type="button" className="action-button" onClick={() => removeRow(index)}>Remove</button></div>)}<button type="button" className="action-button" onClick={addRow}>Add another</button></> : null}
-    {field === 'languages' ? <>{(Array.isArray(value) ? value : [{ name: '', proficiency: 'professional' }]).map((row, index) => <div className="repeatable-row" key={index}><input aria-label={`Manual language ${index + 1}`} value={row.name} onChange={event => updateRow(index, { ...row, name: event.target.value })} /><select aria-label={`Manual language proficiency ${index + 1}`} value={row.proficiency} onChange={event => updateRow(index, { ...row, proficiency: event.target.value })}><option>basic</option><option>conversational</option><option>professional</option><option>native</option></select><button type="button" className="action-button" onClick={() => removeRow(index)}>Remove</button></div>)}<button type="button" className="action-button" onClick={() => setValue([...(Array.isArray(value) ? value : []), { name: '', proficiency: 'professional' }])}>Add language</button></> : null}
-    {field === 'remote_preference' && <select aria-label="Manual remote preference" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="office">Office</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select>}
-    {field === 'work_authorization' && <select aria-label="Manual work authorization" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="citizen">Citizen</option><option value="permanent_resident">Permanent resident</option><option value="work_visa">Work visa</option><option value="needs_sponsorship">Needs sponsorship</option><option value="other">Other</option></select>}
-    {field === 'salary_preference' && <div className="repeatable-row"><input aria-label="Manual salary currency" maxLength={12} placeholder="Currency" value={value?.currency || ''} onChange={event => setValue({ ...(value || {}), currency: event.target.value })} /><input aria-label="Manual salary minimum" type="number" value={value?.min ?? ''} onChange={event => setValue({ ...(value || {}), min: event.target.value ? Number(event.target.value) : null })} /><input aria-label="Manual salary maximum" type="number" value={value?.max ?? ''} onChange={event => setValue({ ...(value || {}), max: event.target.value ? Number(event.target.value) : null })} /></div>}
-    {(field === 'experience' || field === 'education') && <SuggestionEditor field={field} prefix="Manual" value={value || {}} disabled={pending} onChange={setValue} />}
-    <button type="button" className="secondary-button" disabled={pending} onClick={save}>Save user-provided {fieldTitle(field)}</button>
-  </div>;
 }
 
 function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; onClose: () => void; onConfirmed: (result: ResumeExtraction) => void }) {
