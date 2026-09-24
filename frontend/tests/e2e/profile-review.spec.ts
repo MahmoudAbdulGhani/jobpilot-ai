@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { API, accessToken, bootstrapUser, cleanupUser, createdUsers, login } from './helpers';
+import { API, accessToken, bootstrapUser, cleanupUser, createdUsers, grantAiConsent, login } from './helpers';
 
 function database(input: object) {
   const backend = path.resolve(process.cwd(), '../backend');
@@ -26,6 +26,47 @@ function pdf() {
 test.afterEach(async ({ request }) => {
   for (const email of createdUsers) await cleanupUser(request, email);
   createdUsers.length = 0;
+});
+
+test('refreshes an applied old suggestion set from the saved CV without another upload', async ({ page, request }) => {
+  const user = await bootstrapUser(request, 'profile-review-refresh');
+  await grantAiConsent(request, user, ['ai_profile_suggestions']);
+  const auth = { Authorization: `Bearer ${await accessToken(request, user)}` };
+  const uploaded = await request.post(`${API}/resumes`, { headers: auth, multipart: { file: { name: 'saved-cv.pdf', mimeType: 'application/pdf', buffer: pdf() } } });
+  expect(uploaded.ok()).toBeTruthy();
+  const resume = await uploaded.json();
+  expect((await request.post(`${API}/resumes/${resume.id}/extract`, { headers: auth })).ok()).toBeTruthy();
+  const source = 'Synthetic developer\nPROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\nEngineer - Pine Works Jan 2020 - May 2022\nBuilt tests\nPROJECT EXPERIENCE\nDemo - Sample App June 2025 - July 2025';
+  expect((await request.patch(`${API}/resumes/${resume.id}/extraction`, { headers: auth, data: { draft_text: source } })).ok()).toBeTruthy();
+  expect((await request.post(`${API}/resumes/${resume.id}/extraction/confirm`, { headers: auth })).ok()).toBeTruthy();
+  database({ action: 'seed', email: user.email, resume_id: resume.id, status: 'applied', prompt_version: 'profile-suggestions-v3', output: { suggestions: [], not_found: ['headline', 'location', 'target_roles', 'skills', 'experience', 'education', 'languages', 'remote_preference', 'work_authorization', 'salary_preference'] } });
+  await login(page, user);
+  await page.goto('/resumes');
+  await expect(page.getByRole('button', { name: 'Refresh AI suggestions from this saved CV' })).toBeVisible();
+  const uploads: string[] = [];
+  page.on('request', req => { if (req.method() === 'POST' && req.url().endsWith('/resumes')) uploads.push(req.url()); });
+  await page.getByRole('button', { name: 'Refresh AI suggestions from this saved CV' }).click();
+  await expect(page.getByLabel('Proposed experience title')).toHaveCount(2);
+  await expect(page.getByLabel('Proposed experience organization').first()).toHaveValue('Cedar Labs');
+  await expect(page.getByLabel('Proposed experience organization').last()).toHaveValue('Pine Works');
+  expect(uploads).toHaveLength(0);
+  const latest = await (await request.get(`${API}/profile-suggestions/resumes/${resume.id}/latest`, { headers: auth })).json();
+  expect(latest.field_statuses.experience).toBe('suggested');
+  await page.getByRole('button', { name: 'Review profile changes' }).click();
+  const region = page.getByRole('region', { name: 'Profile change comparison' });
+  await expect(region.getByText('Developer · Cedar Labs')).toBeVisible();
+  await expect(region.getByText('Engineer · Pine Works')).toBeVisible();
+  await page.getByRole('button', { name: 'Save profile changes' }).click();
+  await expect(page.getByRole('link', { name: 'View your profile' })).toBeVisible();
+  const expected = [{ title: 'Developer', organization: 'Cedar Labs', period: 'June 2022 - July 2024', notes: null }, { title: 'Engineer', organization: 'Pine Works', period: 'Jan 2020 - May 2022', notes: null }];
+  expect(database({ action: 'check', email: user.email, set_id: latest.id, status: 'applied', expected: { experience: expected } }).matched).toBe(true);
+  expect((await (await request.get(`${API}/profile`, { headers: auth })).json()).experience).toEqual(expected);
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Saved experience' }).getByText('Developer · Cedar Labs')).toBeVisible();
+  await page.getByRole('link', { name: 'View your profile' }).click();
+  await page.reload();
+  await expect(page.getByText(/Cedar Labs · June 2022/)).toBeVisible();
+  await expect(page.getByText(/Pine Works · Jan 2020/)).toBeVisible();
 });
 
 test('review stale AI suggestions and manual edits, commit all values, and reload both pages', async ({ page, request }) => {

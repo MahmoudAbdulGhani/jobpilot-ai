@@ -87,20 +87,24 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
   async function generate() {
     if (pending) return;
     setPending(true); setError(''); setReview(null); setNotice('');
+    const previous = latest.current;
     try {
       let result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}`, { method: 'POST' });
-      adopt(result);
       for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
         await new Promise(resolve => window.setTimeout(resolve, 1000));
         if (!alive.current) return;
         result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
         if (!alive.current) return;
-        adopt(result);
       }
       if (result.status === 'generating') throw new Error('Suggestions are still processing.');
+      if (result.status === 'failed') {
+        if (!previous) adopt(result);
+        throw new Error(result.outcome_message || 'Could not refresh suggestions.');
+      }
+      adopt(result);
     } catch (cause) {
       setError(message(cause));
-      try {
+      if (!previous) try {
         const result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
         if (result && (result.id !== latest.current?.id || result.status !== latest.current?.status)) adopt(result);
       } catch { /* Keep the original error and the user's drafts. */ }
@@ -165,7 +169,7 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
     {!set && <button className="secondary-button" aria-label={pending ? 'Generating…' : 'Suggest profile details with AI'} disabled={pending} onClick={() => void generate()}>{pending ? 'Generating…' : 'Generate suggestions'}</button>}
     {set?.status === 'generating' && <p role="status">Generating suggestions… This page will update automatically.</p>}
     {set?.status === 'failed' && <><p role="alert">{set.outcome_message}{set.failure_field ? ` · ${set.failure_field}` : ''}</p><button className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button></>}
-    {ready && <button className="secondary-button" disabled={pending} onClick={() => void generate()}>Regenerate suggestions</button>}
+    {(ready || set?.status === 'applied') && <button className="secondary-button" disabled={pending} onClick={() => void generate()}>{set?.status === 'applied' ? 'Refresh AI suggestions from this saved CV' : 'Regenerate suggestions'}</button>}
     {(ready || set?.status === 'applied') && FIELDS.map(field => {
       const items = (set?.suggestions || []).filter(item => item.field === field && isSuggestion(item));
       const availability = set?.field_statuses?.[field] || ((set?.suggestions || []).some(item => item.field === field && item.status === 'not_found') ? 'not_found' : 'needs_review');
@@ -181,6 +185,7 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
           <ValueEditor field="experience" value={extraExperience} disabled={disabled} prefix="Added" list onChange={value => { edit(); setExtraExperience(value); }} />
         </div>}
         {field === 'experience' && set?.status === 'applied' && !!profile?.experience?.length && <section aria-label="Saved experience"><h5>Saved experience</h5><ExperienceList entries={profile.experience} /></section>}
+        {ready && items.length > 0 && !manualOverride && field !== 'experience' && <button type="button" className="action-button" disabled={disabled} onClick={() => { edit(); setSelected(current => { const next = new Set(current); items.forEach(item => next.delete(item.id)); return next; }); setManual(current => ({ ...current, [field]: profile?.[field] ?? (['target_roles', 'education', 'languages'].includes(field) ? items.map(item => item.value) : items[0].value) })); }}>Enter {title(field)} manually</button>}
         {(!items.length || manualOverride) && <div className="manual-field">
           <p className="muted">{items.length ? (ready ? 'Your manual value is selected. Choose an AI suggestion above to replace it.' : 'Saved as your manual value.') : availability === 'not_found' ? 'Not found in CV — add manually.' : 'No usable AI suggestion — review and add manually.'} <span className="user-provided">User-provided</span></p>
           <ValueEditor field={field} value={Object.hasOwn(manual, field) ? manual[field] : profile?.[field]} prefix="Manual" disabled={disabled} list={['target_roles', 'skills', 'experience', 'education', 'languages'].includes(field)} onChange={value => { edit(); setManual(current => ({ ...current, [field]: value })); }} />

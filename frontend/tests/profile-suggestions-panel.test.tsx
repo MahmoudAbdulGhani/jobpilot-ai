@@ -104,6 +104,26 @@ describe('combined profile review and save', () => {
     expect(within(region).getByText('Mentor · Community Lab')).toBeTruthy();
   });
 
+  it('refreshes an applied set on click and chooses manual entry for a suggested field', async () => {
+    record.status = 'applied';
+    record.apply_result = { applied: [], profile_id: saved.id, manual_fields: {} };
+    const refreshed = { ...record, id: 'fresh-set', status: 'ready' as const, apply_result: null };
+    generationMock.mockResolvedValueOnce(refreshed);
+    view();
+    const refresh = await screen.findByRole('button', { name: 'Refresh AI suggestions from this saved CV' });
+    expect(generationMock).not.toHaveBeenCalled();
+    fireEvent.click(refresh);
+    await screen.findByRole('button', { name: 'Regenerate suggestions' });
+    expect(generationMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Enter Location manually' }));
+    input('Manual location', 'Beirut');
+    fireEvent.click(screen.getByRole('button', { name: 'Review profile changes' }));
+    await screen.findByRole('button', { name: 'Save profile changes' });
+    const payload = reviewMock.mock.calls[0][0];
+    expect(payload.manual_fields.location).toBe('Beirut');
+    expect(payload.selections.some((item: any) => item.field === 'location')).toBe(false);
+  });
+
   it('supports a manual-only save and explicit clearing without resubmitting untouched values', async () => {
     record.suggestions = [];
     saved = { ...saved, headline: 'Clear', location: 'Keep', salary_preference: { currency: 'USD', min: 1, max: 2 } };
