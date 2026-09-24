@@ -35,7 +35,7 @@ export default function Page(){const [progress,setProgress]=useState<Progress|nu
       {progress.step===step.id&&<div className="account-step-completion"><span>Already taken care of this?</span><div><Button variant="ghost" size="sm" disabled={pending} onClick={()=>advance(steps[index+1]?.id||'done')} aria-busy={pending}>{pending?'Saving…':'Mark step done'}<Check aria-hidden="true"/></Button>{!isLastStep&&<Button variant="ghost" size="sm" disabled={pending} onClick={()=>advance(steps[index+1]?.id||'done')} aria-busy={pending}>{pending?'Saving…':'Skip for now'}</Button>}</div></div>}
       </div>
     </article>)}
-    {progress.step==='done'&&<Button asChild><Link href="/jobs">Go to saved jobs<ArrowRight aria-hidden="true"/></Link></Button>}
+    {progress.step==='done'&&<Button asChild><Link href="/overview">Go to overview<ArrowRight aria-hidden="true"/></Link></Button>}
    </div><aside className="account-start-note"><Sparkle size={28} weight="duotone" aria-hidden="true"/><h2>A workspace that follows your lead.</h2><p>All steps are optional. Start with what you have and add the rest when you are ready.</p><div><ShieldCheck size={21} aria-hidden="true"/><p>Gmail and AI access are not required. You decide when to connect a service or use an AI feature.</p></div><Link href="/settings">Explore your privacy settings<ArrowRight size={16} aria-hidden="true"/></Link></aside>
    </div>
   </>}

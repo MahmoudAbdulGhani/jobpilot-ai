@@ -24,7 +24,7 @@ test('invitation → verification → resumable onboarding → password reset', 
   await page.getByRole('button',{name:'Skip for now'}).click();
   await expect(page.getByRole('status')).toContainText('Upload and review a CV');
   await page.reload();await expect(page.getByRole('status')).toContainText('Upload and review a CV');
-  await page.locator('.account-toggle').click();await page.getByRole('button',{name:'Log out'}).click();
+  await page.locator('.account-toggle').click();await page.getByRole('menuitem',{name:'Log out'}).click();
   await page.getByRole('link',{name:'Forgot password?'}).click();await expect(page.getByRole('heading',{name:'Reset your password'})).toBeVisible();await page.getByLabel('Email',{exact:true}).fill(email);
   await page.getByRole('button',{name:'Request account email'}).click();await expect(page.getByRole('status')).toContainText('accepted by the transport');
   message=await request.post(`${API}/e2e/account-message`,{data:{ticket}});text=(await message.json()).text;

@@ -29,6 +29,8 @@ export default function Detail() {
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState('');
+  const [notFound, setNotFound] = useState(false);
+  const [reload, setReload] = useState(0);
   const [actionError, setActionError] = useState('');
   const [tab, setTab] = useState<Tab>('overview');
   const [modal, setModal] = useState<'edit' | 'notes' | 'delete' | null>(null);
@@ -37,9 +39,9 @@ export default function Detail() {
   useEffect(() => {
     let active = true;
     setJob(null); setError(''); setActionError('');
-    api<Job>(`/jobs/${id}`).then(value => { if (active) setJob(value); }).catch(caught => { if (active) setError(caught.message); });
+    api<Job>(`/jobs/${id}`).then(value => { if (active) setJob(value); }).catch(caught => { if (active) { setNotFound(caught.status === 404 || caught.status === 422); setError(caught.message); } });
     return () => { active = false; };
-  }, [id]);
+  }, [id, reload]);
 
   useEffect(() => {
     const showHash = () => {
@@ -70,7 +72,7 @@ export default function Detail() {
     if (closeModal) setModal(null);
   }
 
-  if (error) return <Shell><section className="app-page workflow-empty" role="alert"><span className="workflow-empty-icon"><FileText size={28} /></span><h1>We couldn’t open this job</h1><p>{error}</p><Link className="secondary-button" href="/jobs"><ArrowLeft size={17} />Back to saved jobs</Link></section></Shell>;
+  if (error) return <Shell><section className="app-page workflow-empty" role="alert"><span className="workflow-empty-icon"><FileText size={28} aria-hidden="true" /></span><h1>{notFound ? 'Job not found' : 'We couldn’t open this job'}</h1><p>{notFound ? 'This job is unavailable or no longer saved in your workspace.' : error}</p>{!notFound && <button className="primary-button" onClick={() => setReload(value => value + 1)}>Try again</button>}<Link className="secondary-button" href="/jobs"><ArrowLeft size={17} aria-hidden="true" />Back to saved jobs</Link></section></Shell>;
   if (!job) return <Shell><section className="app-page job-detail-page" aria-busy="true" aria-label="Loading opportunity"><div className="workflow-skeleton workflow-skeleton-title" /><div className="workflow-skeleton workflow-skeleton-subtitle" /><div className="workflow-skeleton workflow-skeleton-panel" /><p className="sr-only" role="status">Loading opportunity…</p></section></Shell>;
 
   const safeUrl = job.source_url && /^https?:\/\//i.test(job.source_url) ? job.source_url : null;

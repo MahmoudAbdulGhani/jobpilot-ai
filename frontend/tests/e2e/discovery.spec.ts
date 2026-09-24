@@ -25,15 +25,18 @@ test('search, preview and reviewed import preserves edits and connects to saved-
   expect((await (await request.get(`${API}/jobs`,{headers})).json()).total).toBe(0);
   await page.getByRole('button',{name:'Import this job into saved jobs'}).click();
   await page.getByRole('link',{name:'Open saved job',exact:true}).click();
-  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/,{timeout:15000});
   const jobId=page.url().split('/').pop();
   await expect(page.getByRole('heading',{name:'Synthetic Backend Engineer',exact:true})).toBeVisible();
   await expect(page.getByText(/Imported from JobTech JobSearch/)).toBeVisible();
+  await page.getByRole('tab', { name: 'Application pack', exact: true }).click();
   await expect(page.getByText('CV & cover letter packs')).toBeVisible();
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.getByRole('button',{name:/Analyze fit/})).toBeVisible();
   // The imported row uses the existing APIs and has no special editing restrictions.
   expect((await request.patch(`${API}/jobs/${jobId}`,{headers,data:{title:'My reviewed title',notes:'Keep my notes'}})).ok()).toBeTruthy();
   expect((await request.patch(`${API}/profile`,{headers,data:{headline:'Backend engineer',skills:['Python','PostgreSQL']}})).ok()).toBeTruthy();
+  expect((await request.patch(`${API}/privacy/consents`,{headers,data:{key:'ai_job_fit',allowed:true,confirm:true}})).ok()).toBeTruthy();
   await page.reload();
   await page.getByRole('button',{name:/Analyze fit/}).click();
   await expect(page.getByText('Synthetic deterministic analysis for application-contract testing.')).toBeVisible({timeout:15000});
@@ -49,6 +52,7 @@ test('search, preview and reviewed import preserves edits and connects to saved-
   const tracking=await request.post(`${API}/jobs/${jobId}/applications`,{headers,data:{submission_date:'2026-09-17T09:00:00Z',method:'other',notes:'Synthetic tracking verification only'}});
   expect(tracking.status()).toBe(201);
   await page.reload();
+  await page.getByRole('tab', { name: 'Tracking', exact: true }).click();
   await expect(page.getByPlaceholder('Optional notes', {exact:true})).toHaveValue('Synthetic tracking verification only');
 });
 

@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResumesView } from '../components/Resumes';
 import type { Resume, ResumeExtraction } from '../lib/types';
 
-const { apiMock, downloadMock } = vi.hoisted(() => ({ apiMock: vi.fn(), downloadMock: vi.fn() }));
-vi.mock('../lib/api', () => ({ api: apiMock, downloadResume: downloadMock }));
+const { apiMock, reviewReadMock, downloadMock } = vi.hoisted(() => ({ apiMock: vi.fn(), reviewReadMock: vi.fn(), downloadMock: vi.fn() }));
+vi.mock('../lib/api', () => ({ api: (...args: [string, RequestInit?]) => args[0].endsWith('/extraction') && args[1]?.signal ? reviewReadMock(...args) : apiMock(...args), downloadResume: downloadMock }));
 
 const pdfResume: Resume = {
   id: '9d7b17b0-9f0e-4bb8-9c1c-2d2e6a4f4f00',
@@ -50,7 +50,18 @@ const extraction: ResumeExtraction = {
 describe('ResumesView', () => {
   beforeEach(() => {
     apiMock.mockReset();
+    reviewReadMock.mockReset().mockRejectedValue(Object.assign(new Error('Not extracted'), { status: 404 }));
     downloadMock.mockReset();
+  });
+
+  it('restores persisted review state without generating extraction or suggestions', async () => {
+    apiMock.mockResolvedValueOnce({ items: [pdfResume] });
+    reviewReadMock.mockResolvedValue({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
+    render(<ResumesView />);
+    expect(await screen.findByText('Text reviewed')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Suggest profile details with AI' })).toBeTruthy();
+    expect(apiMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    expect(reviewReadMock.mock.calls[0][0]).toBe(`/resumes/${pdfResume.id}/extraction`);
   });
 
   it('shows a loading state while resumes are being fetched', () => {
@@ -230,7 +241,9 @@ describe('ResumesView', () => {
       reviewed_at: '2026-09-13T10:00:00Z',
     });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
-    await waitFor(() => expect(screen.getAllByText('Confirmed')).toHaveLength(2));
+    await screen.findByRole('button', { name: 'Confirmed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(await screen.findByText('Text reviewed')).toBeTruthy();
     expect(apiMock.mock.calls[3][0]).toBe(`/resumes/${pdfResume.id}/extraction/confirm`);
   });
 
@@ -259,6 +272,7 @@ describe('ResumesView', () => {
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     expect(await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i)).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     let resolveGeneration!: (value: unknown) => void;
     apiMock.mockReturnValueOnce(new Promise(resolve => { resolveGeneration = resolve; }));
     const generate = await screen.findByRole('button', { name: 'Suggest profile details with AI' });
@@ -289,6 +303,7 @@ resolveGeneration({
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     const suggestions = [
       { id: 'headline-1', field: 'headline', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Full-Stack Software Engineer' }] },
@@ -341,6 +356,7 @@ expect(applied.find((item: { field: string }) => item.field === 'skills').value)
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     apiMock.mockRejectedValueOnce(new Error(message));
     fireEvent.click(await screen.findByRole('button', { name: 'Suggest profile details with AI' }));
@@ -360,6 +376,7 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     apiMock.mockRejectedValueOnce(new Error('AI data-use consent is required.'));
     apiMock.mockResolvedValueOnce({
@@ -381,6 +398,7 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
     await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     apiMock.mockResolvedValueOnce({
       id: 'other-set', resume_id: 'another-resume-id', status: 'failed', provider: 'openai', model: 'gpt-5-mini',
@@ -401,6 +419,8 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     await screen.findByLabelText('Extracted resume text');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
+    await screen.findByRole('button', { name: 'Confirmed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await screen.findByText('Review profile details');
     expect(screen.queryByText('Suggest profile details with AI')).toBeNull();
     expect(screen.getByRole('button', { name: 'Suggest profile details with AI' })).not.toBeNull();
@@ -415,6 +435,8 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     await screen.findByLabelText('Extracted resume text');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
+    await screen.findByRole('button', { name: 'Confirmed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await screen.findByRole('button', { name: 'Suggest profile details with AI' });
     apiMock.mockResolvedValueOnce({ id: 'set-1', resume_id: pdfResume.id, status: 'ready', provider: 'openai', model: 'gpt-5-mini', outcome_message: null, failure_field: null, applied_at: null, suggestions: [
       { id: 'skills-1', field: 'skills', value: ['Python', 'TypeScript'], evidence: [{ quote: 'Python and TypeScript' }] },
@@ -436,6 +458,8 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     await screen.findByLabelText('Extracted resume text');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
+    await screen.findByRole('button', { name: 'Confirmed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await screen.findByRole('button', { name: 'Suggest profile details with AI' });
 
     const suggestions = [
@@ -492,6 +516,8 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     await screen.findByLabelText('Extracted resume text');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm text' }));
+    await screen.findByRole('button', { name: 'Confirmed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await screen.findByRole('button', { name: 'Suggest profile details with AI' });
     const fields = ['headline', 'location', 'target_roles', 'skills', 'experience', 'education', 'languages', 'remote_preference', 'work_authorization', 'salary_preference'];
     const suggestions = fields.map((field, index) => ({ id: `missing-${index}`, field, status: 'not_found', value: null, evidence: [] }));

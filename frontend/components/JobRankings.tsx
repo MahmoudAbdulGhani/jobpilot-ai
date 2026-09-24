@@ -1,10 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ChartBar } from '@phosphor-icons/react';
 import { api } from '../lib/api';
 import type { RankRun, RankRunList } from '../lib/types';
 import { Button } from './ui/button';
-import { EmptyState } from './ui/empty-state';
 import { ErrorState } from './ui/error-state';
 import { LoadingState } from './ui/loading-state';
 
@@ -49,7 +47,7 @@ export function JobRankings() {
     }
   }
 
-  return <section className="mt-8 rounded-lg border border-border bg-card p-6 shadow-sm" aria-label="Cross-job ranking">
+  return <section className="ranking-card" aria-label="Cross-job ranking">
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div>
         <p className="eyebrow">Advisory ranking</p>
@@ -60,8 +58,7 @@ export function JobRankings() {
     </div>
     {loading && <div className="mt-4"><LoadingState label="Loading ranking…" rows={2} /></div>}
     {error && <div className="mt-4"><ErrorState title="Could not load the ranking" message={error} onRetry={() => { setLoading(true); void loadLatest(); }} /></div>}
-    {!loading && !error && run === null && total === 0 && <div className="mt-6"><EmptyState icon={<ChartBar size={24} aria-hidden="true" />} title="No ranking yet"
-      description="Rank your saved jobs to get a deterministic comparison against the facts in your profile. Advisory only." /></div>}
+    {!loading && !error && run === null && total === 0 && <p className="ranking-empty">No ranking yet. Add your profile and saved jobs, then run a comparison when you’re ready.</p>}
     {run && run.is_stale && <p className="mt-4 rounded-lg border border-[#e5d9b8] bg-[#faf3e0] p-4 text-sm text-[var(--warning)]" role="status">This ranking is outdated: your profile or a ranked job changed. Rank again for current results.</p>}
     {run && run.items && run.items.length > 0 && <ol className="mt-5 grid gap-4">
       {run.items.map(item => <li className="rounded-lg border border-border bg-[var(--paper)] p-5" key={item.job_id}>

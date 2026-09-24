@@ -22,6 +22,7 @@ function Counts({ title, counts }: { title: string; counts: Record<string, numbe
 }
 
 export function InsightsView() {
+  const [version, setVersion] = useState(0);
   const [data, setData] = useState<Insights | null>(null);
   const [error, setError] = useState('');
 
@@ -31,12 +32,12 @@ export function InsightsView() {
       .then(result => { if (active) setData(result); })
       .catch(e => { if (active) setError((e as Error).message); });
     return () => { active = false; };
-  }, []);
+  }, [version]);
 
-  return <Shell><div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+  return <Shell><div className="app-page">
     <PageHeader eyebrow="Private overview" title="Insights"
       subtitle="Your fit gaps, applications, replies, reminders and interview activity in one place. Read-only; previews are excerpted and senders reduced to domains." />
-    {error && <div className="mt-6"><ErrorState title="Could not load insights" message={error} onRetry={() => { setData(null); setError(''); }} /></div>}
+    {error && <div className="mt-6"><ErrorState title="Could not load insights" message={error} onRetry={() => { setData(null); setError(''); setVersion(value => value + 1); }} /></div>}
     {!data && !error && <div className="mt-6"><LoadingState label="Loading insights…" rows={4} /></div>}
     {data && <>
       <section className={sectionCard} aria-label="Fit gaps">

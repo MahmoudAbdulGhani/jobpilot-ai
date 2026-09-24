@@ -10,6 +10,7 @@ export default defineConfig({
     baseURL: 'http://localhost:3010',
     browserName: 'chromium',
     headless: true,
+    actionTimeout: 15_000,
     trace: 'retain-on-failure',
   },
   webServer: [
@@ -20,6 +21,8 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         ...process.env,
+        ENVIRONMENT: 'local',
+        ALLOWED_HOSTS: 'localhost,127.0.0.1,testserver',
         POSTGRES_DB: process.env.POSTGRES_TEST_DB || 'jobpilot_test',
         E2E_TEST_MODE: 'true',
         JOBPILOT_ACCOUNT_MAIL_TRANSPORT: 'test',

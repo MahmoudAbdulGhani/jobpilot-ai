@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { InsightsView } from '../components/Insights';
 
@@ -34,4 +34,14 @@ test('insights renders redacted sections with evidence links', async () => {
   expect(screen.getByText(/Manual record/)).toBeTruthy();
   const links = screen.getAllByRole('link', { name: 'Open saved job' });
   expect(links.length).toBeGreaterThanOrEqual(3);
+});
+
+test('retry reloads failed insights', async () => {
+  apiMock.mockImplementation((path: string) => path === '/insights' ? Promise.reject(new Error('Temporarily unavailable')) : Promise.resolve({}));
+  render(<InsightsView />);
+  expect(await screen.findByText('Temporarily unavailable')).toBeTruthy();
+  apiMock.mockResolvedValue(payload);
+  fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+  expect(await screen.findByText(/Kubernetes experience/)).toBeTruthy();
+  expect(apiMock.mock.calls.filter(([path]) => path === '/insights')).toHaveLength(2);
 });

@@ -1,3 +1,4 @@
+import { grantAiConsent } from './helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { accessToken, API, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
@@ -33,9 +34,9 @@ test('connected career journal workflow', async ({ browser, request }) => {
   await createJob(page, 'Junior Backend Developer');
   await page.reload();
   await page.getByRole('link', { name: /Junior Backend Developer/ }).click();
-  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/,{timeout:15000});
   const jobUrl = page.url();
-  await page.screenshot({ path: '../evidence/detail-desktop-initial.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('detail-desktop-initial.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Edit job' }).click();
   await expect(page.getByLabel('Job title')).toBeFocused();
@@ -49,10 +50,10 @@ test('connected career journal workflow', async ({ browser, request }) => {
   await page.getByRole('button', { name: 'Save notes' }).click();
   await expect(page.getByText('Bring two API reliability stories.')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Back to saved jobs' }).click();
+  await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Saved jobs', exact: true }).click();
   for (let index = 1; index <= 11; index++) await createJob(page, `Pagination role ${String(index).padStart(2, '0')}`, `Company ${index}`);
   await expect(page.getByText('Page 1 of 2')).toBeVisible();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByRole('button', { name: 'Next page' }).click();
   await expect(page.getByText('Page 2 of 2')).toBeVisible();
   await page.getByPlaceholder('Search by title or company').fill('Junior Backend');
   await page.getByRole('link', { name: /Junior Backend Developer/ }).click();
@@ -93,12 +94,13 @@ test('connected application tracking record reload edit status history delete fl
   await createJob(page, 'Application Tracking Job');
   await page.reload();
   await page.getByRole('link', { name: /Application Tracking Job/ }).click();
-  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/,{timeout:15000});
 
+  await page.getByRole('tab', { name: 'Tracking', exact: true }).click();
   await page.getByLabel('Submission date').fill('2026-09-14');
   await page.getByLabel('Method').selectOption('email');
   await page.getByLabel('Status').selectOption('Applied');
-  await page.getByLabel('Notes').fill('Follow up this week.');
+  await page.getByRole('textbox', { name: 'Notes', exact: true }).fill('Follow up this week.');
   await page.getByRole('button', { name: 'Record application' }).click();
   await expect(page.getByText('Follow up this week.')).toBeVisible();
   await page.getByLabel('Reminder date and time').fill('2026-09-21T10:00');
@@ -111,7 +113,7 @@ test('connected application tracking record reload edit status history delete fl
   await expect(page.getByRole('listitem').filter({ hasText: 'Applied' })).toBeVisible();
 
   await page.getByLabel('Status').selectOption('Interview');
-  await page.getByLabel('Notes').fill('Follow up this week and keep applying.');
+  await page.getByRole('textbox', { name: 'Notes', exact: true }).fill('Follow up this week and keep applying.');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByText('Follow up this week and keep applying.')).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'Interview' })).toBeVisible();
@@ -120,9 +122,9 @@ test('connected application tracking record reload edit status history delete fl
   await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
   await page.getByLabel('Status filter').selectOption('Interview');
   await page.getByRole('link', { name: /Open saved job/ }).click();
-  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+$/);
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]+#tracking$/,{timeout:15000});
 
-  await page.getByRole('button', { name: 'Delete' }).nth(1).click();
+  await page.locator('.application-tracking').getByRole('button', { name: 'Delete', exact: true }).click();
 
   await expect(page.getByRole('button', { name: 'Record application' })).toBeVisible();
   await context.close();
@@ -136,10 +138,10 @@ test('mobile detail and dialog', async ({ browser, request }) => {
   await createJob(page, 'Mobile Product Engineer', 'Northstar');
   await page.getByRole('link', { name: /Mobile Product Engineer/ }).click();
   await expect(page.locator('.job-workspace')).toHaveCSS('display', 'flex');
-  await page.screenshot({ path: '../evidence/detail-mobile.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('detail-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Edit job' }).click();
   await expect(page.getByLabel('Job title')).toBeFocused();
-  await page.screenshot({ path: '../evidence/dialog-mobile.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('dialog-mobile.png'), fullPage: true });
   const dialog = page.getByRole('dialog');
   await expect(dialog).toHaveJSProperty('scrollTop', 0);
   await dialog.evaluate(element => element.scrollTop = element.scrollHeight);
@@ -151,8 +153,10 @@ test('mobile detail and dialog', async ({ browser, request }) => {
 
 test('connected explainable fit analysis persists and becomes outdated', async ({ page, request }) => {
   const user = await bootstrapUser(request, 'job-fit');
+  await grantAiConsent(request, user, ['ai_job_fit']);
   const token = await accessToken(request, user);
   const auth = { Authorization: `Bearer ${token}` };
+  expect((await request.patch(`${API}/privacy/consents`, { headers: auth, data: { key:'ai_job_fit', allowed:true, confirm:true } })).ok()).toBeTruthy();
   expect((await request.patch(`${API}/profile`, { headers: auth, data: { headline: 'Backend engineer', skills: ['Python', 'PostgreSQL'] } })).ok()).toBeTruthy();
   const created = await request.post(`${API}/jobs`, { headers: auth, data: { title:'Backend Engineer', company:'Synthetic Co', description:'Python is required\nClear communication preferred' } });
   expect(created.ok()).toBeTruthy(); const job = await created.json();

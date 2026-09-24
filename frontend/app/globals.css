@@ -35,7 +35,10 @@
   --primary:var(--forest);--primary-foreground:#ffffff;--secondary:var(--note);--secondary-foreground:var(--ink);
   --accent:#e7efe9;--accent-foreground:var(--forest);
   --destructive:var(--danger);--destructive-foreground:#ffffff;
-  --border:var(--line);--input:#cdcec3;--ring:var(--forest);
+  --border:var(--line);--input:#858b80;--ring:var(--forest);
+  --success:#2a5a44;--success-surface:#edf4ee;--warning:#805416;--warning-surface:#faf0db;
+  --info:#2a4a66;--info-surface:#edf2f6;--danger-surface:#fff1ef;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;--space-12:48px;--space-16:64px;
   --radius:0.5rem;
   color:var(--ink);background:var(--paper);font-family:var(--sans)
 }
@@ -135,19 +138,7 @@
 .reply-timeline select { padding: .7rem; max-width: 100%; font: inherit; }
 @media(min-width:881px) { .app-header { gap: 32px; } .primary-nav { min-width: 0; } }
 
-.interview-page { max-width: 960px; margin: 2rem auto; padding: 0 1.5rem; }
-.interview-page h1 { font-size: 2.6rem; margin: 1rem 0; }
-.interview-page h2 { margin: 1.5rem 0 1rem; }
-.interview-page p { margin: .9rem 0; line-height: 1.55; }
-.interview-page fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1.5rem 0; }
-.interview-page label { display: grid; gap: .5rem; margin: 1rem 0; }
-.interview-page input, .interview-page select, .interview-page textarea { padding: .7rem; max-width: 100%; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; }
-.interview-page textarea { width: 100%; resize: vertical; }
-.interview-page button { margin: .5rem .5rem .5rem 0; }
-.interview-page .interview-consent { display: flex; align-items: flex-start; }
-.interview-page blockquote { margin: 1rem 0; padding: 1rem; border-left: 3px solid var(--forest); background: var(--note); white-space: pre-wrap; overflow-wrap: anywhere; }
 .interview-snapshot { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); overflow-wrap: anywhere; }
-.interview-page select:focus-visible, .interview-page summary:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
 /* Owner-scoped plan balances; scroll rather than squeeze columns on narrow screens. */
 .usage-table{overflow-x:auto;margin-block:24px}.usage-table table{width:100%;border-collapse:collapse;text-align:left}.usage-table th,.usage-table td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}.usage-table caption{text-align:left;font-weight:650;padding-bottom:12px}.admin-badge{padding:10px 14px;margin-block:12px;background:var(--forest);color:var(--paper);border-radius:6px;font-weight:600;font-size:15px}
 

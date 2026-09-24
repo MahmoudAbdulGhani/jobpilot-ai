@@ -1,3 +1,4 @@
+import { grantAiConsent } from './helpers';
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -37,6 +38,7 @@ test.afterEach(async ({ request }) => {
 for (const imported of [false, true]) {
 test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow verifies PDF and DOCX exports`, async ({ browser, request }) => {
   const user = await bootstrapUser(request, 'pack-flow');
+  await grantAiConsent(request, user, ['ai_application_packs']);
   const token = await accessToken(request, user);
   const auth = { Authorization: `Bearer ${token}` };
 
@@ -105,6 +107,7 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
 
   await login(page, user);
   await page.goto(`/jobs/${job.id}`);
+  await page.getByRole('tab', { name: 'Application pack', exact: true }).click();
   await expect(page.getByText('CV & cover letter packs')).toBeVisible();
 
   await expect(page.getByText('the deterministic test provider', { exact: false })).toBeVisible();

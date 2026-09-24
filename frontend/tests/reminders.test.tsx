@@ -1,4 +1,4 @@
-import {fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {DueReminders,ReminderEditor,Reminders} from '../components/Reminders';
 const {apiMock}=vi.hoisted(()=>({apiMock:vi.fn()}));
@@ -46,6 +46,8 @@ describe('in-app reminders',()=>{
     apiMock.mockResolvedValueOnce({...item,status:'active'}).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{fail=reject;}));
     render(<ReminderEditor applicationId="a"/>);
     fireEvent.click(await screen.findByRole('button',{name:'Complete reminder'}));
+    const dialog=await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button',{name:'Complete reminder'}));
     expect(screen.getByRole('status').textContent).toContain('Saving');
     expect(screen.getByRole('button',{name:'Cancel reminder'}).closest('fieldset')?.disabled).toBe(true);
     fail(new Error('Reminder changed; reload before editing'));

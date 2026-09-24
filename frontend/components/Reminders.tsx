@@ -1,11 +1,13 @@
 'use client';
 import Link from 'next/link';
+import { Bell } from '@phosphor-icons/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { FollowupSuggestions } from './FollowupSuggestions';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
+import { PageHeader } from './ui/page-header';
 
 type Reminder = {application_id:string; job_id:string; title:string; company:string; application_status:string; due_at:string|null; timezone:string; status:string; revision:number; overdue:boolean; reply_received:boolean};
 type Page = {items:Reminder[]; next_cursor:string|null};
@@ -63,12 +65,8 @@ export function Reminders() {
   const request=useRef(0);
   const load=useCallback(async(cursor?:string)=>{const current=++request.current;setPending(true);setError('');try{const result=await api<Page>(`/reminders?view=${view}${cursor?`&after=${cursor}`:''}`);if(current===request.current)setData(old=>cursor?{...result,items:[...(old?.items||[]),...result.items]}:result);}catch(e){if(current===request.current)setError((e as Error).message);}finally{if(current===request.current)setPending(false);}},[view]);
   useEffect(()=>{setData(null);void load();},[load]);
-  return <section className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6" aria-label="Follow-up reminders">
-    <header className="flex flex-col gap-2">
-      <p className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--forest)]">In-app only</p>
-      <h1 className="font-serif text-4xl leading-tight tracking-tight text-[var(--ink)] sm:text-5xl">Follow-up reminders</h1>
-      <p className="max-w-2xl text-base leading-relaxed text-muted-foreground">In-app only. Open JobPilot to check due reminders. No email is sent.</p>
-    </header>
+  return <section className="app-page" aria-label="Follow-up reminders">
+    <PageHeader eyebrow="In-app only" title="Follow-up reminders" subtitle="In-app only. Open JobPilot to check due reminders. No email is sent." />
     <div className="mt-6 flex w-full max-w-xs flex-col gap-2"><Label htmlFor="reminder-view">Show reminders</Label><select id="reminder-view" className={selectClass} value={view} onChange={e=>setView(e.target.value)}><option value="overdue">Overdue / due now</option><option value="upcoming">Upcoming</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></div>
     {pending && <p role="status" className="mt-4 text-sm text-muted-foreground">Loading reminders…</p>}
     {error && <p role="alert" className="mt-4 text-sm text-[var(--danger)]">{error} <button className="ml-2 text-[var(--forest)] underline underline-offset-4" onClick={()=>void load()}>Retry</button></p>}
@@ -84,5 +82,5 @@ export function Reminders() {
 export function DueReminders() {
   const [due,setDue]=useState<boolean|null>(null);
   useEffect(()=>{let alive=true;const load=()=>{void api<Page>('/reminders?limit=1').then(p=>{if(alive)setDue(p.items.length>0);}).catch(()=>{if(alive)setDue(null);});};load();window.addEventListener('focus',load);window.addEventListener('reminders-changed',load);const timer=window.setInterval(load,60000);return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',load);window.removeEventListener('reminders-changed',load);};},[]);
-  return <p className="mt-4"><Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href="/reminders">{due===true?'You have due follow-up reminders':due===false?'View follow-up reminders':'Check follow-up reminders'}</Link></p>;
+  return <p><Link className="workspace-reminder" aria-label={due ? "You have due follow-up reminders" : "View follow-up reminders"} href="/reminders"><Bell size={20} aria-hidden="true" /><span>{due===true?'You have due follow-up reminders':due===false?'View follow-up reminders':'Check follow-up reminders'}</span></Link></p>;
 }

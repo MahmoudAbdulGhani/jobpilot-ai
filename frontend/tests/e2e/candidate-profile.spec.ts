@@ -35,19 +35,20 @@ test('connected candidate profile workflow', async ({ browser, request }) => {
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByRole('status')).toContainText('Profile saved');
   await expect(page.getByRole('heading', { name: headline })).toBeVisible();
-  await page.screenshot({ path: '../evidence/profile-desktop.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('profile-desktop.png'), fullPage: true });
 
   await page.reload();
   await expect(page.getByRole('heading', { name: headline })).toBeVisible();
   await expect(page.getByText('Python')).toBeVisible();
-  await expect(page.getByText('Hybrid')).toBeVisible();
+  await expect(page.locator('.profile-meta').getByText('Hybrid', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit profile' }).click();
   await page.getByLabel('Minimum (yearly, optional)').fill('200000');
   await page.getByLabel('Maximum (yearly, optional)').fill('100000');
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByText('The minimum salary must not be higher than the maximum.')).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(page.getByRole('heading', { name: headline })).toBeVisible();
 
   await logout(page);

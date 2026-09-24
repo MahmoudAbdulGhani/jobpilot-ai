@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ArrowDown, ArrowRight, ArrowUpRight, Archive, BookmarkSimple, Compass, FileText, LockSimple, MagnifyingGlass, MapPin, Plus, UserCircle } from '@phosphor-icons/react';
+import { ArrowDown, ArrowRight, ArrowUpRight, Archive, BookmarkSimple, FileText, LockSimple, MagnifyingGlass, MapPin, Plus, UserCircle } from '@phosphor-icons/react';
 import { Shell } from './Shell';
 import { JobEditor } from './Dialog';
 import { JobRankings } from './JobRankings';
@@ -36,8 +36,7 @@ export function Collection({ archived = false }: { archived?: boolean }) {
     return () => { clearTimeout(timer); controller.abort(); };
   }, [archived, search, page, version]);
   return <Shell><div className="app-page saved-jobs-page">
-    <PageHeader eyebrow={archived ? 'Room for what’s next' : 'Your career, considered'} title={archived ? 'Archive' : 'Saved jobs'} subtitle={archived ? 'A home for opportunities you’ve set aside. Return to them whenever you’re ready.' : 'Keep the possibilities together. Find the next step that feels right.'} actions={!archived ? <Button onClick={() => setCreate(true)}><Plus size={18} aria-hidden="true" />Save a job</Button> : undefined} />
-    {!archived && <div className="collection-intro"><span className="intro-icon"><BookmarkSimple size={25} weight="duotone" aria-hidden="true" /></span><div><strong>A shortlist with a little more intention.</strong><p>Save opportunities, add your thoughts, and move forward at your own pace.</p></div><Link href="/discover">Find opportunities <ArrowUpRight size={17} aria-hidden="true" /></Link></div>}
+    <PageHeader eyebrow={archived ? 'Room for what’s next' : 'Your career, considered'} title={archived ? 'Archive' : 'Saved jobs'} subtitle={archived ? 'A home for opportunities you’ve set aside. Return to them whenever you’re ready.' : 'Save opportunities, compare your options, and track your next application.'} actions={!archived ? <Button onClick={() => setCreate(true)}><Plus size={18} aria-hidden="true" />Save a job</Button> : undefined} />
     <div className={`collection-layout${archived ? ' is-archive' : ''}`}>
       <section className="collection-surface" aria-label={archived ? 'Archived opportunities' : 'Saved opportunities'}>
         <div className="collection-surface-heading"><h2>{archived ? 'Archived opportunities' : 'Your shortlist'}</h2>{data && <span className="count-pill">{data.total}</span>}<span className="sort-note"><ArrowDown size={13} aria-hidden="true" />Newest first</span></div>
@@ -49,7 +48,7 @@ export function Collection({ archived = false }: { archived?: boolean }) {
           <footer className="collection-pagination"><Pagination page={page} total={data.total} pageSize={10} onPageChange={setPage} ariaLabel="Saved jobs pagination" /><span><LockSimple size={12} aria-hidden="true" />Only visible to you</span></footer>
         </>}
       </section>
-      {!archived && <aside className="collection-aside" aria-label="Career tools"><JobRankings /><section className="next-step-card"><p className="eyebrow">A strong foundation</p><h2>Ready for your next move?</h2><p>The little things you prepare today make your next application easier.</p><Link href="/profile"><span className="tool-link-icon"><UserCircle size={21} aria-hidden="true" /></span><span><strong>Refine your profile</strong><small>Keep your experience up to date</small></span><ArrowUpRight size={17} aria-hidden="true" /></Link><Link href="/resumes"><span className="tool-link-icon"><FileText size={21} aria-hidden="true" /></span><span><strong>Organize your resumes</strong><small>Put your best version forward</small></span><ArrowUpRight size={17} aria-hidden="true" /></Link></section><p className="collection-aside-note"><Compass size={16} aria-hidden="true" />Small steps. Meaningful progress.</p></aside>}
+      {!archived && <aside className="collection-aside" aria-label="Career tools"><JobRankings /><section className="next-step-card"><p className="eyebrow">A strong foundation</p><h2>Application toolkit</h2><p>Keep your experience and documents ready for your next application.</p><Link href="/profile"><span className="tool-link-icon"><UserCircle size={21} aria-hidden="true" /></span><span><strong>Refine your profile</strong><small>Keep your experience up to date</small></span><ArrowUpRight size={17} aria-hidden="true" /></Link><Link href="/resumes"><span className="tool-link-icon"><FileText size={21} aria-hidden="true" /></span><span><strong>Organize your resumes</strong><small>Put your best version forward</small></span><ArrowUpRight size={17} aria-hidden="true" /></Link></section></aside>}
     </div>
     {create && <JobEditor onClose={() => setCreate(false)} onSave={async (values: JobInput) => { await api('/jobs', { method: 'POST', body: JSON.stringify(values) }); setCreate(false); setVersion(x => x + 1); }} />}
   </div></Shell>;

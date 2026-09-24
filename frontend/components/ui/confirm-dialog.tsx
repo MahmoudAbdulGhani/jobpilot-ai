@@ -20,7 +20,7 @@ function ConfirmDialog({trigger,title,description,confirmLabel='Confirm',cancelL
     <AlertDialogPrimitive.Trigger asChild>{trigger}</AlertDialogPrimitive.Trigger>
     <AlertDialogPrimitive.Portal>
       <AlertDialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50"/>
-      <AlertDialogPrimitive.Content className="fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border border-border bg-card p-6 shadow-lg duration-200 sm:max-w-lg">
+      <AlertDialogPrimitive.Content className="fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border border-border bg-card p-6 shadow-lg duration-200 sm:max-w-lg">
         <div className="flex flex-col gap-2 text-center sm:text-left">
           <AlertDialogPrimitive.Title className="text-lg font-semibold text-foreground">{title}</AlertDialogPrimitive.Title>
           {description?<AlertDialogPrimitive.Description className="text-sm text-muted-foreground">{description}</AlertDialogPrimitive.Description>:null}

@@ -18,6 +18,8 @@ import {
 } from '@phosphor-icons/react';
 import { api } from '../lib/api';
 import { PageHeader } from './ui/page-header';
+import { ConfirmDialog } from './ui/confirm-dialog';
+import { useUnsavedWarning } from '../lib/use-unsaved-warning';
 import '../app/resume-profile.css';
 import type {
   CandidateProfile,
@@ -108,6 +110,8 @@ export function ProfileView() {
   const [notice, setNotice] = useState('');
   const [formError, setFormError] = useState('');
   const [pending, setPending] = useState(false);
+  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(draftFrom(profile));
+  useUnsavedWarning(dirty);
 
   async function loadProfile() {
     setState('loading');
@@ -556,7 +560,7 @@ export function ProfileView() {
           </div>
           <footer className="dialog-footer">
             <span className="profile-save-note"><ShieldCheck size={15} />Private to you</span>
-            <button type="button" className="secondary-button" disabled={pending} onClick={() => setEditing(false)}>Cancel</button>
+            {dirty ? <ConfirmDialog trigger={<button type="button" className="secondary-button" disabled={pending}>Cancel</button>} title="Discard profile changes?" description="Your saved profile will stay unchanged." confirmLabel="Discard changes" cancelLabel="Keep editing" destructive onConfirm={() => setEditing(false)} /> : <button type="button" className="secondary-button" disabled={pending} onClick={() => setEditing(false)}>Cancel</button>}
             <button className="primary-button" disabled={pending}>{pending ? 'Saving…' : 'Save profile'}</button>
           </footer>
         </form>

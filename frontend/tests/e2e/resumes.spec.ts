@@ -1,3 +1,4 @@
+import { grantAiConsent } from './helpers';
 import { expect, test } from '@playwright/test';
 import { API, accessToken, bootstrapUser, cleanupUser, createdUsers, login, logout } from './helpers';
 
@@ -39,6 +40,7 @@ test.afterEach(async ({ request }) => {
 
 test('connected resume library workflow', async ({ browser, request }) => {
   const user = await bootstrapUser(request, 'resume-main');
+  await grantAiConsent(request, user, ['ai_profile_suggestions']);
   const context = await browser.newContext({ viewport: { width: 1488, height: 1058 } });
   const page = await context.newPage();
   const pageErrors: string[] = [];
@@ -86,17 +88,19 @@ test('connected resume library workflow', async ({ browser, request }) => {
   await expect(page.getByText('Needs review')).toBeVisible();
   await page.getByRole('button', { name: 'Confirm text' }).click();
   await expect(page.locator('.status-badge', { hasText: 'Confirmed' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Suggest profile details with AI' }).click();
   await expect(page.getByLabel('Proposed headline')).toHaveValue('Connected resume text');
   await page.getByLabel('Proposed headline').fill('AI-reviewed connected profile');
-  await page.getByRole('button', { name: 'Apply selected changes' }).click();
-  await expect(page.getByText('Selected profile changes applied.')).toBeVisible();
-  await page.getByRole('button', { name: 'Close', exact: true }).click();
-
+  await page.getByRole('button', { name: 'Apply selected AI suggestions' }).click();
+  await expect(page.getByText('A selected value is invalid or lacks source evidence.')).toBeVisible();
+  await page.getByLabel('Proposed headline').fill('Resume text');
+  await page.getByRole('button', { name: 'Apply selected AI suggestions' }).click();
+  await expect(page.getByText('Selected AI suggestions applied.')).toBeVisible();
   await page.goto('/profile');
-  await expect(page.getByRole('heading', { name: 'AI-reviewed connected profile' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Resume text', exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'AI-reviewed connected profile' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Resume text', exact: true })).toBeVisible();
   await page.goto('/resumes');
 
   await page.reload();
@@ -123,7 +127,7 @@ test('connected resume library workflow', async ({ browser, request }) => {
   });
   await expect(page.locator('.form-error.upload-error')).toContainText('Unsupported file type. Upload a PDF or DOCX resume.');
 
-  await page.screenshot({ path: '../evidence/resumes-desktop.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('resumes-desktop.png'), fullPage: true });
   await logout(page);
   expect(pageErrors).toEqual([]);
   await context.close();

@@ -1,3 +1,4 @@
+import { grantAiConsent } from './helpers';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
@@ -8,6 +9,7 @@ test.use({launchOptions:{args:['--use-fake-ui-for-media-stream','--use-fake-devi
 
 for(const voice of [false,true])test(`guarded ${voice?'voice transcript review':'text'} interview start answer reload resume finish review delete`,async({page,request})=>{
   const user=await bootstrapUser(request,'interview');const token=await accessToken(request,user);
+  await grantAiConsent(request, user, voice ? ['ai_interview', 'ai_voice'] : ['ai_interview']);
   const headers={Authorization:`Bearer ${token}`};
   const jobResponse=await request.post(`${API}/jobs`,{headers,data:{title:'Interview engineer',company:'Synthetic',description:'Build APIs and explain database trade-offs.'}});
   expect(jobResponse.ok()).toBeTruthy();const job=await jobResponse.json();
@@ -67,6 +69,9 @@ for(const voice of [false,true])test(`guarded ${voice?'voice transcript review':
   await expect(page.getByRole('heading',{name:'AI-generated guidance for answer 2'})).toBeVisible();
   await expect(page.getByText('Synthetic test provider — no live model assessment.',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Delete session',exact:true}).click();
+  const deleted = page.waitForResponse(response => response.request().method() === 'DELETE' && response.url().includes('/api/interviews/'));
   await page.getByRole('button',{name:'Confirm delete session'}).click();
+  expect((await deleted).status()).toBe(204);
+  await expect(page).toHaveURL(`/jobs/${job.id}/interviews`, { timeout: 15_000 });
   await expect(page.getByText('No interview sessions yet.')).toBeVisible();
 });

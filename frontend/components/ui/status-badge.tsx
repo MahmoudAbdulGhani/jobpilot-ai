@@ -17,6 +17,7 @@ const STATUS_VARIANT:Record<string,'success'|'warning'|'destructive'|'info'|'sec
   failed:'destructive',
   pass:'success',
   warn:'warning',
+  fail:'destructive',
   synced:'success',
   pending:'warning',
   disconnected:'destructive',
@@ -34,7 +35,7 @@ function normalize(status:string):string{
   switch(status){
     case 'ai-generated':return 'aiGenerated';
     case 'user-provided':return 'userProvided';
-    default:return status;
+    default:return status.toLowerCase();
   }
 }
 

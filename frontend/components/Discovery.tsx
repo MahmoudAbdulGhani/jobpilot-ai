@@ -91,7 +91,7 @@ export function Discovery() {
     } catch (e) { fail(e); }
     finally { setBusy(''); }
   }
-  return <Shell><div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+  return <Shell><div className="app-page">
     <PageHeader eyebrow="Find your next opportunity" title="Discover jobs" subtitle={<>
       <span className="block [overflow-wrap:anywhere]">Listings from Sweden’s public employment service, via <a className="underline underline-offset-4" href="https://jobsearch.api.jobtechdev.se/" target="_blank" rel="noopener noreferrer">JobTech JobSearch</a>. Primarily Swedish coverage; this is not a worldwide job search.</span>
       <span className="mt-2 block [overflow-wrap:anywhere]"><a className="underline underline-offset-4" href="https://jobicy.com/jobs-rss-feed" target="_blank" rel="noopener noreferrer">Jobicy</a> adds international remote listings. Coverage varies; Lebanon-specific availability is not guaranteed. Regional eligibility is source-stated, not a confirmation of your right to work.</span>
@@ -129,7 +129,7 @@ export function Discovery() {
         <Button type="submit" disabled={!!busy} className="w-fit">Search {source === 'jobicy' ? 'Jobicy' : 'JobTech'}</Button>
       </div>
     </form>
-    <p className="my-6 max-w-3xl text-sm leading-relaxed text-muted-foreground">Remote matching is approximate and does not mean worldwide eligibility. Verify permitted work locations, residency and work-authorization requirements with the employer. Location, salary and workplace details may be missing. Jobicy location filtering matches the source applicant-region text in the latest 100 cached listings; it is not a worksite or eligibility guarantee. Unknown regions do not match location filters. JobTech location filtering remains keyword-based. Salary filtering is not offered.</p>
+    <details className="my-6 max-w-3xl text-sm leading-relaxed text-muted-foreground"><summary className="min-h-11 cursor-pointer font-medium text-foreground">Coverage and search limitations</summary><p className="my-6 max-w-3xl text-sm leading-relaxed text-muted-foreground">Remote matching is approximate and does not mean worldwide eligibility. Verify permitted work locations, residency and work-authorization requirements with the employer. Location, salary and workplace details may be missing. Jobicy location filtering matches the source applicant-region text in the latest 100 cached listings; it is not a worksite or eligibility guarantee. Unknown regions do not match location filters. JobTech location filtering remains keyword-based. Salary filtering is not offered.</p></details>
     {busy && <p role="status" className="text-sm text-muted-foreground">{busy}</p>}
     {error && <Alert variant="destructive" className="mt-2">{error}</Alert>}
     {saved && <div role="status" className="my-4 rounded-lg border border-[#cfe0d5] bg-[#eef5f1] p-4 text-sm">

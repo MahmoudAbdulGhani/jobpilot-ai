@@ -21,6 +21,8 @@ import { PageHeader } from './ui/page-header';
 import '../app/resume-profile.css';
 import type { CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
+type ReviewedResume = Resume & { extraction?: ResumeExtraction | null };
+
 type PageState = 'loading' | 'ready' | 'error';
 
 function formatBytes(size: number): string {
@@ -36,7 +38,7 @@ function formatDate(value: string): string {
 }
 
 export function ResumesView() {
-  const [items, setItems] = useState<Resume[]>([]);
+  const [items, setItems] = useState<ReviewedResume[]>([]);
   const [state, setState] = useState<PageState>('loading');
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -47,33 +49,37 @@ export function ResumesView() {
   const [renameTarget, setRenameTarget] = useState<Resume | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
   const [reviewTarget, setReviewTarget] = useState<Resume | null>(null);
-  const [confirmedResumeIds, setConfirmedResumeIds] = useState<Set<string>>(new Set());
+  const confirmedResumeIds = new Set(items.filter(item => item.extraction?.reviewed_at).map(item => item.id));
+  const reads = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    setConfirmedResumeIds(current => {
-      const next = new Set(current);
-      for (const item of items) {
-        if (item.extraction?.reviewed_at) next.add(item.id);
-      }
-      return next.size === current.size ? current : next;
-    });
-  }, [items]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
+    reads.current?.abort();
+    const controller = new AbortController();
+    reads.current = controller;
     setState('loading');
     setLoadError('');
     try {
       const { items: loaded } = await api<ResumeList>('/resumes');
+      if (controller.signal.aborted) return;
       setItems(loaded);
       setState('ready');
+      // Resume metadata does not include extraction state. Read persisted reviews
+      // separately; never start extraction or AI work while opening the library.
+      for (const resume of loaded) {
+        void Promise.resolve(api<ResumeExtraction>(`/resumes/${resume.id}/extraction`, { signal: controller.signal })).then(result => {
+          if (controller.signal.aborted || !result || result.resume_id !== resume.id) return;
+          setItems(current => current.map(item => item.id === resume.id ? { ...item, extraction: result } : item));
+        }).catch(() => { /* Unextracted documents return 404; review offers explicit recovery. */ });
+      }
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Could not load your resumes.');
       setState('error');
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); return () => reads.current?.abort(); }, []);
 
   async function handleUpload(file: File) {
     if (uploading) return;
@@ -275,12 +281,10 @@ export function ResumesView() {
             key={reviewTarget.id}
             resume={reviewTarget}
             onClose={() => setReviewTarget(null)}
-            onConfirmed={() => {
-              setConfirmedResumeIds(current => new Set(current).add(reviewTarget.id));
-              // Keep the in-memory resume record in sync so the suggestions panel
-              // becomes available immediately after extraction is confirmed.
+            onConfirmed={(result) => {
+              // Retain the complete server response, including its review provenance.
               setItems(current => current.map(item => item.id === reviewTarget.id
-                ? { ...item, extraction: { reviewed_at: new Date().toISOString() } as ResumeExtraction }
+                ? { ...item, extraction: result }
                 : item));
             }}
           />
@@ -297,7 +301,8 @@ const PROFILE_FIELDS = [
 const fieldTitle = (field: string) => field.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 
 function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled: boolean }) {
-  const [extraction, setExtraction] = useState<ResumeExtraction | null>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [suggestionSet, setSuggestionSet] = useState<ProfileSuggestionSet | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, any>>({});
@@ -317,7 +322,6 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
-    setExtraction({ reviewed_at: new Date().toISOString() } as ResumeExtraction);
     void Promise.resolve(api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`))
               .then(latest => { if (alive) adopt(latest); })
       .catch(() => undefined);
@@ -332,7 +336,9 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
       adopt(result);
       for (let attempt = 0; result.status === 'generating' && attempt < 90; attempt += 1) {
         await new Promise(resolve => window.setTimeout(resolve, 1000));
+        if (!alive.current) return;
         result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
+        if (!alive.current) return;
         adopt(result);
       }
       if (result.status === 'generating') throw new Error('Suggestions are still processing.');
@@ -386,7 +392,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   const notFound = new Set((suggestionSet?.suggestions || []).filter(item => item.status === 'not_found').map(item => item.field));
   const grouped = PROFILE_FIELDS.map(field => ({ field, items: (suggestionSet?.suggestions || []).filter(item => item.field === field && item.status !== 'not_found') })).filter(group => group.items.length);
 
-  if (!extraction?.reviewed_at) return null;
+  if (!enabled) return null;
 
   return (
     <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
@@ -453,23 +459,29 @@ function ManualField({ field, value, setValue, save, pending }: { field: string;
   </div>;
 }
 
-function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; onClose: () => void; onConfirmed: () => void }) {
+function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; onClose: () => void; onConfirmed: (result: ResumeExtraction) => void }) {
   const [extraction, setExtraction] = useState<ResumeExtraction | null>(null);
   const [draft, setDraft] = useState('');
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
-  async function extract() {
+  async function extract(retry = false) {
     setPending(true);
     setState('loading');
     setError('');
     try {
-      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction`, { method: 'POST' });
+      let result: ResumeExtraction;
+      try {
+        result = await api<ResumeExtraction>(`/resumes/${resume.id}/${retry ? 'extract' : 'extraction'}`, retry ? { method: 'POST' } : undefined);
+      } catch (cause) {
+        if (!retry && (cause as { status?: number }).status === 404) result = await api<ResumeExtraction>(`/resumes/${resume.id}/extract`, { method: 'POST' });
+        else throw cause;
+      }
       setExtraction(result);
       setDraft(result.draft_text || '');
       setState('ready');
-      if (result.reviewed_at) onConfirmed();
+      onConfirmed(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not extract this resume.');
       setState('error');
@@ -494,6 +506,7 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
       });
       setExtraction(result);
       setDraft(result.draft_text || '');
+      onConfirmed(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save the extracted text.');
     } finally {
@@ -507,7 +520,7 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
     try {
       const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction/confirm`, { method: 'POST' });
       setExtraction(result);
-      onConfirmed();
+      onConfirmed(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not confirm the extracted text.');
     } finally {
@@ -521,20 +534,20 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
   const isConfirmed = Boolean(extraction?.reviewed_at) && !hasUnsavedChanges;
 
   return (
-    <Dialog title="Review extracted text" description={resume.display_name} onClose={onClose}>
+    <Dialog title="Review extracted text" description={resume.display_name} onClose={onClose} dirty={hasUnsavedChanges}>
       <div className="extraction-body">
         {state === 'loading' && <div className="extraction-state" role="status">Extracting text locally…</div>}
         {state === 'error' && (
           <div className="extraction-state">
             <p className="form-error" role="alert">{error}</p>
-            <button className="secondary-button" disabled={pending} onClick={() => void extract()}>Try again</button>
+            <button className="secondary-button" disabled={pending} onClick={() => void extract(true)}>Try again</button>
           </div>
         )}
         {state === 'ready' && extraction?.status === 'failed' && (
           <div className="extraction-state">
             <p className="status-badge is-unreviewed">Extraction failed</p>
             <p role="alert">{extraction.failure_message}</p>
-            <button className="primary-button" disabled={pending} onClick={() => void extract()}>{pending ? 'Retrying…' : 'Retry extraction'}</button>
+            <button className="primary-button" disabled={pending} onClick={() => void extract(true)}>{pending ? 'Retrying…' : 'Retry extraction'}</button>
           </div>
         )}
         {state === 'ready' && extraction?.status === 'succeeded' && (
@@ -545,6 +558,7 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
               </span>
               <span className="muted">{extraction.parser_name} {extraction.parser_version}</span>
             </div>
+            {extraction.original_text && <details className="extraction-original"><summary>Original extracted text</summary><p className="muted">The initial extraction is kept separately from your editable draft. Your uploaded file stays unchanged.</p><pre className="preserve-lines">{extraction.original_text}</pre></details>}
             <label htmlFor="extracted_text">Extracted resume text</label>
             <p className="muted extraction-help">Check the reading order and correct any parsing mistakes. This does not change your uploaded file or candidate profile.</p>
             <textarea
@@ -561,7 +575,7 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
       {state === 'ready' && extraction?.status === 'succeeded' && (
         <footer className="dialog-footer extraction-footer">
           <p className="muted"><CheckCircle size={16} /> Confirmed CV text is sent only when you request suggestions. Review every extracted fact and quote before confirming.</p>
-          <button className="secondary-button" onClick={onClose}>Close</button>
+          <button className="secondary-button" data-dialog-dismiss onClick={onClose}>Close</button>
           <button className="secondary-button" disabled={pending || !hasUnsavedChanges || !draft.trim()} onClick={() => void save()}>
             {pending ? 'Saving…' : 'Save changes'}
           </button>

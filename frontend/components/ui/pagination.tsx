@@ -17,9 +17,9 @@ function Pagination({page,total,pageSize,onPageChange,ariaLabel='Pagination',cla
   const canPrev=page>1;
   const canNext=page<totalPages;
   return <nav aria-label={ariaLabel} className={cn('flex items-center justify-center gap-2',className)}>
-    <Button variant="outline" size="sm" onClick={()=>onPageChange(page-1)} disabled={!canPrev} aria-label="Previous page"><CaretLeft/>Previous</Button>
+    <Button variant="outline" size="sm" onClick={()=>onPageChange(page-1)} disabled={!canPrev} aria-label="Previous page"><CaretLeft aria-hidden="true"/><span className="hidden sm:inline">Previous</span></Button>
     <span className="px-2 text-sm text-muted-foreground" aria-live="polite">Page {page} of {totalPages}</span>
-    <Button variant="outline" size="sm" onClick={()=>onPageChange(page+1)} disabled={!canNext} aria-label="Next page">Next<CaretRight/></Button>
+    <Button variant="outline" size="sm" onClick={()=>onPageChange(page+1)} disabled={!canNext} aria-label="Next page"><span className="hidden sm:inline">Next</span><CaretRight aria-hidden="true"/></Button>
   </nav>;
 }
 

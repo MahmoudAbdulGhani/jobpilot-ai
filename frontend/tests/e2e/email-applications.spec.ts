@@ -1,3 +1,4 @@
+import { grantAiConsent } from './helpers';
 import {expect,test} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -19,6 +20,7 @@ test.afterEach(async({request})=>{for(const email of createdUsers)await cleanupU
 
 test('approved pack to guarded send and explicit reply sync, timeline and correction',async({page,request})=>{
   const user=await bootstrapUser(request,'email-application');
+  await grantAiConsent(request, user, ['ai_application_packs']);
   const headers={Authorization:`Bearer ${await accessToken(request,user)}`};
   expect((await request.patch(`${API}/profile`,{headers,data:{headline:'Backend engineer',skills:['Python']}})).ok()).toBeTruthy();
   const jobResponse=await request.post(`${API}/jobs`,{headers,data:{title:'Backend engineer',company:'Example Systems',description:'Build Python APIs.'}});
@@ -36,7 +38,7 @@ test('approved pack to guarded send and explicit reply sync, timeline and correc
   await page.getByLabel('Allow sending applications').check();
   await page.getByRole('button',{name:'Connect Gmail',exact:true}).click();
   await expect(page.getByText('Enabled capabilities: Sending applications')).toBeVisible();
-  await page.goto(`/jobs/${job.id}`);
+  await page.goto(`/jobs/${job.id}#email`);
   const panel=page.locator('section.email-application');
   await expect(panel.getByRole('heading',{name:'Apply by email',exact:true})).toBeVisible();
   await panel.getByRole('combobox',{name:'Approved pack version',exact:true}).selectOption(`${pack.id}:${pack.current_version}`);
@@ -81,7 +83,7 @@ test('approved pack to guarded send and explicit reply sync, timeline and correc
   const tracked=await request.post(`${API}/jobs/${job.id}/applications`,{headers,data:{submission_date:new Date().toISOString(),method:'email',status:'Applied'}});
   expect(tracked.ok()).toBeTruthy();const tracking=await tracked.json();
   const other=await (await request.post(`${API}/jobs`,{headers,data:{title:'Other synthetic role',company:'Other Example'}})).json();
-  await page.goto(`/jobs/${job.id}`);
+  await page.goto(`/jobs/${job.id}#tracking`);
   const timeline=page.getByRole('region',{name:'Application reply timeline',exact:true});
   await timeline.getByRole('button',{name:'Sync replies (next bounded batch)'}).click();
   await expect(timeline.getByText('Reply received',{exact:true})).toBeVisible();
@@ -97,7 +99,7 @@ test('approved pack to guarded send and explicit reply sync, timeline and correc
   await page.locator('.application-tracking').getByRole('combobox',{name:'Status',exact:true}).selectOption('Interview');
   await page.locator('.application-tracking').getByRole('button',{name:'Save changes',exact:true}).click();
   await expect.poll(async()=>(await (await request.get(`${API}/jobs/${job.id}/applications/${tracking.id}`,{headers})).json()).status).toBe('Interview');
-  await page.goto(`/jobs/${other.id}`);
+  await page.goto(`/jobs/${other.id}#tracking`);
   await expect(page.getByText('Reply received',{exact:true})).toBeVisible();
   await expect(page.getByText(/Match: user confirmed/)).toBeVisible();
 });

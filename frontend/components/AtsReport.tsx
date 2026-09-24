@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import { StatusBadge } from './ui/status-badge';
 import { api } from '../lib/api';
 import type { AtsCheck, AtsReport } from '../lib/types';
 
@@ -115,7 +116,7 @@ export function AtsReport({ job }: { job: { id: string } }) {
       <p className="ats-score">Readiness {report.readiness_score} / 100 <span className="muted">· version {report.pack_version} · {report.report_version}</span></p>
       <ul className="ats-checks">
         {report.checks.map(item => <li key={item.id} className={`ats-check is-${item.status}`}>
-          <p><strong>{item.label}</strong> <span className={`status-badge is-${item.status === 'pass' ? 'confirmed' : item.status === 'warn' ? 'interview' : 'rejected'}`}>{item.status}</span></p>
+          <p><strong>{item.label}</strong> <StatusBadge status={item.status} /></p>
           <p>{item.detail}</p>
           <ul>{item.evidence.map((line, index) => <li key={index} className="muted">{line}</li>)}</ul>
         </li>)}
@@ -127,7 +128,7 @@ export function AtsReport({ job }: { job: { id: string } }) {
       <p className="ats-score muted">Ready readiness estimate {improved.preview_readiness} / 100</p>
       <ul className="ats-checks">
         {improved.preview_checks.map(item => <li key={item.id} className={`ats-check is-${item.status}`}>
-          <p><strong>{item.label}</strong> <span className={`status-badge is-${item.status === 'pass' ? 'confirmed' : item.status === 'warn' ? 'interview' : 'rejected'}`}>{item.status}</span></p>
+          <p><strong>{item.label}</strong> <StatusBadge status={item.status} /></p>
           <p>{item.detail}</p>
           <ul>{item.evidence.map((line, index) => <li key={index} className="muted">{line}</li>)}</ul>
         </li>)}
