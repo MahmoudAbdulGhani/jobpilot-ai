@@ -1,19 +1,24 @@
 'use client';
 import { useEffect, useState } from 'react';
 import {
-  Bank,
+  ArrowLeft,
+  ArrowRight,
   Briefcase,
   CheckCircle,
   GraduationCap,
+  FileText,
   MapPin,
   PencilSimple,
   Plus,
+  ShieldCheck,
   Translate,
   Trash,
   UserCircle,
   Wallet,
 } from '@phosphor-icons/react';
 import { api } from '../lib/api';
+import { PageHeader } from './ui/page-header';
+import '../app/resume-profile.css';
 import type {
   CandidateProfile,
   CandidateProfileInput,
@@ -172,7 +177,7 @@ export function ProfileView() {
     const maxRaw = d.salary_max.trim();
     const min = minRaw === '' ? null : Number(minRaw);
     const max = maxRaw === '' ? null : Number(maxRaw);
-    const hasSalary = Boolean(d.currency.trim()) || min !== null || max !== null;
+    const hasSalary = min !== null || max !== null;
     const payload: CandidateProfileInput = {
       headline: d.headline.trim() || null,
       target_roles: splitList(d.target_roles),
@@ -246,6 +251,7 @@ export function ProfileView() {
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     const error = validate(draft);
     if (error) {
       setFormError(error);
@@ -271,12 +277,13 @@ export function ProfileView() {
   }
 
   if (state === 'loading') {
-    return <div className="center-state">Loading profile…</div>;
+    return <div className="app-page profile-workspace"><PageHeader eyebrow="Your career story" title="Your profile" subtitle="A clear picture of your experience and what comes next." /><div className="rp-loading" role="status"><span className="rp-loading-dot" />Loading profile…</div></div>;
   }
 
   if (state === 'error') {
     return (
-      <div className="center-state">
+      <div className="center-state rp-error-state">
+        <UserCircle size={36} />
         <h1>Profile unavailable</h1>
         <p className="muted">{loadError}</p>
         <button className="primary-button" onClick={() => void loadProfile()}>Try again</button>
@@ -286,19 +293,16 @@ export function ProfileView() {
 
   if (state === 'missing' && !editing) {
     return (
-      <div className="collection-page">
-        <header className="collection-heading">
-          <div>
-            <p className="eyebrow">Candidate profile</p>
-            <h1>Your profile</h1>
-            <p className="collection-subtitle">A private snapshot of your background and preferences.</p>
-          </div>
-        </header>
-        <div className="empty-state">
-          <UserCircle size={56} />
+      <div className="app-page profile-workspace">
+        <PageHeader eyebrow="Your career story" title="Your profile" subtitle="A clear picture of your experience and what comes next." />
+        <div className="empty-state profile-empty">
+          <div className="profile-empty-icon"><UserCircle size={46} weight="duotone" /></div>
+          <p className="eyebrow">Make it yours</p>
           <h2>Your profile is not set up yet</h2>
-          <p>Add a headline, target roles, skills, and preferences to get started.</p>
+          <p>Your next chapter starts with your story. Bring your background, skills, and career preferences together in one private space.</p>
           <button className="primary-button" onClick={startEditing}><Plus size={19} />Set up profile</button>
+          <a className="profile-resume-shortcut" href="/resumes">Have a resume already? Start there <ArrowRight size={16} /></a>
+          <div className="profile-empty-features"><span><Briefcase size={18} />Your experience</span><span><MapPin size={18} />Your preferences</span><span><ShieldCheck size={18} />Private to you</span></div>
         </div>
       </div>
     );
@@ -306,16 +310,13 @@ export function ProfileView() {
 
   if (editing) {
     return (
-      <div className="collection-page">
-        <header className="collection-heading">
-          <div>
-            <p className="eyebrow">Candidate profile</p>
-            <h1>{profile ? 'Edit profile' : 'Set up your profile'}</h1>
-            <p className="collection-subtitle">Only you can see this private profile.</p>
-          </div>
-        </header>
-        <form className="profile-form" onSubmit={save} noValidate>
+      <div className="app-page profile-workspace">
+        <PageHeader eyebrow="Your career story" title={profile ? 'Edit profile' : 'Set up your profile'} subtitle="Add the details that tell your story. You can update them anytime." actions={<button className="secondary-button" disabled={pending} onClick={() => setEditing(false)}><ArrowLeft size={17} />Back to profile</button>} />
+        <div className="profile-editor-layout">
+        <aside className="profile-editor-nav"><p className="eyebrow">In your profile</p><nav aria-label="Profile sections"><a href="#profile-basics"><UserCircle size={17} />The essentials</a><a href="#profile-experience"><Briefcase size={17} />Experience</a><a href="#profile-education"><GraduationCap size={17} />Education</a><a href="#profile-languages"><Translate size={17} />Languages</a><a href="#profile-salary"><Wallet size={17} />Salary preference</a></nav><div className="profile-editor-note"><ShieldCheck size={21} /><p>Only you can see this profile. Your changes are saved when you select <strong>Save profile</strong>.</p></div></aside>
+        <form className="profile-form" onSubmit={save} noValidate aria-busy={pending}>
           <div className="form-body">
+            <div className="profile-form-section-heading" id="profile-basics"><span className="rp-icon-tile"><UserCircle size={21} /></span><div><h2>The essentials</h2><p>A quick introduction to you and the work you want to do.</p></div></div>
             <label>Headline
               <input
                 name="headline"
@@ -325,6 +326,7 @@ export function ProfileView() {
                 onChange={event => setDraft(current => ({ ...current, headline: event.target.value }))}
               />
             </label>
+            <p className="profile-field-help">A short introduction to your role, focus, or strongest contribution.</p>
             <div className="form-grid">
               <label>Target roles
                 <input
@@ -345,6 +347,7 @@ export function ProfileView() {
                 />
               </label>
             </div>
+            <p className="profile-field-help">Separate target roles with commas. Add up to 10 roles you are interested in.</p>
             <div className="form-grid">
               <label>Remote preference
                 <select
@@ -376,11 +379,15 @@ export function ProfileView() {
                 onChange={event => setDraft(current => ({ ...current, skills: event.target.value }))}
               />
             </label>
+            <p className="profile-field-help">Separate skills with commas, for example: Python, leadership, research.</p>
 
-            <div className="entry-group">
-              <div className="entry-heading"><span><Briefcase size={22} />Experience</span></div>
+            <div className="entry-group" id="profile-experience">
+              <div className="entry-heading"><span><Briefcase size={22} />Experience</span><span className="entry-count">{draft.experience.length} / {MAX_EXPERIENCE}</span></div>
+              <p className="profile-section-help">Tell the story of your work, starting with your most recent role.</p>
+              {draft.experience.length === 0 && <p className="profile-inline-empty">No experience added yet. Include employment, freelance work, or internships.</p>}
               {draft.experience.map((entry, index) => (
                 <div className="entry-card" key={index}>
+                  <p className="entry-number">Experience {String(index + 1).padStart(2, '0')}</p>
                   <div className="form-grid">
                     <label>Title<input
                       value={entry.title}
@@ -408,10 +415,11 @@ export function ProfileView() {
                         updateExperience(index, { period: event.target.value });
                       }}
                     /></label>
-                    <label>Notes<input
+                    <label>Notes<textarea
                       value={entry.notes ?? ''}
+                      rows={3}
                       maxLength={2000}
-                      placeholder="Short summary"
+                      placeholder="Your responsibilities, contributions, or achievements"
                       onChange={event => {
                         updateExperience(index, { notes: event.target.value });
                       }}
@@ -427,10 +435,13 @@ export function ProfileView() {
               </button>
             </div>
 
-            <div className="entry-group">
-              <div className="entry-heading"><span><GraduationCap size={22} />Education</span></div>
+            <div className="entry-group" id="profile-education">
+              <div className="entry-heading"><span><GraduationCap size={22} />Education</span><span className="entry-count">{draft.education.length} / {MAX_EDUCATION}</span></div>
+              <p className="profile-section-help">Add your education and relevant qualifications.</p>
+              {draft.education.length === 0 && <p className="profile-inline-empty">Your education will appear here once you add an entry.</p>}
               {draft.education.map((entry, index) => (
                 <div className="entry-card" key={index}>
+                  <p className="entry-number">Education {String(index + 1).padStart(2, '0')}</p>
                   <div className="form-grid">
                     <label>School<input
                       value={entry.school}
@@ -477,8 +488,10 @@ export function ProfileView() {
               </button>
             </div>
 
-            <div className="entry-group">
-              <div className="entry-heading"><span><Translate size={22} />Languages</span></div>
+            <div className="entry-group" id="profile-languages">
+              <div className="entry-heading"><span><Translate size={22} />Languages</span><span className="entry-count">{draft.languages.length} / {MAX_LANGUAGES}</span></div>
+              <p className="profile-section-help">Include the languages you feel comfortable using at work.</p>
+              {draft.languages.length === 0 && <p className="profile-inline-empty">Add a language and choose your level of proficiency.</p>}
               {draft.languages.map((entry, index) => (
                 <div className="entry-card entry-card-slim" key={index}>
                   <div className="form-grid">
@@ -509,9 +522,10 @@ export function ProfileView() {
               </button>
             </div>
 
-            <div className="entry-group">
+            <div className="entry-group" id="profile-salary">
               <div className="entry-heading"><span><Wallet size={22} />Salary preference</span></div>
-              <div className="form-grid">
+              <p className="profile-section-help">An optional annual range to help clarify your preferences.</p>
+              <div className="form-grid profile-salary-grid">
                 <label>Currency<input
                   name="currency"
                   value={draft.currency}
@@ -541,29 +555,25 @@ export function ProfileView() {
             {formError && <p className="form-error" role="alert">{formError}</p>}
           </div>
           <footer className="dialog-footer">
+            <span className="profile-save-note"><ShieldCheck size={15} />Private to you</span>
             <button type="button" className="secondary-button" disabled={pending} onClick={() => setEditing(false)}>Cancel</button>
             <button className="primary-button" disabled={pending}>{pending ? 'Saving…' : 'Save profile'}</button>
           </footer>
         </form>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="collection-page">
-      <header className="collection-heading">
-        <div>
-          <p className="eyebrow">Candidate profile</p>
-          <h1>Your profile</h1>
-          <p className="collection-subtitle">A private snapshot of your background and preferences.</p>
-        </div>
-        <button className="primary-button" onClick={startEditing}><PencilSimple size={19} />Edit profile</button>
-      </header>
+    <div className="app-page profile-workspace">
+      <PageHeader eyebrow="Your career story" title="Your profile" subtitle="A clear picture of your experience and what comes next." actions={<button className="primary-button" onClick={startEditing}><PencilSimple size={18} />Edit profile</button>} />
       {notice && <p className="notice profile-notice" role="status"><CheckCircle size={19} />{notice}</p>}
       <div className="profile-grid">
         <section className="profile-card profile-main">
+          <div className="profile-card-topline"><span className="eyebrow">Candidate overview</span><span><ShieldCheck size={14} />Private profile</span></div>
           <div className="profile-hero">
-            <span className="avatar profile-avatar"><UserCircle size={44} weight="duotone" /></span>
+            <span className="avatar profile-avatar"><UserCircle size={40} weight="duotone" /></span>
             <div>
               <h2>{profile?.headline || 'Your headline'}</h2>
               {(profile?.location || profile?.remote_preference) && (
@@ -576,19 +586,19 @@ export function ProfileView() {
             </div>
           </div>
           <section className="profile-section">
-            <h3>Target roles</h3>
+            <h3><Briefcase size={19} />Target roles</h3>
             {profile?.target_roles?.length ? (
               <ul className="chip-list">{profile.target_roles.map(role => <li key={role} className="chip">{role}</li>)}</ul>
             ) : <p className="muted">Not specified yet.</p>}
           </section>
           <section className="profile-section">
-            <h3>Skills</h3>
+            <h3><CheckCircle size={19} />Skills <span className="profile-section-count">{profile?.skills?.length || 0}</span></h3>
             {profile?.skills?.length ? (
               <ul className="chip-list">{profile.skills.map(skill => <li key={skill} className="chip">{skill}</li>)}</ul>
             ) : <p className="muted">Not specified yet.</p>}
           </section>
           <section className="profile-section">
-            <h3>Experience</h3>
+            <h3><Briefcase size={19} />Experience</h3>
             {profile?.experience?.length ? (
               <ol className="timeline-list">
                 {profile.experience.map((entry, index) => (
@@ -602,7 +612,7 @@ export function ProfileView() {
             ) : <p className="muted">No experience entries yet.</p>}
           </section>
           <section className="profile-section">
-            <h3>Education</h3>
+            <h3><GraduationCap size={19} />Education</h3>
             {profile?.education?.length ? (
               <ol className="timeline-list">
                 {profile.education.map((entry, index) => (
@@ -615,13 +625,16 @@ export function ProfileView() {
             ) : <p className="muted">No education entries yet.</p>}
           </section>
         </section>
-        <aside className="profile-card profile-side">
+        <aside className="profile-side-stack">
+        <div className="profile-card profile-side">
+          <div className="profile-side-title"><p className="eyebrow">The right fit</p><h2>Work preferences</h2></div>
+          <section className="profile-section"><h3><MapPin size={20} />Workplace</h3><p>{profile?.remote_preference ? REMOTE_OPTIONS.find(option => option.value === profile.remote_preference)?.label : <span className="muted">Not specified.</span>}</p></section>
           <section className="profile-section">
             <h3><Briefcase size={20} />Work authorization</h3>
             <p>{profile?.work_authorization ? WORK_AUTH_OPTIONS.find(option => option.value === profile.work_authorization)?.label : <span className="muted">Not specified.</span>}</p>
           </section>
           <section className="profile-section">
-            <h3><Bank size={20} />Languages</h3>
+            <h3><Translate size={20} />Languages</h3>
             {profile?.languages?.length ? (
               <ul className="line-list">
                 {profile.languages.map((entry, index) => (
@@ -634,11 +647,13 @@ export function ProfileView() {
             <h3><Wallet size={20} />Salary preference</h3>
             {profile?.salary_preference ? (
               <p>
-                {profile.salary_preference.min != null ? `From ${profile.salary_preference.min.toLocaleString()}` : 'Open from'}
-                {profile.salary_preference.max != null ? ` to ${profile.salary_preference.max.toLocaleString()} ${profile.salary_preference.currency}` : null}
+                {profile.salary_preference.min != null && profile.salary_preference.max != null ? `${profile.salary_preference.min.toLocaleString()} – ${profile.salary_preference.max.toLocaleString()}` : profile.salary_preference.min != null ? `From ${profile.salary_preference.min.toLocaleString()}` : profile.salary_preference.max != null ? `Up to ${profile.salary_preference.max.toLocaleString()}` : 'Open to discussion'}
+                {(profile.salary_preference.min != null || profile.salary_preference.max != null) && <> <span>{profile.salary_preference.currency}</span><span className="salary-period">per year</span></>}
               </p>
             ) : <p className="muted">Not specified.</p>}
           </section>
+        </div>
+        <div className="profile-resume-card"><span className="rp-icon-tile"><FileText size={22} /></span><h3>Keep your story current.</h3><p>Upload your latest resume and review suggestions to bring new experience into your profile.</p><a href="/resumes">Manage resumes <ArrowRight size={17} /></a></div>
         </aside>
       </div>
     </div>

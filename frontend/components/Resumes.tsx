@@ -2,12 +2,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState } from 'react';
 import {
+  ArrowRight,
   CheckCircle,
   DownloadSimple,
   FileDoc,
   FilePdf,
   FileText,
   PencilSimple,
+  ShieldCheck,
   Star,
   Sparkle,
   Trash,
@@ -15,6 +17,8 @@ import {
 } from '@phosphor-icons/react';
 import { api, downloadResume } from '../lib/api';
 import { Dialog } from './Dialog';
+import { PageHeader } from './ui/page-header';
+import '../app/resume-profile.css';
 import type { CandidateProfile, ProfileSuggestionSet, Resume, ResumeExtraction, ResumeList } from '../lib/types';
 
 type PageState = 'loading' | 'ready' | 'error';
@@ -38,6 +42,8 @@ export function ResumesView() {
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [busyResume, setBusyResume] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Resume | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
   const [reviewTarget, setReviewTarget] = useState<Resume | null>(null);
@@ -46,12 +52,12 @@ export function ResumesView() {
   useEffect(() => {
     setConfirmedResumeIds(current => {
       const next = new Set(current);
-      for (const item of resumes) {
+      for (const item of items) {
         if (item.extraction?.reviewed_at) next.add(item.id);
       }
       return next.size === current.size ? current : next;
     });
-  }, [resumes]);
+  }, [items]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -70,6 +76,7 @@ export function ResumesView() {
   useEffect(() => { void load(); }, []);
 
   async function handleUpload(file: File) {
+    if (uploading) return;
     setUploading(true);
     setActionError('');
     setNotice('');
@@ -88,6 +95,7 @@ export function ResumesView() {
   }
 
   async function handleDownload(resume: Resume) {
+    setBusyResume(resume.id);
     setActionError('');
     try {
       const blob = await downloadResume(`/resumes/${resume.id}/download`);
@@ -101,10 +109,13 @@ export function ResumesView() {
       URL.revokeObjectURL(url);
     } catch {
       setActionError('Could not download the resume.');
+    } finally {
+      setBusyResume(null);
     }
   }
 
   async function makePrimary(resume: Resume) {
+    setBusyResume(resume.id);
     setActionError('');
     try {
       const updated = await api<Resume>(`/resumes/${resume.id}`, {
@@ -115,6 +126,8 @@ export function ResumesView() {
       setNotice('Primary resume updated.');
     } catch {
       setActionError('Could not update the primary resume.');
+    } finally {
+      setBusyResume(null);
     }
   }
 
@@ -140,12 +153,13 @@ export function ResumesView() {
   }
 
   if (state === 'loading') {
-    return <div className="center-state">Loading resumes…</div>;
+    return <div className="app-page resume-workspace"><PageHeader eyebrow="Your career toolkit" title="Your resumes" subtitle="The right version, ready for your next opportunity." /><div className="rp-loading" role="status"><span className="rp-loading-dot" />Loading resumes…</div></div>;
   }
 
   if (state === 'error') {
     return (
-      <div className="center-state">
+      <div className="center-state rp-error-state">
+        <FileText size={36} />
         <h1>Resumes unavailable</h1>
         <p className="muted">{loadError}</p>
         <button className="primary-button" onClick={() => void load()}>Try again</button>
@@ -160,18 +174,13 @@ export function ResumesView() {
   );
 
   return (
-    <div className="collection-page">
-      <header className="collection-heading">
-        <div>
-          <p className="eyebrow">Resume library</p>
-          <h1>Your resumes</h1>
-          <p className="collection-subtitle">Keep your recent CVs here. Only you can view or download them.</p>
-        </div>
-        <div className="resume-upload-wrap">
+    <div className="app-page resume-workspace">
+      <PageHeader eyebrow="Your career toolkit" title="Your resumes" subtitle="The right version, ready for your next opportunity." actions={uploadButton} />
           <input
             ref={fileRef}
             type="file"
             accept=".pdf,.docx"
+            aria-label="Upload a PDF or DOCX resume"
             className="hidden-file-input"
             data-testid="resume-file-input"
             onChange={event => {
@@ -179,58 +188,82 @@ export function ResumesView() {
               if (file) void handleUpload(file);
             }}
           />
-          {uploadButton}
-          {actionError && <p className="form-error upload-error" role="alert">{actionError}</p>}
-        </div>
-      </header>
+      {actionError && <p className="form-error upload-error" role="alert">{actionError}</p>}
       {notice && <p className="notice" role="status"><CheckCircle size={19} />{notice}</p>}
+      <div className="resume-workspace-layout">
+      <div className="resume-library">
+      <section
+        className={`resume-dropzone ${dragging ? 'is-dragging' : ''} ${uploading ? 'is-uploading' : ''}`}
+        aria-label="Resume upload"
+        onDragOver={event => { event.preventDefault(); if (!uploading) setDragging(true); }}
+        onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+        onDrop={event => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file && !uploading) void handleUpload(file); }}
+      >
+        <span className="resume-drop-icon"><UploadSimple size={25} /></span>
+        <div><h2>{uploading ? 'Adding your resume…' : 'A new opportunity starts here'}</h2><p>Drag a resume here, or <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()}>browse files</button></p><span className="resume-format-note">PDF or DOCX · Your original file stays intact</span></div>
+      </section>
+      <div className="resume-library-heading"><h2>Document library <span>{items.length}</span></h2><span>Private to you <ShieldCheck size={15} /></span></div>
       {items.length === 0 ? (
-        <div className="empty-state">
-          <FilePdf size={56} />
+        <div className="empty-state resume-empty">
+          <div className="resume-empty-icon"><FileText size={34} weight="duotone" /></div>
           <h2>No resumes yet</h2>
-          <p>Upload a PDF or DOCX resume. Each file is stored privately and only you can download it.</p>
-          <button className="primary-button" onClick={() => fileRef.current?.click()}><UploadSimple size={19} />Upload your first resume</button>
+          <p>Keep your career story in one place. Add your first resume to organize versions and prepare your profile.</p>
+          <button className="primary-button" disabled={uploading} onClick={() => fileRef.current?.click()}><UploadSimple size={18} />Upload your first resume</button>
         </div>
       ) : (
         <ul className="resume-list">
           {items.map(resume => (
-            <li className="resume-card" key={resume.id}>
+            <li className={`resume-card ${resume.is_primary ? 'resume-card-primary' : ''}`} key={resume.id}>
+              <div className="resume-document-row">
               <span className={`resume-icon ${resume.file_extension === 'docx' ? 'is-docx' : ''}`} aria-hidden="true">
                 {resume.file_extension === 'docx' ? <FileDoc size={30} weight="duotone" /> : <FilePdf size={30} weight="duotone" />}
               </span>
               <div className="resume-info">
                 <div className="resume-name-line">
                   <strong>{resume.display_name}</strong>
-                  {resume.is_primary && <span className="primary-badge">Primary</span>}
+                  {resume.is_primary && <span className="primary-badge"><Star size={11} weight="fill" />Primary</span>}
                 </div>
                 <p className="muted">
-                  {resume.original_filename} · {formatBytes(resume.size_bytes)} · {formatDate(resume.created_at)}
+                  {resume.original_filename}
                 </p>
+                <div className="resume-file-facts"><span>{resume.file_extension.toUpperCase()}</span><span>{formatBytes(resume.size_bytes)}</span><span>Added {formatDate(resume.created_at)}</span></div>
               </div>
+              </div>
+              <div className="resume-card-toolbar">
+              <span className={`resume-review-state ${confirmedResumeIds.has(resume.id) ? 'is-reviewed' : ''}`}><span />{confirmedResumeIds.has(resume.id) ? 'Text reviewed' : 'Ready to review'}</span>
               <div className="resume-actions">
                 {!resume.is_primary && (
-                  <button className="action-button" onClick={() => void makePrimary(resume)} title="Make primary resume">
-                    <Star size={20} />Make primary
+                  <button className="action-button" disabled={busyResume === resume.id} onClick={() => void makePrimary(resume)} title="Make primary resume">
+                    <Star size={16} />Make primary
                   </button>
                 )}
                 <button className="action-button" onClick={() => { setActionError(''); setReviewTarget(resume); }} title="Extract and review text">
-                  <FileText size={20} />Extract text
+                  <FileText size={16} />Extract text
                 </button>
-                <button className="action-button" onClick={() => void handleDownload(resume)} title="Download">
-                  <DownloadSimple size={20} />Download
+                <button className="action-button resume-icon-action" disabled={busyResume === resume.id} onClick={() => void handleDownload(resume)} title="Download" aria-label={`Download ${resume.display_name}`}>
+                  <DownloadSimple size={17} /><span>Download</span>
                 </button>
-                <button className="action-button" onClick={() => { setActionError(''); setRenameTarget(resume); }} title="Rename">
-                  <PencilSimple size={20} />Rename
+                <button className="action-button resume-icon-action" onClick={() => { setActionError(''); setRenameTarget(resume); }} title="Rename" aria-label={`Rename ${resume.display_name}`}>
+                  <PencilSimple size={17} /><span>Rename</span>
                 </button>
-                <button className="action-button danger-action" onClick={() => { setActionError(''); setDeleteTarget(resume); }} title="Delete">
-                  <Trash size={20} />Delete
+                <button className="action-button danger-action resume-icon-action" onClick={() => { setActionError(''); setDeleteTarget(resume); }} title="Delete" aria-label={`Delete ${resume.display_name}`}>
+                  <Trash size={17} /><span>Delete</span>
                 </button>
+              </div>
               </div>
               <ProfileSuggestionsPanel resume={resume} enabled={confirmedResumeIds.has(resume.id) || Boolean(resume.extraction?.reviewed_at)} />
             </li>
           ))}
         </ul>
       )}
+      </div>
+      <aside className="resume-guide">
+        <div className="resume-guide-heading"><span className="rp-icon-tile"><Sparkle size={21} /></span><p className="eyebrow">A little less admin</p><h2>Let your resume do the groundwork.</h2><p>Turn the experience you already have into a profile you can build on.</p></div>
+        <ol className="resume-steps"><li><span>01</span><div><h3>Upload your resume</h3><p>Keep a master copy and versions for different roles.</p></div></li><li><span>02</span><div><h3>Review the text</h3><p>Extract your resume and check every detail before confirming.</p></div></li><li><span>03</span><div><h3>Shape your profile</h3><p>Request AI suggestions, then choose which details to apply.</p></div></li></ol>
+        <a href="/profile" className="resume-profile-link">Go to your profile <ArrowRight size={17} /></a>
+        <div className="resume-privacy-note"><ShieldCheck size={19} /><p>You stay in control. AI suggestions run only when you request them, with your consent.</p></div>
+      </aside>
+      </div>
       {renameTarget && (
         <RenameDialog resume={renameTarget} onClose={() => setRenameTarget(null)} onSave={saveRename} />
       )}
@@ -262,7 +295,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   const [manualNotice, setManualNotice] = useState('');
 
   const adopt = (result: ProfileSuggestionSet) => {
-    if (result.resume_id !== resume.id) return;
+    if (!result || result.resume_id !== resume.id) return;
     setSuggestionSet(result);
     const proposed = (result.suggestions || []).filter(item => item.status !== 'not_found');
     setSelected(new Set(proposed.map(item => item.id)));
@@ -325,7 +358,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
       let normalized = value;
       if (field === 'target_roles' || field === 'skills') normalized = (value || []).filter((item: string) => item.trim());
       if (field === 'experience' || field === 'education') {
-        const parsed = JSON.parse(value || '{}');
+        const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value || [];
         normalized = Array.isArray(parsed) ? parsed : [parsed];
       }
       const payload = field === 'headline' || field === 'location' || field === 'remote_preference' || field === 'work_authorization'
@@ -346,8 +379,8 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   return (
     <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
       <div className="panel-heading"><div><p className="eyebrow">Profile suggestions</p><h3><Sparkle size={20} />Review profile details</h3></div><span className={`status-badge ${suggestionSet?.status === 'ready' ? 'is-confirmed' : ''}`}>{suggestionSet?.status || 'idle'}</span></div>
-      <p className="muted">Provider: OpenAI when configured. Confirmed CV text is sent only when you request suggestions. Review every fact and quote before applying.</p>
-      {!suggestionSet && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}><Sparkle size={18} />Generate suggestions</button>}
+      <p className="muted">Provider: {suggestionSet?.provider || 'OpenAI when configured'}{suggestionSet?.model ? ` · ${suggestionSet.model}` : ''}. Your confirmed resume text is shared only when you request suggestions. Check each detail against the source before applying it.</p>
+      {!suggestionSet && <button type="button" className="secondary-button" aria-label="Suggest profile details with AI" disabled={pending} onClick={() => void generate()}><Sparkle size={18} />{pending ? 'Generating…' : 'Generate suggestions'}</button>}
       {suggestionSet?.status === 'generating' && <p className="muted" role="status">Generating suggestions… This page will update automatically.</p>}
       {suggestionSet?.status === 'failed' && <button type="button" className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button>}
       {suggestionSet?.status === 'failed' && suggestionSet.outcome_message && <p className="form-error" role="alert">{suggestionSet.outcome_message}{suggestionSet.failure_field ? ` · ${suggestionSet.failure_field}` : ''}</p>}
@@ -355,7 +388,7 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
         <div className="suggestion-field-group" key={group.field}><h4>{fieldTitle(group.field)}</h4>
           {group.items.map(item => <article className="suggestion-card" key={item.id}>
             <label className="suggestion-select"><input type="checkbox" checked={selected.has(item.id)} disabled={suggestionSet?.status !== 'ready'} onChange={() => setSelected(current => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })} />Use this AI suggestion</label>
-            {item.field === 'skills' && Array.isArray(drafts[item.id]) ? <div>{(drafts[item.id] as string[]).map((skill, index) => <input key={`${item.id}-${index}`} aria-label={`Proposed skill ${index + 1}`} value={skill} maxLength={100} disabled={suggestionSet?.status !== 'ready'} onChange={event => setDrafts(current => ({ ...current, [item.id]: current[item.id].map((value: string, itemIndex: number) => itemIndex === index ? event.target.value : value) }))} />)}</div> : <textarea aria-label={`Proposed ${item.field}`} value={typeof drafts[item.id] === 'string' ? drafts[item.id] : JSON.stringify(drafts[item.id], null, 2)} disabled={suggestionSet?.status !== 'ready'} onChange={event => setDrafts(current => ({ ...current, [item.id]: event.target.value }))} rows={3} />}
+            <SuggestionEditor field={item.field} value={drafts[item.id]} disabled={suggestionSet?.status !== 'ready' || pending} onChange={value => setDrafts(current => ({ ...current, [item.id]: value }))} />
             {item.evidence.map((evidence, index) => <blockquote key={index}>&ldquo;{evidence.quote}&rdquo;</blockquote>)}
           </article>)}
         </div>
@@ -369,8 +402,30 @@ function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled:
   );
 }
 
+function SuggestionEditor({ field, value, disabled, onChange, prefix = 'Proposed' }: { field: string; value: any; disabled: boolean; onChange: (value: any) => void; prefix?: string }) {
+  const structured: Record<string, { key: string; label: string; placeholder?: string; numeric?: boolean }[]> = {
+    experience: [{ key: 'title', label: 'Job title', placeholder: 'e.g. Product Engineer' }, { key: 'organization', label: 'Organization' }, { key: 'period', label: 'Period', placeholder: 'e.g. 2022 – present' }, { key: 'notes', label: 'Responsibilities and achievements' }],
+    education: [{ key: 'school', label: 'School' }, { key: 'degree', label: 'Degree' }, { key: 'field', label: 'Field of study' }, { key: 'period', label: 'Period' }],
+    languages: [{ key: 'name', label: 'Language' }, { key: 'proficiency', label: 'Proficiency' }],
+    salary_preference: [{ key: 'currency', label: 'Currency', placeholder: 'USD' }, { key: 'min', label: 'Annual minimum', numeric: true }, { key: 'max', label: 'Annual maximum', numeric: true }],
+  };
+  if (field === 'skills' || (field === 'target_roles' && Array.isArray(value))) {
+    const values = Array.isArray(value) ? value : [value || ''];
+    return <div className="suggestion-skills" aria-label={`${prefix} ${field}`}>{values.map((item, index) => <input key={index} aria-label={`${prefix} ${field === 'skills' ? 'skill' : 'target role'} ${index + 1}`} value={item} maxLength={field === 'skills' ? 100 : 200} disabled={disabled} onChange={event => onChange(values.map((current, itemIndex) => itemIndex === index ? event.target.value : current))} />)}</div>;
+  }
+  if (structured[field]) {
+    const entries = Array.isArray(value) ? value : [value || {}];
+    return <div className="suggestion-skills" aria-label={`${prefix} ${field}`}>{entries.map((entry, entryIndex) => <div className="suggestion-fields" key={entryIndex}>{structured[field].map(spec => <label className={spec.key === 'notes' ? 'suggestion-field-full' : ''} key={spec.key}>{spec.label}{spec.key === 'proficiency' ? <select aria-label={`${prefix} ${field} ${spec.key}`} disabled={disabled} value={entry[spec.key] || 'professional'} onChange={event => { const next = { ...entry, [spec.key]: event.target.value }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }}><option value="basic">Basic</option><option value="conversational">Conversational</option><option value="professional">Professional</option><option value="native">Native</option></select> : spec.key === 'notes' ? <textarea rows={3} disabled={disabled} aria-label={`${prefix} ${field} ${spec.key}`} value={entry[spec.key] || ''} onChange={event => { const next = { ...entry, [spec.key]: event.target.value || null }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }} /> : <input aria-label={`${prefix} ${field} ${spec.key}`} disabled={disabled} type={spec.numeric ? 'number' : 'text'} min={spec.numeric ? 0 : undefined} maxLength={spec.key === 'period' ? 100 : 200} placeholder={spec.placeholder} value={entry[spec.key] ?? ''} onChange={event => { const next = { ...entry, [spec.key]: spec.numeric ? (event.target.value === '' ? null : Number(event.target.value)) : event.target.value || null }; onChange(Array.isArray(value) ? entries.map((item, index) => index === entryIndex ? next : item) : next); }} />}</label>)}</div>)}</div>;
+  }
+  if (field === 'remote_preference' || field === 'work_authorization') {
+    const options = field === 'remote_preference' ? [['office', 'On site'], ['hybrid', 'Hybrid'], ['remote', 'Remote']] : [['citizen', 'Citizen'], ['permanent_resident', 'Permanent resident'], ['work_visa', 'Work visa holder'], ['needs_sponsorship', 'Needs sponsorship'], ['other', 'Other']];
+    return <select aria-label={`${prefix} ${field}`} value={value || ''} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="">Choose a preference</option>{options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>;
+  }
+  return <textarea aria-label={`${prefix} ${field}`} value={typeof value === 'string' ? value : ''} disabled={disabled} onChange={event => onChange(event.target.value)} rows={2} />;
+}
+
 function ManualField({ field, value, setValue, save, pending }: { field: string; value: any; setValue: (value: any) => void; save: () => void; pending: boolean }) {
-  const rows = Array.isArray(value) ? value : [''];
+  const rows = Array.isArray(value) ? value : field === 'languages' ? [{ name: '', proficiency: 'professional' }] : [''];
   const updateRow = (index: number, next: any) => setValue(rows.map((row, rowIndex) => rowIndex === index ? next : row));
   const addRow = () => setValue([...rows, '']);
   const removeRow = (index: number) => setValue(rows.filter((_, rowIndex) => rowIndex !== index));
@@ -381,8 +436,7 @@ function ManualField({ field, value, setValue, save, pending }: { field: string;
     {field === 'remote_preference' && <select aria-label="Manual remote preference" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="office">Office</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select>}
     {field === 'work_authorization' && <select aria-label="Manual work authorization" value={value || ''} onChange={event => setValue(event.target.value)}><option value="">Choose one</option><option value="citizen">Citizen</option><option value="permanent_resident">Permanent resident</option><option value="work_visa">Work visa</option><option value="needs_sponsorship">Needs sponsorship</option><option value="other">Other</option></select>}
     {field === 'salary_preference' && <div className="repeatable-row"><input aria-label="Manual salary currency" maxLength={12} placeholder="Currency" value={value?.currency || ''} onChange={event => setValue({ ...(value || {}), currency: event.target.value })} /><input aria-label="Manual salary minimum" type="number" value={value?.min ?? ''} onChange={event => setValue({ ...(value || {}), min: event.target.value ? Number(event.target.value) : null })} /><input aria-label="Manual salary maximum" type="number" value={value?.max ?? ''} onChange={event => setValue({ ...(value || {}), max: event.target.value ? Number(event.target.value) : null })} /></div>}
-    {field === 'experience' && <textarea aria-label="Manual experience" placeholder="JSON: title, organization, period, notes" value={value || ''} onChange={event => setValue(event.target.value)} />}
-    {field === 'education' && <textarea aria-label="Manual education" placeholder="JSON: school, degree, field, period" value={value || ''} onChange={event => setValue(event.target.value)} />}
+    {(field === 'experience' || field === 'education') && <SuggestionEditor field={field} prefix="Manual" value={value || {}} disabled={pending} onChange={setValue} />}
     <button type="button" className="secondary-button" disabled={pending} onClick={save}>Save user-provided {fieldTitle(field)}</button>
   </div>;
 }
@@ -410,7 +464,6 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
     } finally {
       setPending(false);
     }
-  }
   }
 
   useEffect(() => { void extract(); }, []); // eslint-disable-line react-hooks/exhaustive-deps

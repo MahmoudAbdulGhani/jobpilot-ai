@@ -5,13 +5,19 @@ import { api } from '../lib/api';
 import { Shell } from './Shell';
 import { QaPanel } from './QaPanel';
 import type { Insights } from '../lib/types';
+import { PageHeader } from './ui/page-header';
+import { LoadingState } from './ui/loading-state';
+import { ErrorState } from './ui/error-state';
+
+const sectionCard = 'mt-6 rounded-lg border border-border bg-card p-6';
+const sectionHeading = 'font-serif text-2xl leading-snug text-[var(--ink)]';
 
 function Counts({ title, counts }: { title: string; counts: Record<string, number> }) {
   const entries = Object.entries(counts);
-  return <div>
-    <h3>{title}</h3>
-    {entries.length === 0 && <p className="muted">Nothing recorded yet.</p>}
-    {entries.length > 0 && <ul>{entries.map(([name, count]) => <li key={name}>{name}: {count}</li>)}</ul>}
+  return <div className="mt-3">
+    <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+    {entries.length === 0 && <p className="mt-1 text-sm text-muted-foreground">Nothing recorded yet.</p>}
+    {entries.length > 0 && <ul className="mt-2 grid list-disc gap-1.5 gap-x-8 pl-6 text-sm text-muted-foreground sm:grid-cols-2">{entries.map(([name, count]) => <li key={name}>{name}: {count}</li>)}</ul>}
   </div>;
 }
 
@@ -27,53 +33,50 @@ export function InsightsView() {
     return () => { active = false; };
   }, []);
 
-  return <Shell><div className="collection-page insights-page">
-    <div className="collection-heading"><div>
-      <p className="eyebrow">Private overview</p>
-      <h1>Insights</h1>
-      <p className="collection-subtitle">Your fit gaps, applications, replies, reminders and interview activity in one place. Read-only; previews are excerpted and senders reduced to domains.</p>
-    </div></div>
-    {error && <p className="notice form-error" role="alert">{error}</p>}
-    {!data && !error && <p className="notice">Loading insights…</p>}
+  return <Shell><div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+    <PageHeader eyebrow="Private overview" title="Insights"
+      subtitle="Your fit gaps, applications, replies, reminders and interview activity in one place. Read-only; previews are excerpted and senders reduced to domains." />
+    {error && <div className="mt-6"><ErrorState title="Could not load insights" message={error} onRetry={() => { setData(null); setError(''); }} /></div>}
+    {!data && !error && <div className="mt-6"><LoadingState label="Loading insights…" rows={4} /></div>}
     {data && <>
-      <section aria-label="Fit gaps">
-        <h2>Fit gaps</h2>
+      <section className={sectionCard} aria-label="Fit gaps">
+        <h2 className={sectionHeading}>Fit gaps</h2>
         <Counts title="Assessments" counts={data.fit_counts} />
-        {data.fit_gaps.length === 0 && <p className="muted">No unevidenced requirements found.</p>}
-        <ul>{data.fit_gaps.map((gap, index) => <li key={index}>
-          <strong>{gap.job_title}</strong> · {gap.assessment}: {gap.requirement} <Link href={gap.link.href}>{gap.link.label}</Link>
+        {data.fit_gaps.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No unevidenced requirements found.</p>}
+        <ul className="mt-3 grid list-disc gap-2 pl-6 text-sm text-muted-foreground">{data.fit_gaps.map((gap, index) => <li key={index} className="[overflow-wrap:anywhere]">
+          <strong className="font-semibold text-foreground">{gap.job_title}</strong> · {gap.assessment}: {gap.requirement} <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={gap.link.href}>{gap.link.label}</Link>
         </li>)}</ul>
       </section>
-      <section aria-label="Applications">
-        <h2>Applications</h2>
+      <section className={sectionCard} aria-label="Applications">
+        <h2 className={sectionHeading}>Applications</h2>
         <Counts title="By status" counts={data.application_counts} />
-        <ul>{data.applications.map(item => <li key={`${item.job_id}-${item.status}`}>
-          <strong>{item.job_title}</strong> · {item.status} · {item.origin === 'email_confirmed' ? 'Email-confirmed' : 'Manual record'} <Link href={item.link.href}>{item.link.label}</Link>
+        <ul className="mt-3 grid list-disc gap-2 pl-6 text-sm text-muted-foreground">{data.applications.map(item => <li key={`${item.job_id}-${item.status}`} className="[overflow-wrap:anywhere]">
+          <strong className="font-semibold text-foreground">{item.job_title}</strong> · {item.status} · {item.origin === 'email_confirmed' ? 'Email-confirmed' : 'Manual record'} <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={item.link.href}>{item.link.label}</Link>
         </li>)}</ul>
       </section>
-      <section aria-label="Replies">
-        <h2>Replies</h2>
+      <section className={sectionCard} aria-label="Replies">
+        <h2 className={sectionHeading}>Replies</h2>
         <Counts title="By match" counts={data.reply_counts} />
-        <ul>{data.replies.map(item => <li key={item.reply_id}>
-          <span className="muted">{item.sender_domain}</span> · {item.excerpt || 'No preview text.'} {item.link && <Link href={item.link.href}>{item.link.label}</Link>}
+        <ul className="mt-3 grid list-disc gap-2 pl-6 text-sm text-muted-foreground">{data.replies.map(item => <li key={item.reply_id} className="[overflow-wrap:anywhere]">
+          <span className="text-foreground">{item.sender_domain}</span> · {item.excerpt || 'No preview text.'} {item.link && <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={item.link.href}>{item.link.label}</Link>}
         </li>)}</ul>
       </section>
-      <section aria-label="Reminders">
-        <h2>Reminders</h2>
-        <p>Overdue: {data.reminder_counts.overdue} · Upcoming: {data.reminder_counts.upcoming}</p>
-        <ul>{data.reminders.map(item => <li key={item.application_id}>
-          <strong>{item.job_title}</strong> {item.overdue && '— Due now'}
-          {item.due_at && <> · <time dateTime={item.due_at}>{new Date(item.due_at).toLocaleString()}</time></>} <Link href={item.link.href}>{item.link.label}</Link>
+      <section className={sectionCard} aria-label="Reminders">
+        <h2 className={sectionHeading}>Reminders</h2>
+        <p className="mt-3 text-sm text-muted-foreground">Overdue: {data.reminder_counts.overdue} · Upcoming: {data.reminder_counts.upcoming}</p>
+        <ul className="mt-3 grid list-disc gap-2 pl-6 text-sm text-muted-foreground">{data.reminders.map(item => <li key={item.application_id} className="[overflow-wrap:anywhere]">
+          <strong className="font-semibold text-foreground">{item.job_title}</strong> {item.overdue && '— Due now'}
+          {item.due_at && <> · <time dateTime={item.due_at}>{new Date(item.due_at).toLocaleString()}</time></>} <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={item.link.href}>{item.link.label}</Link>
         </li>)}</ul>
       </section>
-      <section aria-label="Interviews">
-        <h2>Interview activity</h2>
+      <section className={sectionCard} aria-label="Interviews">
+        <h2 className={sectionHeading}>Interview activity</h2>
         <Counts title="By status" counts={data.interview_counts} />
-        <ul>{data.interviews.map(item => <li key={item.session_id}>
-          {item.status} <Link href={item.link.href}>{item.link.label}</Link>
+        <ul className="mt-3 grid list-disc gap-2 pl-6 text-sm text-muted-foreground">{data.interviews.map(item => <li key={item.session_id}>
+          {item.status} <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={item.link.href}>{item.link.label}</Link>
         </li>)}</ul>
       </section>
-      <QaPanel/>
     </>}
+    <div className="mt-6"><QaPanel /></div>
   </div></Shell>;
 }
