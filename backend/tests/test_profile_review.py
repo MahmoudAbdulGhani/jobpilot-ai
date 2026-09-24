@@ -68,8 +68,10 @@ def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, s
 
         def suggest(self, text):
             calls.append(text)
-            if len(calls) == 1:
-                return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
+            return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
+
+        def suggest_experience(self, text):
+            calls.append(text)
             return ProviderSuggestionOutput.model_validate({"suggestions": [
                 {"id": "role-1", "field": "experience",
                  "value": {"title": "Developer", "organization": "Cedar Labs", "period": "June 2022 - July 2024", "notes": "Built APIs"},
@@ -100,12 +102,49 @@ def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, s
     assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
 
 
+def test_visible_unvalidated_work_history_needs_review(suggestion_client, suggestion_users, db_session, monkeypatch):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    resume = confirmed_resume(suggestion_client, owner,
+                              "PROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\nPROJECT EXPERIENCE\nDemo 2025")
+
+    class Provider:
+        name = "deterministic-test"
+        model = "synthetic-v1"
+
+        def suggest(self, _):
+            return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
+
+        def suggest_experience(self, _):
+            return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
+
+    monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: Provider())
+    record = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume}", headers=headers(owner)).json()
+    assert record["field_statuses"]["experience"] == "needs_review"
+    assert not any(item["field"] == "experience" for item in record["suggestions"])
+
+
 def test_experience_evidence_cannot_combine_roles():
     from app.services.evidence_validation import supported_experience
     source = ("PROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\n"
               "Engineer - Pine Works Jan 2020 - May 2022\nBuilt tests\nPROJECT EXPERIENCE\nDemo 2025")
     value = {"title": "Developer", "organization": "Pine Works", "period": None, "notes": "Built APIs"}
     assert not supported_experience(value, ["Developer - Cedar Labs June 2022 - July 2024", "Engineer - Pine Works Jan 2020 - May 2022", "Built APIs"], source)
+
+
+def test_generation_keeps_role_header_when_duty_note_is_unsupported():
+    source = "PROFESSIONAL EXPERIENCE\nDeveloper - Cedar Labs June 2022 - July 2024\nBuilt APIs\nPROJECT EXPERIENCE\nDemo 2025"
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [{
+        "id": "experience-1", "field": "experience",
+        "value": {"title": "Developer", "organization": "Cedar Labs", "period": "June 2022 - July 2024", "notes": "Managed a global team"},
+        "evidence": [{"quote": "Developer - Cedar Labs June 2022 - July 2024"}, {"quote": "Built APIs"}],
+    }]})
+    assert profile_suggestion_service.validate_output(output, source)[0] == []
+    accepted, partial = profile_suggestion_service.validate_output(output, source, salvage_experience=True)
+    assert partial and len(accepted) == 1
+    assert accepted[0]["value"]["notes"] is None
+    assert accepted[0]["evidence"] == [{"quote": "Developer - Cedar Labs June 2022 - July 2024"}]
 
 
 def test_stale_set_reviews_and_saves_all_fields_with_manual_edits(ready, suggestion_client, db_session):

@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 import uuid
+from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -42,9 +43,16 @@ def main():
                 assert profile is None
                 record = ProfileSuggestionSet(owner_id=owner.id, resume_id=resume.id, extraction_id=extraction.id,
                     source_text=extraction.draft_text, source_hash=source_hash(extraction.draft_text), source_reviewed_at=extraction.reviewed_at,
-                    profile_revision=profile_revision(profile), status="ready", suggestions=accepted + [
+                    profile_revision=profile_revision(profile), status=data.get("status", "ready"), suggestions=accepted + [
                         {"id": f"not-found:{field}", "field": field, "status": "not_found", "value": None, "evidence": []}
-                        for field in output.not_found], provider="deterministic-test", model="synthetic-browser-fixture", prompt_version="test")
+                        for field in output.not_found], provider="deterministic-test", model="synthetic-browser-fixture", prompt_version=data.get("prompt_version", "test"))
+                if data.get("status") == "applied":
+                    saved = CandidateProfile(owner_id=owner.id)
+                    db.add(saved)
+                    db.flush()
+                    record.applied_at = datetime.now(timezone.utc)
+                    record.apply_result = {"applied": accepted, "manual_fields": {}, "profile_id": str(saved.id)}
+                    record.applied_selection_hash = "synthetic-applied-history"
                 db.add(record)
                 db.commit()
                 print(json.dumps({"id": str(record.id)}))

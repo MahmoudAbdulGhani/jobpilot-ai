@@ -15,6 +15,10 @@ untouched AI roles.
 A profile edit after AI generation does not require another AI call. A concurrent
 edit after review requires reviewing again. Source text changes still require fresh
 suggestions. On any failure, the form retains edits and selections.
+An applied suggestion set can be refreshed from the existing confirmed CV with
+**Refresh AI suggestions from this saved CV**; no upload or reconfirmation is needed.
+Opening the page never starts that request. Older applied results stay read-only
+until the owner explicitly refreshes them.
 
 ## API
 
@@ -42,10 +46,13 @@ can accompany selected AI Experience entries. Combined limits and invalid values
 return field-specific errors without partial writes.
 
 During an explicitly requested generation, a missing Experience suggestion triggers
-one focused extraction pass over the professional work-history section. The server
+one Experience-only extraction pass over the professional work-history section. The server
 accepts multiple quotes for one role only when they belong to the same contiguous
 role block. The section stops before Projects; a failed focused pass leaves the
-other supported categories available for review.
+other supported categories available for review. A visible but unvalidated role is
+marked `needs_review`, not `not_found`; the user can add it manually. If only a
+generated duty note or date is unsupported, generation keeps a separately supported
+role header and drops that unsupported detail before offering the role.
 
 Suggestion responses include `field_statuses` for all ten fields: `suggested`,
 `not_found`, or `needs_review`. This is derived for old records as well. Applied

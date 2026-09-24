@@ -217,16 +217,22 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
             session.commit()
             _worker_event("provider", "discarded_after_recovery")
             return record
-        suggestions, partial = validate_output(output, record.source_text)
-        from app.services.evidence_validation import experience_section
+        suggestions, partial = validate_output(output, record.source_text, salvage_experience=True)
+        from app.services.evidence_validation import experience_section, experience_role_blocks
         work_text = experience_section(record.source_text)
+        visible_work_roles = bool(experience_role_blocks(record.source_text))
         if work_text and not any(item["field"] == "experience" for item in suggestions):
             # One focused retry belongs to this explicit generation request.
             try:
-                focused = ai_usage.bounded_call(lambda: provider.suggest(work_text), settings.JOBPILOT_AI_TIMEOUT_SECONDS)
+                suggest_experience = getattr(provider, "suggest_experience", provider.suggest)
+                focused = ai_usage.bounded_call(
+                    lambda: suggest_experience("PROFESSIONAL EXPERIENCE\n" + work_text),
+                    settings.JOBPILOT_AI_TIMEOUT_SECONDS,
+                )
                 recovered, rejected = validate_output(
                     ProviderSuggestionOutput(suggestions=[item for item in focused.suggestions if item.field == "experience"]),
                     record.source_text,
+                    salvage_experience=True,
                 )
                 suggestions.extend(item for item in recovered if item["field"] == "experience")
                 partial = partial or rejected
@@ -236,7 +242,9 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
         suggestions.extend({
             "id": f"not-found:{field}", "field": field, "status": "not_found",
             "value": None, "evidence": [],
-        } for field in output.not_found if not any(item["field"] == field for item in suggestions))
+        } for field in output.not_found
+            if not any(item["field"] == field for item in suggestions)
+            and not (field == "experience" and visible_work_roles))
         record.status = "ready"
         record.suggestions = suggestions
         record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
@@ -335,7 +343,7 @@ def queue_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, s
     return record
 
 
-def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list[dict], bool]:
+def validate_output(output: ProviderSuggestionOutput, source: str, *, salvage_experience=False) -> tuple[list[dict], bool]:
     from app.services.evidence_validation import normalize, supported_claim, supported_experience, value_text
     accepted: list[dict] = []
     partial = output.partial
@@ -361,6 +369,22 @@ def validate_output(output: ProviderSuggestionOutput, source: str) -> tuple[list
                      if suggestion.field == "experience" else
                      supported_claim(value_text(suggestion.value), quotes,
                                      single_passage=suggestion.field == "education"))
+        if salvage_experience and suggestion.field == "experience" and not supported:
+            # Keep the cited role header if generated duty notes or a date were
+            # unsupported. Review/Apply never truncate a user's edited value.
+            for updates in ({"notes": None}, {"notes": None, "period": None}):
+                candidate = suggestion.value.model_copy(update=updates)
+                header = next((quote for quote in quotes
+                               if quote in source and supported_experience(candidate, [quote], source)), None)
+                if header:
+                    suggestion = suggestion.model_copy(update={
+                        "value": candidate,
+                        "evidence": [next(e for e in suggestion.evidence if e.quote == header)],
+                    })
+                    quotes = [header]
+                    supported = True
+                    partial = True
+                    break
         if (suggestion.id in seen or any(e.quote not in source for e in suggestion.evidence)
                 or not supported):
             partial = True
