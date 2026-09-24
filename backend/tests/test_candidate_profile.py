@@ -263,7 +263,9 @@ def test_cross_user_isolation(profile_client, profile_users, db_session):
     assert refreshed_first["id"] == first_profile.json()["id"]
     assert refreshed_first["headline"].startswith("Senior Backend Engineer")
 
-    rows = list(db_session.scalars(select(CandidateProfile)))
+    rows = list(db_session.scalars(select(CandidateProfile).where(
+        CandidateProfile.owner_id.in_([first.id, second.id])
+    )))
     assert len(rows) == 2
     assert {str(row.owner_id) for row in rows} == {str(first.id), str(second.id)}
 

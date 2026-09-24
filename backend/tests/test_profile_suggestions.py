@@ -9,6 +9,7 @@ import openai
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.db import get_db
@@ -121,12 +122,31 @@ def test_generate_does_not_mutate_profile_and_apply_is_selected_and_idempotent(
     assert "evidence" not in profile.ai_provenance["headline"]
 
 
+@pytest.mark.parametrize("profile_timing", [
+    "empty", "existing", "created_after_generation", "edited_after_generation",
+])
 def test_apply_persists_all_selected_profile_field_types_without_cross_field_mapping(
-    suggestion_client, suggestion_users, db_session, monkeypatch
+    suggestion_client, suggestion_users, db_session, monkeypatch, profile_timing
 ):
     owner, _ = suggestion_users
     grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
+    manual = {
+        "headline": "Manual headline",
+        "location": "Manual location",
+        "target_roles": ["Manual role"],
+        "skills": ["Python", "SQL"],
+        "experience": [{"title": "Developer", "organization": "Manual company", "period": None, "notes": None}],
+        "education": [{"school": "Manual school", "degree": None, "field": None, "period": None}],
+        "languages": [{"name": "English", "proficiency": "professional"}],
+        "remote_preference": "office",
+        "work_authorization": "other",
+        "salary_preference": {"currency": "EUR", "min": 1000, "max": 2000},
+    }
+    if profile_timing in {"existing", "edited_after_generation"}:
+        assert suggestion_client.patch(
+            "/api/profile", headers=headers(owner), json=manual,
+        ).status_code == 200
     source = (
         "Senior Engineer Beirut Full Stack Developer Python FastAPI Cedar Labs "
         "Lebanese University BSc Computer Science Arabic native English remote citizen "
@@ -139,7 +159,7 @@ def test_apply_persists_all_selected_profile_field_types_without_cross_field_map
         {"id": "roles-1", "field": "target_roles", "value": "Full Stack Developer", "evidence": [{"quote": source}]},
         {"id": "skills-1", "field": "skills", "value": ["Python", "FastAPI"], "evidence": [{"quote": source}]},
         {"id": "experience-1", "field": "experience", "value": {"title": "Senior Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": "Built APIs"}, "evidence": [{"quote": source}]},
-        {"id": "education-1", "field": "education", "value": {"school": "Lebanese University", "degree": None, "field": None, "period": None}, "evidence": [{"quote": source}]},
+        {"id": "education-1", "field": "education", "value": {"school": "Lebanese University", "degree": "BSc", "field": "Computer Science", "period": "2020-2024"}, "evidence": [{"quote": source}]},
         {"id": "languages-1", "field": "languages", "value": {"name": "Arabic", "proficiency": "native"}, "evidence": [{"quote": source}]},
         {"id": "remote-1", "field": "remote_preference", "value": "remote", "evidence": [{"quote": source}]},
         {"id": "auth-1", "field": "work_authorization", "value": "citizen", "evidence": [{"quote": source}]},
@@ -156,22 +176,91 @@ def test_apply_persists_all_selected_profile_field_types_without_cross_field_map
     monkeypatch.setattr(profile_suggestion_service, "provider_for", lambda settings: AllFieldsProvider())
     generated = suggestion_client.post(f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
     assert generated.status_code == 200
+    assert {item["field"] for item in generated.json()["suggestions"]} == ALL_SUGGESTION_FIELDS
+    if profile_timing in {"created_after_generation", "edited_after_generation"}:
+        # Reproduce saving a manual field in the same panel before pressing Apply.
+        manual["headline"] = "Manually updated headline"
+        saved = suggestion_client.patch("/api/profile", headers=headers(owner), json=manual)
+        assert saved.status_code == 200
+        # The rollback fixture wraps requests in one outer transaction, where
+        # PostgreSQL now() is constant. Model the later request's timestamp.
+        changed_profile = db_session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner.id))
+        changed_profile.updated_at = datetime.now(timezone.utc)
+        db_session.commit()
+        stale = suggestion_client.post(
+            f"/api/profile-suggestions/{generated.json()['id']}/apply",
+            headers=headers(owner), json={"selections": generated.json()["suggestions"]},
+        )
+        assert stale.status_code == 409
+        db_session.expire_all()
+        unchanged = db_session.connection().execute(
+            select(CandidateProfile.__table__).where(CandidateProfile.owner_id == owner.id)
+        ).mappings().one()
+        assert {field: unchanged[field] for field in manual} == manual
+        original = db_session.get(ProfileSuggestionSet, uuid.UUID(generated.json()["id"]))
+        assert original.status == "ready" and original.applied_at is None
+        assert original.apply_result is None
+        # Explicit regeneration must recover without losing manually saved values.
+        refreshed = suggestion_client.post(
+            f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner),
+        )
+        assert refreshed.status_code == 200
+        assert refreshed.json()["id"] != generated.json()["id"]
+        generated = refreshed
+        refreshed_record = db_session.get(ProfileSuggestionSet, uuid.UUID(refreshed.json()["id"]))
+        refreshed_record.created_at = datetime.now(timezone.utc)
+        db_session.commit()
+
+    selections = generated.json()["suggestions"]
+    # Edit an offered value to another supported source value before Apply.
+    next(item for item in selections if item["field"] == "headline")["value"] = "Engineer"
     applied = suggestion_client.post(
         f"/api/profile-suggestions/{generated.json()['id']}/apply",
-        headers=headers(owner), json={"selections": generated.json()["suggestions"]},
+        headers=headers(owner), json={"selections": selections},
     )
     assert applied.status_code == 200
-    profile = applied.json()["profile"]
-    assert profile["headline"] == "Senior Engineer"
-    assert profile["location"] == "Beirut"
-    assert profile["target_roles"] == ["Full Stack Developer"]
-    assert profile["skills"] == ["Python", "FastAPI"]
-    assert profile["experience"][0]["organization"] == "Cedar Labs"
-    assert profile["education"][0]["school"] == "Lebanese University"
-    assert profile["languages"] == [{"name": "Arabic", "proficiency": "native"}]
-    assert profile["remote_preference"] == "remote"
-    assert profile["work_authorization"] == "citizen"
-    assert profile["salary_preference"] == {"currency": "USD", "min": 70000, "max": 90000}
+    existing = profile_timing != "empty"
+    expected = {
+        "headline": "Engineer",
+        "location": "Beirut",
+        "target_roles": (["Manual role"] if existing else []) + ["Full Stack Developer"],
+        "skills": ["Python", "SQL", "FastAPI"] if existing else ["Python", "FastAPI"],
+        "experience": (manual["experience"] if existing else []) + [
+            {"title": "Senior Engineer", "organization": "Cedar Labs", "period": "2020-2024", "notes": "Built APIs"},
+        ],
+        "education": (manual["education"] if existing else []) + [
+            {"school": "Lebanese University", "degree": "BSc", "field": "Computer Science", "period": "2020-2024"},
+        ],
+        "languages": (manual["languages"] if existing else []) + [{"name": "Arabic", "proficiency": "native"}],
+        "remote_preference": "remote",
+        "work_authorization": "citizen",
+        "salary_preference": {"currency": "USD", "min": 70000, "max": 90000},
+    }
+    assert {field: applied.json()["profile"][field] for field in expected} == expected
+    # Bypass the ORM identity map: compare actual PostgreSQL columns, not just
+    # values returned from the request or still present on a Python object.
+    db_session.expire_all()
+    stored = db_session.connection().execute(
+        select(CandidateProfile.__table__).where(CandidateProfile.owner_id == owner.id)
+    ).mappings().one()
+    assert {field: stored[field] for field in expected} == expected
+    retrieved = suggestion_client.get("/api/profile", headers=headers(owner))
+    assert {field: retrieved.json()[field] for field in expected} == expected
+    history = suggestion_client.get(
+        f"/api/profile-suggestions/resumes/{resume_id}/latest", headers=headers(owner),
+    ).json()
+    assert history["status"] == "applied"
+    assert history["apply_result"]["applied"] == selections
+    repeated = suggestion_client.post(
+        f"/api/profile-suggestions/{generated.json()['id']}/apply",
+        headers=headers(owner), json={"selections": selections},
+    )
+    assert repeated.status_code == 200
+    db_session.expire_all()
+    stored_again = db_session.connection().execute(
+        select(CandidateProfile.__table__).where(CandidateProfile.owner_id == owner.id)
+    ).mappings().one()
+    assert {field: stored_again[field] for field in expected} == expected
 
 
 def test_apply_six_ai_fields_preserves_manual_profile_and_round_trips_database(
