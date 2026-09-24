@@ -42,6 +42,16 @@ export function ResumesView() {
   const [deleteTarget, setDeleteTarget] = useState<Resume | null>(null);
   const [reviewTarget, setReviewTarget] = useState<Resume | null>(null);
   const [confirmedResumeIds, setConfirmedResumeIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setConfirmedResumeIds(current => {
+      const next = new Set(current);
+      for (const item of resumes) {
+        if (item.extraction?.reviewed_at) next.add(item.id);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [resumes]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -216,7 +226,7 @@ export function ResumesView() {
                   <Trash size={20} />Delete
                 </button>
               </div>
-              <ProfileSuggestionsPanel resume={resume} enabled={confirmedResumeIds.has(resume.id)} />
+              <ProfileSuggestionsPanel resume={resume} enabled={confirmedResumeIds.has(resume.id) || Boolean(resume.extraction?.reviewed_at)} />
             </li>
           ))}
         </ul>
@@ -389,16 +399,18 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
     setState('loading');
     setError('');
     try {
-      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extract`, { method: 'POST' });
+      const result = await api<ResumeExtraction>(`/resumes/${resume.id}/extraction`, { method: 'POST' });
       setExtraction(result);
       setDraft(result.draft_text || '');
       setState('ready');
+      if (result.reviewed_at) onConfirmed();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not extract this resume.');
       setState('error');
     } finally {
       setPending(false);
     }
+  }
   }
 
   useEffect(() => { void extract(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -483,6 +495,7 @@ function ExtractionDialog({ resume, onClose, onConfirmed }: { resume: Resume; on
       </div>
       {state === 'ready' && extraction?.status === 'succeeded' && (
         <footer className="dialog-footer extraction-footer">
+          <p className="muted"><CheckCircle size={16} /> Confirmed CV text is sent only when you request suggestions. Review every extracted fact and quote before confirming.</p>
           <button className="secondary-button" onClick={onClose}>Close</button>
           <button className="secondary-button" disabled={pending || !hasUnsavedChanges || !draft.trim()} onClick={() => void save()}>
             {pending ? 'Saving…' : 'Save changes'}

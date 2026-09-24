@@ -251,14 +251,14 @@ describe('ResumesView', () => {
     expect(screen.getByRole('button', { name: 'Retry extraction' })).not.toBeNull();
   });
 
-  it.skip('clicks the enabled AI control, posts to the resume endpoint, and renders returned suggestions', async () => {
+  it('clicks the enabled AI control, posts to the resume endpoint, and renders returned suggestions', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
     await screen.findByText('CV 2026');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
-    expect(await screen.findByText(/confirmed CV text will leave JobPilot/)).not.toBeNull();
+    expect(await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i)).not.toBeNull();
     let resolveGeneration!: (value: unknown) => void;
     apiMock.mockReturnValueOnce(new Promise(resolve => { resolveGeneration = resolve; }));
     const generate = screen.getByRole('button', { name: 'Suggest profile details with AI' });
@@ -281,14 +281,14 @@ resolveGeneration({
     expect(await screen.findByText(/Selected profile changes applied/)).not.toBeNull();
   });
 
-  it.skip('renders and applies every supported category while keeping absent languages unselected', async () => {
+  it('renders and applies every supported category while keeping absent languages unselected', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
     await screen.findByText('CV 2026');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
-    await screen.findByText(/confirmed CV text will leave JobPilot/);
+    await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
 
     const suggestions = [
       { id: 'headline-1', field: 'headline', value: 'Full-Stack Software Engineer', evidence: [{ quote: 'Full-Stack Software Engineer' }] },
@@ -330,7 +330,7 @@ expect(applied.find((item: { field: string }) => item.field === 'skills').value)
     expect(applied.find((item: { field: string }) => item.field === 'salary_preference').value).toEqual({ currency: 'USD', min: 70000, max: 90000 });
   });
 
-  it.skip.each([
+  it.each([
     'AI data-use consent is required. Review Privacy settings before continuing.',
     'The AI provider is currently unavailable. Try again later.',
   ])('shows a generation error and leaves the action retryable: %s', async message => {
@@ -340,7 +340,7 @@ expect(applied.find((item: { field: string }) => item.field === 'skills').value)
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
-    await screen.findByText(/confirmed CV text will leave JobPilot/);
+    await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
 
     apiMock.mockRejectedValueOnce(new Error(message));
     fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
@@ -352,14 +352,14 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     expect(apiMock).toHaveBeenLastCalledWith(`/profile-suggestions/resumes/${pdfResume.id}/latest`);
   });
 
-  it.skip('shows the exact outcome_message and failure_field from the latest failed record', async () => {
+  it('shows the exact outcome_message and failure_field from the latest failed record', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
     await screen.findByText('CV 2026');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
-    await screen.findByText(/confirmed CV text will leave JobPilot/);
+    await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
 
     apiMock.mockRejectedValueOnce(new Error('AI data-use consent is required.'));
     apiMock.mockResolvedValueOnce({
@@ -373,14 +373,14 @@ expect((await screen.findByRole('alert')).textContent).toBe(message);
     expect(screen.getByRole('button', { name: 'Retry suggestions' })).not.toBeNull();
   });
 
-  it.skip('ignores a suggestion record that belongs to another resume', async () => {
+  it('ignores a suggestion record that belongs to another resume', async () => {
     apiMock.mockResolvedValueOnce({ items: [pdfResume] });
     render(<ResumesView />);
     await screen.findByText('CV 2026');
     apiMock.mockResolvedValueOnce({ ...extraction, reviewed_at: '2026-09-14T10:00:00Z' });
     apiMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { status: 404 }));
     fireEvent.click(screen.getByRole('button', { name: /Extract text/ }));
-    await screen.findByText(/confirmed CV text will leave JobPilot/);
+    await screen.findByText(/Confirmed CV text is sent only when you request suggestions/i);
 
     apiMock.mockResolvedValueOnce({
       id: 'other-set', resume_id: 'another-resume-id', status: 'failed', provider: 'openai', model: 'gpt-5-mini',
