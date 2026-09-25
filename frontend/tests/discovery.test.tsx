@@ -58,7 +58,7 @@ describe('reviewed discovery',()=>{
     expect(new URLSearchParams(url.split('?')[1]).get('eligibility')).toBe('EMEA');
   });
   it('shows worldwide first-page and remote confidence limits',async()=>{
-    item={...job,source:'jobopportunities',external_id:'12345678-1234-4234-8234-123456789abc',source_url:'https://employer.example/jobs/1',apply_url:'https://employer.example/jobs/1',upstream_source:'greenhouse',applicant_region:null,remote_inferred:true};
+    item={...job,source:'jobopportunities',external_id:'12345678-1234-4234-8234-123456789abc',source_url:'https://employer.example/jobs/1',apply_url:'https://employer.example/jobs/1',upstream_source:'greenhouse',applicant_region:null,remote_inferred:true,description:'Employer requires Python and SQL.'};
     render(<Discovery/>);fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobopportunities'}});
     fireEvent.change(screen.getByLabelText('Workplace country'),{target:{value:'FR'}});
     expect((screen.getByLabelText('Workplace US state') as HTMLInputElement).disabled).toBe(true);
@@ -66,6 +66,8 @@ describe('reviewed discovery',()=>{
     fireEvent.change(screen.getByLabelText('Workplace US state'),{target:{value:'NY'}});
     fireEvent.click(screen.getByRole('button',{name:'Search Job Opportunities API'}));
     expect(await screen.findByText(/Worldwide public search shows one page of up to 50/)).not.toBeNull();
+    expect(screen.getByText('Employer requires Python and SQL.')).not.toBeNull();
+    expect(screen.getByText(/Jobs without advert text are excluded/)).not.toBeNull();
     expect(screen.getAllByText(/Unknown/).length).toBeGreaterThan(0);
     expect(screen.getByRole('link',{name:'View employer posting'}).getAttribute('href')).toBe(item.source_url);
     expect(screen.queryByRole('button',{name:'Next results'})).toBeNull();

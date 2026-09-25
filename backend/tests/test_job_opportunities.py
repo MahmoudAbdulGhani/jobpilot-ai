@@ -52,13 +52,13 @@ def test_public_first_page_and_detail_use_fixed_endpoints():
     calls = []
     def handler(request):
         calls.append(request)
-        return httpx.Response(200, json={"data": [listing(description=None)]} if request.url.path == "/public/jobs" else {"data": listing()})
+        return httpx.Response(200, json={"data": [listing()]} if request.url.path == "/public/jobs" else {"data": listing()})
     source = JobOpportunitiesProvider(httpx.MockTransport(handler))
     found, total = source.search(q="backend", remote=True, sort="relevance", offset=0, country="US", region="NY", city="New York")
-    assert total == 1 and found[0].description is None
+    assert total == 1 and found[0].description == "Python required; Java preferred."
     assert source.preview(ID).description == "Python required; Java preferred."
     assert calls[0].url.host == "api.jobopportunitiesapi.org"
-    assert dict(calls[0].url.params) == {"limit":"50","q":"backend","country":"US","state":"NY","city":"New York","remote":"remote","remote_confirmed":"true"}
+    assert dict(calls[0].url.params) == {"limit":"50","has_description":"true","include_description":"true","q":"backend","country":"US","state":"NY","city":"New York","remote":"remote","remote_confirmed":"true"}
     assert str(calls[1].url) == "https://api.jobopportunitiesapi.org/public/jobs/" + ID
     assert all("authorization" not in request.headers for request in calls)
 
@@ -70,6 +70,14 @@ def test_one_listing_without_a_safe_application_link_does_not_hide_valid_results
         q="", remote=False, sort="relevance", offset=0)
     assert total == 1 and len(jobs) == 1
     assert jobs[0].source_url == "https://employer.example/jobs/123"
+
+
+def test_search_omits_rows_without_advert_text_even_if_source_returns_them():
+    def handler(request):
+        return httpx.Response(200, json={"data": [listing(description=None), listing()]})
+    jobs, total = JobOpportunitiesProvider(httpx.MockTransport(handler)).search(
+        q="", remote=False, sort="relevance", offset=0)
+    assert total == 1 and jobs[0].description == "Python required; Java preferred."
 
 
 @pytest.mark.parametrize("status,expected", [(429,429),(404,410),(500,503),(302,503)])

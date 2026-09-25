@@ -168,13 +168,14 @@ export function Discovery() {
     </section>}
     {results && <section aria-label="Discovery results">
       <p className="mt-6 text-sm text-muted-foreground">{results.total} {query.source === 'jobicy' ? 'matches in the latest cached catalog' : query.source==='jobopportunities'?'shown from the first 50 source matches':'source matches'}</p>
-      {query.source==='jobopportunities'&&<p className="mt-2 max-w-3xl text-sm text-muted-foreground">Worldwide public search shows one page of up to 50 real listings. Refine country, city or keywords to explore other matches. Applicant eligibility is unknown unless the employer states it.</p>}
+      {query.source==='jobopportunities'&&<p className="mt-2 max-w-3xl text-sm text-muted-foreground">Worldwide public search shows one page of up to 50 real listings with source descriptions. Jobs without advert text are excluded. Refine country, city or keywords to explore other matches. Applicant eligibility is unknown unless the employer states it.</p>}
       {query.source === 'jobicy' && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">Up to 100 recent listings, refreshed at most hourly. Search and pagination filter this cache locally. An empty result does not establish that no vacancy exists. Preview checks availability; saved snapshots do not refresh automatically.</p>}
       {!results.items.length && <div className="mt-6"><EmptyState title="No matching jobs"
         description={query.source === 'jobicy' ? 'Try different keywords or applicant eligibility. This searches only the latest cached catalog.' : 'Try different keywords or broader workplace filters.'} /></div>}
       {results.items.map(job => <article className="my-4 rounded-lg border border-[#c4c8bf] bg-card p-6" key={job.source + job.external_id}>
         <h2 className="font-serif text-2xl leading-snug text-[var(--ink)] [overflow-wrap:anywhere]">{job.title}</h2>
         <p className="mt-1"><strong>{job.company}</strong></p>
+        {job.description&&<p className="mt-3 whitespace-pre-line text-sm">{job.description.length>350?`${job.description.slice(0,350)}…`:job.description}</p>}
         <p className="mt-1 text-sm text-muted-foreground">Source: <a href={sources[job.source]?.attribution_url} target="_blank" rel="noopener noreferrer" className="underline">{sources[job.source]?.label||job.source}</a>{job.upstream_source?` / ${job.upstream_source}`:''}. {job.source==='jobopportunities'?'Employer link supplied by the source.':''}</p>
         {job.remote_inferred&&<p className="mt-1 text-sm text-muted-foreground">Remote status inferred by source; verify with employer.</p>}
         {job.test_data && <p className="mt-2 text-sm text-muted-foreground">Synthetic test listing — not a live result</p>}

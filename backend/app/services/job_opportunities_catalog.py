@@ -77,7 +77,8 @@ class JobOpportunitiesCatalog:
         def fetch():
             jobs, _ = self.provider.search(**filters)
             return [job.model_dump(mode="json") for job in jobs]
-        value = self._cached("q", key, fetch, timedelta(minutes=5))
+        # A new cache namespace avoids serving earlier search rows without text.
+        value = self._cached("q2", key, fetch, timedelta(minutes=5))
         jobs = [DiscoveryJob.model_validate(raw) for raw in value]
         return jobs, len(jobs)
 

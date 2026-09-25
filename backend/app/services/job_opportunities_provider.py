@@ -11,7 +11,7 @@ from app.schemas.discovery import DiscoveryJob
 from app.services.discovery_provider import DiscoveryError
 
 BASE = "https://api.jobopportunitiesapi.org"
-MAX_RESPONSE_BYTES = 2_000_000
+MAX_RESPONSE_BYTES = 4_000_000
 
 
 def safe_link(value):
@@ -91,7 +91,9 @@ class JobOpportunitiesProvider:
     def search(self, *, q, remote, sort, offset, country="", region="", city="", **_):
         if offset:
             raise DiscoveryError(422, "Worldwide search offers one page; refine your filters.")
-        params = {"limit": 50}
+        # The public listing endpoint omits advert text unless explicitly asked.
+        # Only show listings that can support the reviewed application workflow.
+        params = {"limit": 50, "has_description": "true", "include_description": "true"}
         if q: params["q"] = q
         if country: params["country"] = country.upper()
         if region: params["state"] = region.upper()
@@ -107,7 +109,7 @@ class JobOpportunitiesProvider:
                 job = parse_job(row)
             except DiscoveryError:
                 continue  # One unsafe or incomplete listing must not hide the other results.
-            if job.external_id not in seen:
+            if job.description and job.external_id not in seen:
                 jobs.append(job)
                 seen.add(job.external_id)
         return jobs, len(jobs)
