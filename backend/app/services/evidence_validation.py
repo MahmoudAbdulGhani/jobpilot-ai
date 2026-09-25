@@ -72,14 +72,55 @@ def experience_role_blocks(source: str) -> list[str]:
     for line in section.splitlines():
         stripped = line.strip()
         # A role header contains a date and employer/title text; duty bullets do not.
-        header = (bool(_ROLE_DATE.search(stripped)) and len(stripped) < 300
-                  and not stripped.startswith(("-", "•", "*"))
+        header = (not re.match(r"^[\u2022\u25e6\u25cf\u25aa*-]", stripped)
+                  and bool(_ROLE_DATE.search(stripped)) and len(stripped) < 300
                   and bool(_MONTH.search(stripped) or " - " in stripped or "–" in stripped or "—" in stripped))
         if header:
             blocks.append([line])
         elif blocks:
             blocks[-1].append(line)
     return ["\n".join(block) for block in blocks]
+
+
+def complete_experience_notes(value: dict, passages: list[str], source: str):
+    """Use the cited work-role body instead of a model's short summary.
+
+    Only a role already validated against one block is eligible. If the body
+    cannot fit the profile/evidence contract, keep the original suggestion for
+    review instead of silently saving a truncated duty list.
+    """
+    from app.schemas.profile import ENTRY_NOTES_MAX_LENGTH
+
+    for block in experience_role_blocks(source):
+        if not all(quote in block for quote in passages):
+            continue
+        lines = block.splitlines()
+        body = "\n".join(line.strip() for line in lines[1:] if line.strip())
+        if not body:
+            return value, passages, False
+        if len(body) > ENTRY_NOTES_MAX_LENGTH:
+            return value, passages, True
+        chunks: list[str] = []
+        if block in source:
+            # Preserve blank lines and whitespace in each exact CV excerpt.
+            for line in block.splitlines(keepends=True):
+                if len(line) > 1000:
+                    return value, passages, True
+                if chunks and len(chunks[-1]) + len(line) <= 1000:
+                    chunks[-1] += line
+                else:
+                    chunks.append(line)
+            chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+        else:
+            # Extracted text can use CRLF; individual lines remain exact.
+            chunks = [line for line in lines if line.strip()]
+        if len(chunks) > 10 or any(chunk not in source for chunk in chunks):
+            return value, passages, True
+        completed = {**value, "notes": body}
+        if supported_experience(completed, chunks, source):
+            return completed, chunks, False
+        return value, passages, True
+    return value, passages, False
 
 
 def supported_experience(value, passages, source: str) -> bool:

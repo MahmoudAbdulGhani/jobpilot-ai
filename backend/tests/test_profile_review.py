@@ -51,12 +51,13 @@ def stored(db, owner):
         CandidateProfile.owner_id == owner.id)).mappings().one_or_none()
 
 
-def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, suggestion_users, db_session, monkeypatch):
+@pytest.mark.parametrize("initial_role", [False, True])
+def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, suggestion_users, db_session, monkeypatch, initial_role):
     owner, _ = suggestion_users
     grant_consent(db_session, owner.id, "ai_profile_suggestions")
     enable_fake(monkeypatch)
     source = ("PROFESSIONAL EXPERIENCE\n"
-              "Developer - Cedar Labs June 2022 - July 2024\nBuilt APIs\n"
+              "Developer - Cedar Labs June 2022 - July 2024\nBuilt APIs\nImproved reporting queries\n"
               "Engineer - Pine Works Jan 2020 - May 2022\nBuilt tests\n"
               "PROJECT EXPERIENCE\nDeveloper - Demo App 2025\nBuilt a prototype")
     resume = confirmed_resume(suggestion_client, owner, source)
@@ -68,6 +69,14 @@ def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, s
 
         def suggest(self, text):
             calls.append(text)
+            if initial_role:
+                return ProviderSuggestionOutput.model_validate({"suggestions": [
+                    {"id": "initial-role", "field": "experience",
+                     "value": {"title": "Developer", "organization": "Cedar Labs",
+                               "period": "June 2022 - July 2024", "notes": "Built APIs"},
+                     "evidence": [{"quote": "Developer - Cedar Labs June 2022 - July 2024"},
+                                  {"quote": "Built APIs"}]},
+                ]})
             return ProviderSuggestionOutput(suggestions=[], not_found=["experience"])
 
         def suggest_experience(self, text):
@@ -87,6 +96,7 @@ def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, s
     assert len(calls) == 2 and "PROJECT EXPERIENCE" not in calls[1]
     selected = [item for item in record["suggestions"] if item["field"] == "experience" and item.get("status") != "not_found"]
     assert len(selected) == 2 and record["field_statuses"]["experience"] == "suggested"
+    assert selected[0]["value"]["notes"] == "Built APIs\nImproved reporting queries"
     added = {"title": "Mentor", "organization": "Community Lab", "period": None, "notes": None}
     payload = {"selections": selected, "manual_experience_entries": [added]}
     url = f"/api/profile-suggestions/{record['id']}"
@@ -98,6 +108,7 @@ def test_focus_recovers_two_roles_and_saves_manual_addition(suggestion_client, s
     saved = suggestion_client.post(url + "/apply", headers=auth, json=payload)
     assert saved.status_code == 200
     assert len(stored(db_session, owner)["experience"]) == 3
+    assert stored(db_session, owner)["experience"][0]["notes"] == "Built APIs\nImproved reporting queries"
     assert [entry["origin"] for entry in stored(db_session, owner)["ai_provenance"]["experience"]] == ["ai", "ai", "user"]
     assert suggestion_client.post(url + "/apply", headers=auth, json=payload).status_code == 200
 
@@ -143,8 +154,48 @@ def test_generation_keeps_role_header_when_duty_note_is_unsupported():
     assert profile_suggestion_service.validate_output(output, source)[0] == []
     accepted, partial = profile_suggestion_service.validate_output(output, source, salvage_experience=True)
     assert partial and len(accepted) == 1
-    assert accepted[0]["value"]["notes"] is None
-    assert accepted[0]["evidence"] == [{"quote": "Developer - Cedar Labs June 2022 - July 2024"}]
+    assert accepted[0]["value"]["notes"] == "Built APIs"
+    assert accepted[0]["evidence"] == [{"quote": "Developer - Cedar Labs June 2022 - July 2024\nBuilt APIs"}]
+
+
+def test_generation_restores_every_role_duty_without_copying_projects():
+    source = (
+        "PROFESSIONAL EXPERIENCE\n"
+        "Backend Developer - Cedar Labs Dec 2025 - Jan 2026\n"
+        "• Developed PHP MVC modules with search, filtering, and pagination.\n"
+        "• Wrote MySQL queries for order and profit reporting.\n"
+        "• Built administration interfaces with AJAX and\n"
+        "  added reusable validation for incoming data.\n"
+        "\n"
+        "• Reduced repeat database queries by caching reports.\n"
+        "• Prepared 2025 reporting exports for finance.\n"
+        "Engineer - Pine Works Jan 2024 - Nov 2025\n"
+        "• Maintained internal Python services.\n"
+        "PROJECT EXPERIENCE\n"
+        "• Built a personal demo application."
+    )
+    output = ProviderSuggestionOutput.model_validate({"suggestions": [
+        {"id": "role-1", "field": "experience",
+         "value": {"title": "Backend Developer", "organization": "Cedar Labs",
+                   "period": "Dec 2025 - Jan 2026", "notes": "Developed PHP MVC modules"},
+         "evidence": [{"quote": "Backend Developer - Cedar Labs Dec 2025 - Jan 2026"},
+                      {"quote": "• Developed PHP MVC modules with search, filtering, and pagination."}]},
+        {"id": "role-2", "field": "experience",
+         "value": {"title": "Engineer", "organization": "Pine Works",
+                   "period": "Jan 2024 - Nov 2025", "notes": None},
+         "evidence": [{"quote": "Engineer - Pine Works Jan 2024 - Nov 2025"}]},
+    ]})
+    accepted, partial = profile_suggestion_service.validate_output(output, source, salvage_experience=True)
+    assert not partial
+    assert len(accepted) == 2
+    first = accepted[0]
+    assert "Wrote MySQL queries" in first["value"]["notes"]
+    assert "added reusable validation" in first["value"]["notes"]
+    assert "Reduced repeat database queries" in first["value"]["notes"]
+    assert "Prepared 2025 reporting exports" in first["value"]["notes"]
+    assert "personal demo" not in first["value"]["notes"]
+    assert all(quote["quote"] in source for quote in first["evidence"])
+    assert accepted[1]["value"]["notes"] == "• Maintained internal Python services."
 
 
 def test_stale_set_reviews_and_saves_all_fields_with_manual_edits(ready, suggestion_client, db_session):

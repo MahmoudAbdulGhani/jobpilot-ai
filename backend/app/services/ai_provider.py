@@ -19,7 +19,7 @@ from app.schemas.profile_suggestions import (
 )
 from app.schemas.qa import ProviderQaOutput
 
-PROMPT_VERSION = "profile-suggestions-v5"
+PROMPT_VERSION = "profile-suggestions-v6"
 JOB_FIT_PROMPT_VERSION = "job-fit-v1"
 PACK_PROMPT_VERSION = "application-pack-v2"
 QA_PROMPT_VERSION = "qa-answer-v1"
@@ -676,8 +676,10 @@ class OpenAIResponsesProvider:
             "experience uses experience with an object of job_title, organization, period or null, and notes or null; "
             "For every distinct paid or internship role in a professional/work/employment experience section, "
             "return a separate experience suggestion. Use the role header for title, organization, and dates; "
-            "cite verbatim contiguous excerpts from that role's header and duty lines. Omit notes when they "
-            "cannot be supported. Never treat project experience as employment or combine two roles. "
+            "include every responsibility and achievement stated within that role in notes, preserving "
+            "the original bullet order and facts instead of summarizing to one or two highlights. "
+            "Cite verbatim contiguous excerpts from that role's header and all duty lines. Omit notes only "
+            "when no duties can be supported. Never treat project experience as employment or combine two roles. "
             "education uses education with an object of school, degree or null, field or null, and period or null; "
             "languages uses language with an object of name and proficiency, where proficiency is one "
             "of basic, conversational, professional, native; "

@@ -218,10 +218,23 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
             _worker_event("provider", "discarded_after_recovery")
             return record
         suggestions, partial = validate_output(output, record.source_text, salvage_experience=True)
-        from app.services.evidence_validation import experience_section, experience_role_blocks
+        from app.services.evidence_validation import (
+            experience_section, experience_role_blocks, supported_experience,
+        )
         work_text = experience_section(record.source_text)
-        visible_work_roles = bool(experience_role_blocks(record.source_text))
-        if work_text and not any(item["field"] == "experience" for item in suggestions):
+        work_blocks = experience_role_blocks(record.source_text)
+        visible_work_roles = bool(work_blocks)
+
+        def role_index(item):
+            quotes = [evidence["quote"] for evidence in item["evidence"]]
+            return next((index for index, block in enumerate(work_blocks)
+                         if quotes and supported_experience(
+                             item["value"], quotes, "PROFESSIONAL EXPERIENCE\n" + block,
+                         )), None)
+
+        covered_roles = {index for item in suggestions if item["field"] == "experience"
+                         if (index := role_index(item)) is not None}
+        if work_text and (not work_blocks or len(covered_roles) < len(work_blocks)):
             # One focused retry belongs to this explicit generation request.
             try:
                 suggest_experience = getattr(provider, "suggest_experience", provider.suggest)
@@ -234,7 +247,13 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
                     record.source_text,
                     salvage_experience=True,
                 )
-                suggestions.extend(item for item in recovered if item["field"] == "experience")
+                for item in recovered:
+                    index = role_index(item)
+                    if item["field"] != "experience" or index is None or index in covered_roles:
+                        continue
+                    item["id"] = f"experience-recovered-{index + 1}"
+                    suggestions.append(item)
+                    covered_roles.add(index)
                 partial = partial or rejected
             except Exception:
                 partial = True
@@ -247,7 +266,10 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
             and not (field == "experience" and visible_work_roles))
         record.status = "ready"
         record.suggestions = suggestions
-        record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
+        if work_blocks and len(covered_roles) < len(work_blocks):
+            record.outcome_message = "Some CV work roles need manual review."
+        else:
+            record.outcome_message = output.message or ("Some unsupported suggestions were removed." if partial else None)
     except ProviderFailure as error:
         record.status = "failed"
         record.outcome_message = error.category
@@ -344,7 +366,10 @@ def queue_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume, s
 
 
 def validate_output(output: ProviderSuggestionOutput, source: str, *, salvage_experience=False) -> tuple[list[dict], bool]:
-    from app.services.evidence_validation import normalize, supported_claim, supported_experience, value_text
+    from app.services.evidence_validation import (
+        complete_experience_notes, normalize, supported_claim,
+        supported_experience, value_text,
+    )
     accepted: list[dict] = []
     partial = output.partial
     seen: set[str] = set()
@@ -400,7 +425,14 @@ def validate_output(output: ProviderSuggestionOutput, source: str, *, salvage_ex
             partial = True
             continue
         seen.add(suggestion.id)
-        accepted.append(suggestion.model_dump(mode="json"))
+        saved = suggestion.model_dump(mode="json")
+        if salvage_experience and suggestion.field == "experience":
+            saved["value"], completed_quotes, incomplete = complete_experience_notes(
+                saved["value"], quotes, source,
+            )
+            saved["evidence"] = [{"quote": quote} for quote in completed_quotes]
+            partial = partial or incomplete
+        accepted.append(saved)
     return accepted, partial
 
 
