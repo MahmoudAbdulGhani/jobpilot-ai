@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.schemas.discovery import DiscoveryJob
 
 BASE_URL = "https://jobsearch.api.jobtechdev.se"
+TAXONOMY_URL = "https://taxonomy.api.jobtechdev.se"
 PAGE_SIZE = 20
 MAX_RESPONSE_BYTES = 2_000_000
 
@@ -39,6 +40,9 @@ def parse_job(raw):
         return DiscoveryJob(
             external_id=external_id, title=raw["headline"], company=raw["employer"]["name"],
             location=", ".join(location) or None,
+            workplace_country=optional_text(address.get("country")),
+            workplace_region=optional_text(address.get("region")),
+            workplace_city=optional_text(address.get("municipality")),
             description=optional_text((raw.get("description") or {}).get("text")),
             # Canonical source link, never an application URL supplied in the ad.
             source_url=f"https://arbetsformedlingen.se/platsbanken/annonser/{external_id}",
@@ -75,9 +79,35 @@ class JobTechProvider:
         except (ValueError, UnicodeError):
             raise DiscoveryError(502, "JobTech returned an invalid response.") from None
 
-    def search(self, *, q, remote, sort, offset, location=''):
+    def _place_id(self, kind, label):
+        if not label: return None
+        if kind == "country" and label.casefold() in {"sweden", "se"}: label = "Sverige"
+        try:
+            with httpx.Client(timeout=8, follow_redirects=False, trust_env=False, transport=self.transport) as client:
+                with client.stream("GET", f"{TAXONOMY_URL}/v1/taxonomy/specific/concepts/{kind}",
+                    params={"preferred-label": label, "limit": 10}, headers={"Accept": "application/json"}) as response:
+                    if response.status_code != 200:
+                        raise DiscoveryError(503, "JobTech location lookup is unavailable.")
+                    data = bytearray()
+                    for chunk in response.iter_bytes():
+                        data.extend(chunk)
+                        if len(data) > MAX_RESPONSE_BYTES: raise DiscoveryError(502, "Location lookup exceeded the safe size limit.")
+                    matches = json.loads(data)
+            if not isinstance(matches, list): raise ValueError()
+            exact = [row for row in matches if isinstance(row, dict)
+                and row.get("taxonomy/preferred-label", "").casefold() == label.casefold()]
+            if len(exact) != 1 or not re.fullmatch(r"[0-9A-Za-z_]{1,64}", exact[0].get("taxonomy/id", "")):
+                raise DiscoveryError(422, f"Select an exact JobTech {kind} name from its taxonomy.")
+            return exact[0]["taxonomy/id"]
+        except (httpx.HTTPError, ValueError, UnicodeError):
+            raise DiscoveryError(503, "JobTech location lookup is unavailable.") from None
+
+    def search(self, *, q, remote, sort, offset, location='', country='', region='', city='', **_):
         if location: raise DiscoveryError(422, 'JobTech structured location filtering is not available here; use keywords.')
         params = {"q": q, "sort": sort, "offset": offset, "limit": PAGE_SIZE, "resdet": "full"}
+        for kind, label in (("country", country), ("region", region), ("municipality", city)):
+            if label:
+                params[kind] = self._place_id(kind, label)
         if remote:
             params["remote"] = "true"
         raw = self._get("/search", params)
@@ -110,7 +140,7 @@ class SyntheticJobTechProvider:
             "publication_date": "2026-09-17T08:00:00", "application_deadline": "2026-10-31T23:59:59"})
         return job.model_copy(update={"test_data": True})
 
-    def search(self, *, q, remote, sort, offset, location=''):
+    def search(self, *, q, remote, sort, offset, location='', country='', region='', city='', **_):
         if location: raise DiscoveryError(422, 'JobTech structured location filtering is not available here; use keywords.')
         if q == "rate-limit":
             raise DiscoveryError(429, "JobTech's rate limit was reached. Wait before searching again.")
@@ -120,7 +150,7 @@ class SyntheticJobTechProvider:
 
 
 def provider_for(settings, source_name='jobtech', db=None):
-    if source_name not in {'jobtech','jobicy'}: raise DiscoveryError(422, 'Unsupported discovery source.')
+    if source_name not in {'jobtech','jobicy','jobopportunities'}: raise DiscoveryError(422, 'Unsupported discovery source.')
     if not settings.JOBPILOT_DISCOVERY_ENABLED:
         raise DiscoveryError(503, "Job discovery is disabled.")
     if settings.JOBPILOT_DISCOVERY_TEST_PROVIDER:
@@ -129,9 +159,16 @@ def provider_for(settings, source_name='jobtech', db=None):
         if source_name == 'jobicy':
             from app.services.jobicy_provider import SyntheticJobicyProvider
             return SyntheticJobicyProvider()
+        if source_name == 'jobopportunities':
+            from app.services.job_opportunities_provider import SyntheticJobOpportunitiesProvider
+            return SyntheticJobOpportunitiesProvider()
         return SyntheticJobTechProvider()
     if source_name == 'jobicy':
         from app.services.discovery_catalog import JobicyCatalog
         if db is None: raise DiscoveryError(503, 'Jobicy shared cache is unavailable.')
         return JobicyCatalog(db)
+    if source_name == 'jobopportunities':
+        from app.services.job_opportunities_catalog import JobOpportunitiesCatalog
+        if db is None: raise DiscoveryError(503, 'Worldwide shared cache is unavailable.')
+        return JobOpportunitiesCatalog(db)
     return JobTechProvider()

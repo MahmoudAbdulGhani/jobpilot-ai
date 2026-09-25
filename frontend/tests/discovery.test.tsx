@@ -1,73 +1,79 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Discovery, type DiscoveredJob } from '../components/Discovery';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {Discovery, type DiscoveredJob} from '../components/Discovery';
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-vi.mock('../lib/api', () => ({ api: apiMock }));
-vi.mock('../components/Shell', () => ({ Shell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-const job: DiscoveredJob = { source: 'jobtech', external_id: '123', title: 'Backend Engineer', company: 'Demo AB', location: null, salary: null, workplace_model: null, published_at: null, deadline: null, description: '<script>unsafe()</script>', source_url: 'https://arbetsformedlingen.se/platsbanken/annonser/123', existing_job_id: null, test_data: false };
-const results = { items: [job], total: 1, offset: 0, next_offset: null };
+const {apiMock}=vi.hoisted(()=>({apiMock:vi.fn()}));
+vi.mock('../lib/api',()=>({api:apiMock}));
+vi.mock('../components/Shell',()=>({Shell:({children}:{children:React.ReactNode})=><main>{children}</main>}));
 
-describe('reviewed discovery', () => {
-  beforeEach(() => {apiMock.mockReset();apiMock.mockImplementation((path:string)=>Promise.resolve(path.startsWith('/digest/')?(path==='/digest/preferences'?{cadence:'off'}:{generated_at:'',cadence:'off',items:[],skipped_invalid:0,delivery:{enabled:false,reason:'test'}}):{items:[],total:0,offset:0,next_offset:null}));});
-  it('discloses Swedish coverage and approximate remote matching without worldwide eligibility', () => {
-    render(<Discovery />);
-    expect(screen.getByText(/Primarily Swedish coverage/)).not.toBeNull();
-    expect(screen.getByLabelText('Approximate remote matches (source phrase matching)')).not.toBeNull();
-    expect(screen.getByText(/does not mean worldwide eligibility/)).not.toBeNull();
-    expect(screen.getByText(/residency and work-authorization requirements/)).not.toBeNull();
-    expect(apiMock).toHaveBeenCalledTimes(1);
-    expect(apiMock).toHaveBeenCalledWith('/digest/preferences');
+const capability=(label:string,filters:string[],coverage='Limited source coverage.')=>({label,coverage,filters,remote_accuracy:'approximate',pagination:'offset',ai_description:'when_supplied',application:'source_link',attribution_url:'https://example.test'});
+const sources={jobtech:capability('JobTech JobSearch',['country','region','city','remote']),jobicy:capability('Jobicy',['eligibility','remote']),jobopportunities:capability('Job Opportunities API',['country','city','us_state','remote'],'Worldwide first page, up to 50 results per search.')};
+const job:DiscoveredJob={source:'jobtech',external_id:'123',title:'Backend Engineer',company:'Demo AB',location:'Stockholm, Sweden',description:'<script>unsafe()</script>',source_url:'https://arbetsformedlingen.se/platsbanken/annonser/123',published_at:null,deadline:null,salary:null,workplace_model:null,existing_job_id:null,test_data:false};
+
+describe('reviewed discovery',()=>{
+  let item:DiscoveredJob;
+  beforeEach(()=>{
+    item=job;apiMock.mockReset();
+    apiMock.mockImplementation((path:string)=>{
+      if(path==='/discovery/sources')return Promise.resolve({sources});
+      if(path==='/digest/preferences')return Promise.resolve({cadence:'off'});
+      if(path.startsWith('/digest/'))return Promise.resolve({generated_at:'',cadence:'off',items:[],skipped_invalid:0,delivery:{enabled:false,reason:'test'}});
+      if(path.startsWith('/discovery?'))return Promise.resolve({items:[item],total:1,offset:0,next_offset:null});
+      if(path.includes('/preview'))return Promise.resolve({job:item,preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'});
+      if(path==='/discovery/import')return Promise.resolve({job:{id:'saved-1'},already_saved:false});
+      return Promise.reject(new Error('Unexpected route '+path));
+    });
   });
-  it('requires search, preview and explicit import and escapes source text', async () => {
-    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce(results).mockResolvedValueOnce({job, preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'}).mockResolvedValueOnce({job:{id:'saved-1'},already_saved:false});
-    const {container} = render(<Discovery />);
-    expect(apiMock).toHaveBeenCalledTimes(1);
-    fireEvent.change(screen.getByLabelText('Keywords'), {target:{value:'Python'}});
-    fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
+  it('exposes source capabilities and separates workplace from eligibility',async()=>{
+    render(<Discovery/>);
+    expect(await screen.findByText(/Limited source coverage/)).not.toBeNull();
+    expect(screen.getByLabelText('Workplace country')).not.toBeNull();
+    expect(screen.queryByLabelText('Applicant eligibility (source text)')).toBeNull();
+    expect(screen.getByLabelText('Approximate remote matches (source phrase matching)')).not.toBeNull();
+    expect(apiMock).toHaveBeenCalledWith('/discovery/sources');
+  });
+  it('uses one JobTech geography at a time and connects reviewed import to materials',async()=>{
+    const {container}=render(<Discovery/>);
+    fireEvent.change(screen.getByLabelText('Workplace country'),{target:{value:'Sweden'}});
+    fireEvent.change(screen.getByLabelText('Workplace region'),{target:{value:'Stockholms län'}});
+    fireEvent.change(screen.getByLabelText('Workplace municipality'),{target:{value:'Stockholm'}});
+    fireEvent.click(screen.getByRole('button',{name:'Search JobTech JobSearch'}));
     fireEvent.click(await screen.findByRole('button',{name:'Preview job'}));
     expect(await screen.findByText('<script>unsafe()</script>')).not.toBeNull();
     expect(container.querySelector('script')).toBeNull();
-    expect(apiMock).toHaveBeenCalledTimes(3);
-    expect(screen.getAllByText(/Not supplied/).length).toBeGreaterThan(0);
+    const url=apiMock.mock.calls.find(call=>String(call[0]).startsWith('/discovery?'))?.[0] as string;
+    const params=new URLSearchParams(url.split('?')[1]);
+    expect(params.get('country')).toBe('');expect(params.get('region')).toBe('');expect(params.get('city')).toBe('Stockholm');
     fireEvent.click(screen.getByRole('button',{name:'Import this job into saved jobs'}));
-    expect((await screen.findByRole('link',{name:'Open saved job'})).getAttribute('href')).toBe('/jobs/saved-1');
-    expect(apiMock).toHaveBeenLastCalledWith('/discovery/import', {method:'POST',body:JSON.stringify({preview_token:'signed',confirm:true})});
+    expect((await screen.findByRole('link',{name:'Create tailored application pack'})).getAttribute('href')).toBe('/jobs/saved-1#materials');
   });
-  it('links duplicates instead of overwriting them', async () => {
-    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce({...results,items:[{...job,existing_job_id:'existing'}]});
-    render(<Discovery />);fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
-    expect((await screen.findByRole('link',{name:/Already saved/})).getAttribute('href')).toBe('/jobs/existing');
-    expect(screen.queryByRole('button',{name:'Preview job'})).toBeNull();
-  });
-  it('separates Jobicy remote arrangement from source eligibility and warns without merging', async () => {
-    const remote={...job,source:'jobicy',source_url:'https://jobicy.com/jobs/123-backend',workplace_model:'Remote (Jobicy listing)',applicant_region:'EMEA',possible_duplicate_ids:['other-source']};
-    apiMock.mockResolvedValueOnce({cadence:'off'}).mockResolvedValueOnce({...results,items:[remote]}).mockResolvedValueOnce({job:remote,preview_token:'signed',expires_at:'2026-09-17T12:00:00Z'});
-    render(<Discovery/>);
-    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobicy'}});
-    fireEvent.change(screen.getByLabelText('Applicant region text (Jobicy cache)'),{target:{value:'EMEA'}});
+  it('keeps Jobicy eligibility separate from workplace location',async()=>{
+    item={...job,source:'jobicy',source_url:'https://jobicy.com/jobs/123-role',location:null,applicant_region:'EMEA',remote_arrangement:'remote'};
+    render(<Discovery/>);fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobicy'}});
+    expect(screen.queryByLabelText('Workplace country')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Applicant eligibility (source text)'),{target:{value:'EMEA'}});
     fireEvent.click(screen.getByRole('button',{name:'Search Jobicy'}));
     expect(await screen.findByText('EMEA')).not.toBeNull();
-    expect(screen.getByText(/Possible cross-source match/)).not.toBeNull();
-    expect(screen.getByRole('link',{name:'View on Jobicy'}).getAttribute('href')).toBe(remote.source_url);
-    expect(apiMock.mock.calls[1][0]).toContain('source=jobicy&location=EMEA');
-    fireEvent.click(screen.getByRole('button',{name:'Preview job'}));
-    expect(await screen.findByRole('button',{name:'Import this job into saved jobs'})).not.toBeNull();
-    expect(apiMock).toHaveBeenLastCalledWith('/discovery/123/preview?source=jobicy');
+    const url=apiMock.mock.calls.find(call=>String(call[0]).startsWith('/discovery?'))?.[0] as string;
+    expect(new URLSearchParams(url.split('?')[1]).get('eligibility')).toBe('EMEA');
   });
-  it('shows loading and an empty result', async () => {
-    let done!: (value: unknown) => void;
-    apiMock.mockReturnValue(new Promise(resolve => {done=resolve;}));
-    render(<Discovery />);fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
-    expect(screen.getByRole('status').textContent).toContain('Searching');
-    expect(screen.getByRole('button',{name:'Search JobTech'}).hasAttribute('disabled')).toBe(true);
-    done({...results,items:[],total:0});
-    expect(await screen.findByText('No matching jobs')).not.toBeNull();
+  it('shows worldwide first-page and remote confidence limits',async()=>{
+    item={...job,source:'jobopportunities',external_id:'12345678-1234-4234-8234-123456789abc',source_url:'https://employer.example/jobs/1',apply_url:'https://employer.example/jobs/1',upstream_source:'greenhouse',applicant_region:null,remote_inferred:true};
+    render(<Discovery/>);fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobopportunities'}});
+    fireEvent.change(screen.getByLabelText('Workplace country'),{target:{value:'FR'}});
+    expect((screen.getByLabelText('Workplace US state') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Workplace country'),{target:{value:'US'}});
+    fireEvent.change(screen.getByLabelText('Workplace US state'),{target:{value:'NY'}});
+    fireEvent.click(screen.getByRole('button',{name:'Search Job Opportunities API'}));
+    expect(await screen.findByText(/Worldwide public search shows one page of up to 50/)).not.toBeNull();
+    expect(screen.getAllByText(/Unknown/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('link',{name:'View employer posting'}).getAttribute('href')).toBe(item.source_url);
+    expect(screen.queryByRole('button',{name:'Next results'})).toBeNull();
   });
-  it.each(['Rate limit reached. Wait before searching again.','JobTech is unavailable. Please try later.','The preview is invalid or expired. Preview the listing again.'])('shows safe failures: %s', async message => {
-    apiMock.mockResolvedValueOnce({cadence:'off'}).mockRejectedValueOnce(new Error(message));
-    render(<Discovery />);fireEvent.click(screen.getByRole('button',{name:'Search JobTech'}));
-    expect((await screen.findByRole('alert')).textContent).toBe(message);
-    await waitFor(() => expect(screen.getByRole('button',{name:'Search JobTech'}).hasAttribute('disabled')).toBe(false));
+  it('surfaces safe errors and restores the search button',async()=>{
+    apiMock.mockImplementation((path:string)=>path.startsWith('/discovery?')?Promise.reject(new Error('Source unavailable')):path==='/discovery/sources'?Promise.resolve({sources}):Promise.resolve({cadence:'off'}));
+    render(<Discovery/>);fireEvent.click(screen.getByRole('button',{name:'Search JobTech JobSearch'}));
+    expect((await screen.findByRole('alert')).textContent).toBe('Source unavailable');
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Search JobTech JobSearch'}).hasAttribute('disabled')).toBe(false));
   });
 });

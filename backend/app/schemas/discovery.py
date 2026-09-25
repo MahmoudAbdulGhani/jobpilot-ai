@@ -13,19 +13,25 @@ ExternalId = Annotated[str, Field(pattern=r"^[0-9A-Za-z_-]{1,128}$")]
 class DiscoveryJob(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["jobtech", "jobicy"] = "jobtech"
+    source: Literal["jobtech", "jobicy", "jobopportunities"] = "jobtech"
     external_id: ExternalId
     title: str = Field(min_length=1, max_length=200)
     company: str = Field(min_length=1, max_length=200)
     location: str | None = Field(default=None, max_length=300)
+    workplace_country: str | None = Field(default=None, max_length=100)
+    workplace_region: str | None = Field(default=None, max_length=100)
+    workplace_city: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=50_000)
     source_url: str = Field(max_length=2048)
+    apply_url: str | None = Field(default=None, max_length=2048)
+    upstream_source: str | None = Field(default=None, max_length=100)
     published_at: str | None = None
     deadline: str | None = None
     salary: str | None = Field(default=None, max_length=2000)
     workplace_model: str | None = Field(default=None, max_length=300)
     applicant_region: str | None = Field(default=None, max_length=300)
     remote_arrangement: Literal["remote", "unknown"] = "unknown"
+    remote_inferred: bool = False
     test_data: bool = False
 
     @field_validator("title", "company")
@@ -53,6 +59,7 @@ class DiscoverySearch(BaseModel):
     total: int
     offset: int
     next_offset: int | None
+    result_limit: int | None = None
 
 
 class DiscoveryPreview(BaseModel):

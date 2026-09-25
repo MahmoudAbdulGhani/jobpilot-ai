@@ -11,7 +11,7 @@ test('search, preview and reviewed import preserves edits and connects to saved-
   await login(page,user);
   await page.getByRole('link',{name:'Discover jobs',exact:true}).click();
   await page.getByLabel('Keywords').fill('Python');
-  await page.getByRole('button',{name:'Search JobTech'}).click();
+  await page.getByRole('button',{name:'Search JobTech JobSearch'}).click();
   await expect(page.getByRole('heading',{name:'Synthetic Backend Engineer',exact:true})).toBeVisible();
   await expect(page.getByText('Synthetic test listing — not a live result')).toBeVisible();
   await page.screenshot({path:test.info().outputPath('discovery-desktop.png'),fullPage:true});
@@ -41,7 +41,7 @@ test('search, preview and reviewed import preserves edits and connects to saved-
   await page.getByRole('button',{name:/Analyze fit/}).click();
   await expect(page.getByText('Synthetic deterministic analysis for application-contract testing.')).toBeVisible({timeout:15000});
   await page.getByRole('link',{name:'Discover jobs',exact:true}).click();
-  await page.getByRole('button',{name:'Search JobTech'}).click();
+  await page.getByRole('button',{name:'Search JobTech JobSearch'}).click();
   await page.getByRole('link',{name:'Already saved — open existing job'}).click();
   await expect(page.getByRole('heading',{name:'My reviewed title',exact:true})).toBeVisible();
   const saved=await (await request.get(`${API}/jobs/${jobId}`,{headers})).json();
@@ -63,7 +63,7 @@ test('Jobicy remote → region preview → cross-source warning → explicit sep
   expect((await request.post(`${API}/discovery/import`,{headers,data:{preview_token:(await first.json()).preview_token,confirm:true}})).status()).toBe(201);
   await login(page,user);await page.getByRole('link',{name:'Discover jobs',exact:true}).click();
   await page.getByLabel('Source',{exact:true}).selectOption('jobicy');
-  await page.getByLabel('Applicant region text (Jobicy cache)').fill('EMEA');
+  await page.getByLabel('Applicant eligibility (source text)').fill('EMEA');
   await page.getByRole('button',{name:'Search Jobicy'}).click();
   await expect(page.getByText('EMEA',{exact:true})).toBeVisible();
   await expect(page.getByText(/Possible cross-source match/)).toBeVisible();
@@ -74,11 +74,30 @@ test('Jobicy remote → region preview → cross-source warning → explicit sep
   await page.getByRole('link',{name:'Open saved job',exact:true}).click();
   await expect(page.getByText(/Imported from Jobicy/)).toBeVisible();
   await page.getByText('Imported source details').click();
-  await expect(page.getByText(/Applicant region \(source\): EMEA/)).toBeVisible();
+  await expect(page.getByText(/Applicant eligibility: EMEA/)).toBeVisible();
   expect((await (await request.get(`${API}/jobs`,{headers})).json()).total).toBe(2);
   const id=page.url().split('/').pop();
   expect((await request.patch(`${API}/jobs/${id}`,{headers,data:{title:'My Jobicy edits',notes:'Preserve'}})).ok()).toBeTruthy();
   const preview=await request.get(`${API}/discovery/123456/preview?source=jobicy`,{headers});
   const duplicate=await request.post(`${API}/discovery/import`,{headers,data:{preview_token:(await preview.json()).preview_token,confirm:true}});
   expect(duplicate.status()).toBe(200);expect((await duplicate.json()).job.notes).toBe('Preserve');
+});
+
+test('worldwide source shows one page, reviewed detail, attribution and application path',async({page,request})=>{
+  const user=await bootstrapUser(request,'worldwide');
+  await login(page,user);await page.getByRole('link',{name:'Discover jobs',exact:true}).click();
+  await page.getByLabel('Source',{exact:true}).selectOption('jobopportunities');
+  await page.getByLabel('Workplace country').fill('US');
+  await page.getByLabel('Workplace US state').fill('NY');
+  await page.getByRole('button',{name:'Search Job Opportunities API'}).click();
+  await expect(page.getByText(/Worldwide public search shows one page of up to 50/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Synthetic Global Engineer',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'View employer posting'})).toHaveAttribute('href','https://employer.example/jobs/global-engineer');
+  await expect(page.getByRole('button',{name:'Next results'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Preview job'}).click();
+  await expect(page.getByText(/Build Python APIs; Java preferred/)).toBeVisible();
+  await page.getByRole('button',{name:'Import this job into saved jobs'}).click();
+  await page.getByRole('link',{name:'Create tailored application pack'}).click();
+  await expect(page.getByText(/Imported from Job Opportunities API \/ greenhouse/)).toBeVisible();
+  await expect(page.getByRole('tab',{name:'Application pack'})).toHaveAttribute('aria-selected','true');
 });

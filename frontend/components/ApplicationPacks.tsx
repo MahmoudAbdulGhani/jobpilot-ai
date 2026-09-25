@@ -226,7 +226,7 @@ export function ApplicationPacks({ job }: { job: Job }) {
 
   return <section className="application-packs" aria-labelledby="application-packs-heading" aria-busy={!!busy || loading}>
     <div className="pack-heading"><div><p className="eyebrow">Prepare your application</p><h2 id="application-packs-heading">CV &amp; cover letter packs</h2></div></div>
-    <p className="pack-intro">Shape a tailored CV and cover letter for this role. Review the evidence, make them your own, then approve a version to download.</p>
+    <p className="pack-intro">Shape a tailored CV and cover letter for this role. Emphasize skills supported by your confirmed CV and saved profile. Check job requirements without evidence in the <Link href={`#overview`}>fit analysis</Link>; do not claim them as your own. Review every draft and approve a version before applying.</p>
     <div className="pack-generation">
       <p className="pack-disclosure">When you choose Generate application pack, the saved job description, saved profile and selected confirmed CV text, including any contact details and projects, are sent to {options ? <strong>{options.provider === 'deterministic-test' ? 'the deterministic test provider' : options.provider} ({options.model})</strong> : 'the configured AI provider'}. Generation creates private drafts. Your profile, original CV and job stay unchanged.</p>
       <p className="muted pack-help">AI can make mistakes even when a passage matches a source. Review both documents for accuracy. Fit analysis, if used, is guidance only.</p>
