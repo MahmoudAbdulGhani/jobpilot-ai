@@ -105,8 +105,7 @@ def test_output_validation_rejects_invented_evidence_and_bad_assessments():
     with pytest.raises(job_fit_service.JobFitError):
         job_fit_service.validate_output(ProviderJobFitOutput(requirements=[base]), "Python required", facts)
     base.update(job_quote="Python experience", importance="required", assessment="supported")
-    with pytest.raises(job_fit_service.JobFitError, match="elevated"):
-        job_fit_service.validate_output(ProviderJobFitOutput(requirements=[base]), "Python experience", facts)
+    assert job_fit_service.validate_output(ProviderJobFitOutput(requirements=[base]), "Python experience", facts)["requirements"][0]["importance"] == "unspecified"
     base.update(job_quote="Python required", assessment="not_evidenced")
     with pytest.raises(job_fit_service.JobFitError):
         job_fit_service.validate_output(ProviderJobFitOutput(requirements=[base]), "Python required", facts)

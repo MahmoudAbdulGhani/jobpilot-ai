@@ -58,9 +58,37 @@ def input_state(job: SavedJob, profile: CandidateProfile) -> tuple[dict, list[Ca
     return snapshot, facts, _hash(snapshot), _hash([fact.model_dump() for fact in facts])
 
 
+_FIT_SECTION = re.compile(
+    r"\b(basic qualifications|required qualifications|required skills|minimum qualifications|"
+    r"preferred qualifications|preferred skills(?:/experience)?|nice to have|"
+    r"additional qualifications|key responsibilities)\s*:", re.I)
+
+
+def evidenced_importance(quote: str, description: str) -> str:
+    """Classify priority from the quoted words or an unambiguous source section."""
+    lowered = quote.casefold()
+    if re.search(r"\b(must|required|minimum|need(?:s|ed)?|at least)\b", lowered) and not re.search(r"\bnot\s+required\b", lowered):
+        return "required"
+    if re.search(r"\b(preferred|preferably|bonus|nice to have)\b", lowered):
+        return "preferred"
+    start = description.find(quote)
+    if start < 0 or description.find(quote, start + 1) >= 0:
+        return "unspecified"
+    sections = list(_FIT_SECTION.finditer(description, 0, start))
+    if not sections or start - sections[-1].end() > 4_000:
+        return "unspecified"
+    heading = sections[-1].group(1).casefold()
+    if heading.startswith(("basic", "required", "minimum")):
+        return "required"
+    if heading.startswith(("preferred", "nice to have")):
+        return "preferred"
+    return "unspecified"
+
+
 def validate_output(output: ProviderJobFitOutput, description: str, facts: list[CandidateFact]) -> dict:
     fact_ids = {fact.id for fact in facts}
-    for requirement in output.requirements:
+    result = output.model_dump(mode="json", exclude={"missing_skills"})
+    for requirement, saved in zip(output.requirements, result["requirements"]):
         refs = set(requirement.candidate_fact_ids)
         if requirement.job_quote not in description:
             raise JobFitError(502, "The AI response contained unsupported job evidence.")
@@ -72,12 +100,8 @@ def validate_output(output: ProviderJobFitOutput, description: str, facts: list[
             raise JobFitError(502, "The AI response lacked required candidate evidence.")
         if requirement.assessment == "not_evidenced" and refs:
             raise JobFitError(502, "The AI response used incompatible evidence for a missing-information assessment.")
-        quote = requirement.job_quote.casefold()
-        if requirement.importance == "required" and not re.search(r"\b(must|required|minimum|need(?:s|ed)?|at least)\b", quote):
-            raise JobFitError(502, "The AI response elevated a requirement without explicit job evidence.")
-        if requirement.importance == "preferred" and not re.search(r"\b(preferred|preferably|bonus|nice to have)\b", quote):
-            raise JobFitError(502, "The AI response labeled a preference without explicit job evidence.")
-    return output.model_dump(mode="json", exclude={"missing_skills"})
+        saved["importance"] = evidenced_importance(requirement.job_quote, description)
+    return result
 
 
 def counts(result: dict | None) -> dict[str, int]:
