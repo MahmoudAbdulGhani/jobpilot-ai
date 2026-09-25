@@ -136,7 +136,7 @@
 .resume-workspace .manual-field input,
 .resume-workspace .manual-field select,
 .resume-workspace .manual-field textarea { width: 100%; max-width: 100%; padding: 9px 11px; border: 1px solid #dce3d7; border-radius: 6px; background: var(--card); font-family: var(--sans); font-size: 14px; line-height: 1.6; resize: vertical; }
-.resume-workspace .suggestion-card blockquote { margin: 12px 0 0; padding: 7px 12px; border-left: 2px solid #ccdac4; background: #f6f8f3; font-size: 14px; line-height: 1.75; color: var(--muted); }
+.resume-workspace .suggestion-card blockquote { margin: 12px 0 0; padding: 7px 12px; border-left: 2px solid #ccdac4; background: #f6f8f3; font-size: 14px; line-height: 1.75; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .resume-workspace .manual-field { display: grid; gap: 12px; margin: 16px 0; padding: 18px; border: 1px solid #e1e7dc; border-radius: 8px; background: var(--card); }
 .resume-workspace .manual-field h4 { font-family: var(--sans); font-size: 14px; margin: 0; }
 .resume-workspace .manual-field .muted { font-size: 14px; }
@@ -247,8 +247,8 @@
 .experience-review h6 { margin-bottom: 8px; font-size: 14px; }
 .experience-review-list { display: grid; gap: 10px; }
 .experience-review-role { min-width: 0; padding: 13px; border: 1px solid var(--rp-line, var(--line)); border-radius: 7px; background: #fff; }
-.experience-review-role p { margin: 6px 0; overflow-wrap: anywhere; }
-.experience-review-role blockquote { margin: 9px 0 0; padding-left: 10px; border-left: 2px solid #c8d7ce; overflow-wrap: anywhere; }
+.experience-review-role p { margin: 6px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.experience-review-role blockquote { margin: 9px 0 0; padding-left: 10px; border-left: 2px solid #c8d7ce; overflow-wrap: anywhere; white-space: pre-wrap; }
 @media (max-width: 680px) { .experience-review { grid-template-columns: 1fr; } }
 .profile-workspace .profile-form .dialog-footer button { font-size: 14px; }
 
