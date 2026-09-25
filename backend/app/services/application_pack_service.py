@@ -35,6 +35,10 @@ class PackError(Exception):
         super().__init__(message)
 
 
+class UnsupportedPackClaim(PackError):
+    """A parsed draft sentence failed the local source-to-claim check."""
+
+
 def pack_failure_message(error: ProviderFailure) -> str:
     """Only provider failure categories, never upstream text, reach saved packs."""
     messages = {
@@ -223,8 +227,50 @@ def validate_generated(output, snapshot):
                 passages = [passage for e in block.evidence
                             for passage in (facts.get(e.fact_id), e.cv_quote) if passage]
                 if not supported_claim(block.text, passages):
-                    raise PackError(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
+                    raise UnsupportedPackClaim(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
     return output
+
+
+def repair_unsupported_claims(output, snapshot):
+    """Replace unsupported prose with one exact, cited source passage.
+
+    This keeps the model's choice of relevant evidence, never adds a candidate
+    fact, and still requires the entire repaired draft to pass validation.
+    """
+    from app.services.evidence_validation import supported_claim, terms
+
+    payload = PackProviderOutput.model_validate(output).model_dump(mode="json")
+    facts = {fact["id"]: fact["value"] for fact in snapshot["profile_facts"]}
+    repaired = 0
+    for name in ("cv", "cover_letter"):
+        for block in payload[name]["blocks"]:
+            if block["kind"] == "heading":
+                continue
+            evidence = block["evidence"]
+            passages = [passage for item in evidence
+                        for passage in (facts.get(item["fact_id"]), item["cv_quote"]) if passage]
+            if supported_claim(block["text"], passages):
+                continue
+            choices = []
+            for item in evidence:
+                if item["cv_quote"] and item["cv_quote"] in snapshot["cv_text"]:
+                    choices.append((item["cv_quote"], {"fact_id": None, "cv_quote": item["cv_quote"]}))
+                elif item["fact_id"] in facts:
+                    choices.append((facts[item["fact_id"]], {"fact_id": item["fact_id"], "cv_quote": None}))
+            choices = [(text, ref) for text, ref in choices
+                       if len(text) <= 2_000 and supported_claim(text, [text])]
+            if not choices:
+                continue
+            original_terms = terms(block["text"])
+            replacement, reference = max(choices, key=lambda choice: len(original_terms & terms(choice[0])))
+            block["text"], block["evidence"] = replacement, [reference]
+            repaired += 1
+    if repaired:
+        payload["review_notes"] = [
+            *payload["review_notes"][:19],
+            f"{repaired} generated passage(s) were replaced with exact cited source text because their wording could not be verified. Review the wording and relevance before approval.",
+        ]
+    return PackProviderOutput.model_validate(payload)
 
 
 def store_generated(document):
@@ -285,7 +331,10 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(result, snapshot)
+        try:
+            output = validate_generated(result, snapshot)
+        except UnsupportedPackClaim:
+            output = validate_generated(repair_unsupported_claims(result, snapshot), snapshot)
         failure = None
     except PackError as error:
         output, failure = None, error.message
