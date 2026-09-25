@@ -56,13 +56,13 @@ export type JobFitRequirement = {
   id: string; text: string; job_quote: string;
   importance: 'required'|'preferred'|'unspecified';
   assessment: 'supported'|'partially_supported'|'not_evidenced'|'needs_clarification'|'explicit_mismatch';
-  explanation: string; candidate_fact_ids: string[];
+  explanation: string; candidate_fact_ids: string[]; skill_name?: string|null;
 };
 export type JobFitAnalysis = {
   id: string; job_id: string; status: 'generating'|'ready'|'failed';
   job_snapshot: Record<string, string|null>;
   profile_facts: Array<{id:string;path:string;value:string}>;
-  result: {requirements:JobFitRequirement[];strengths:string[];gaps:string[];actions:string[];summary:string}|null;
+  result: {requirements:JobFitRequirement[];missing_skills?:Array<{skill:string;requirement_id:string;job_quote:string;importance:string}>;strengths:string[];gaps:string[];actions:string[];summary:string}|null;
   counts: Record<string,number>; provider:string; model:string; prompt_version:string;
   outcome_message:string|null; is_outdated:boolean; created_at:string; updated_at:string;
 };

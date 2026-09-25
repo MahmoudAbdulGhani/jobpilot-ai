@@ -1,5 +1,6 @@
 'use client';
 import {MeteredButton} from './MeteredButton';
+import {InterviewLiveVoice} from './InterviewLiveVoice';
 import { PageHeader } from './ui/page-header';
 import '../app/workflows.css';
 import Link from 'next/link';
@@ -67,6 +68,7 @@ export function InterviewSessionView({id}:{id:string}) {
     {error&&<p role="alert" className="form-error">{error}</p>}{notice&&<p role="status">{notice}</p>}
     {waiting&&<p role="status">Model request pending. Saved answers are retained. Refresh to check progress; no automatic retry.</p>}
     {session.status==='interrupted'&&<p role="alert">Practice was interrupted or the response failed validation. Your saved answers remain. You may explicitly request one retry for this step; it consumes quota.</p>}
+    {!completed&&!current&&<InterviewLiveVoice id={id} saved={session.live_voice} onConfirmed={display} onBusy={setVoiceBusy}/>}
     {!completed&&<>
       {current?<section className="interview-question"><h2 aria-live="polite">Question {current.number} · {current.category}</h2><p>{current.text}</p><blockquote>{current.question.quote}</blockquote><p className="muted">Exact excerpt from {current.question.source==='job'?'the captured job description':'your previous answer'}.</p><InterviewVoice key={current.number} id={id} question={current.number} disabled={waiting} onTranscript={setAnswer} onBusy={setVoiceBusy}/><label>Your answer<textarea rows={8} maxLength={3000} value={answer} onChange={e=>setAnswer(e.target.value)} disabled={waiting}/></label><p>{answer.length}/3,000 characters. Save before leaving; unsaved text is not kept in browser storage.</p><button className="secondary-button" disabled={waiting||voiceBusy} onClick={()=>void act(false)}>Save answer without AI</button><MeteredButton feature="interview" className="primary-button" disabled={waiting||voiceBusy||!answer.trim()} onClick={()=>void act(true)}>{session.status==='interrupted'?'Retry this step explicitly':current.number===session.question_count?'Finish interview and review':'Submit answer and continue'}</MeteredButton></section>:<MeteredButton feature="interview" className="primary-button" disabled={waiting} onClick={()=>void act(true)}>Ask first question (AI request)</MeteredButton>}
     </>}

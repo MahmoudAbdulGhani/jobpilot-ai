@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 
-from app.models import AIUsage, JobFitAnalysis, ProfileSuggestionSet, User, UsageReservation
+from app.models import AIPilotDispatch, AIUsage, JobFitAnalysis, ProfileSuggestionSet, User, UsageReservation
 from app.services.ai_provider import ProviderFailure
 
 
@@ -17,6 +17,9 @@ class AIUsageError(Exception):
 
 
 def reserve(session, owner_id, settings, feature=None, *, bypass_monthly_limits=False):
+    if settings.ENVIRONMENT == "production" and settings.JOBPILOT_AI_PILOT_ENABLED:
+        if str(owner_id) != settings.JOBPILOT_AI_PILOT_ACCOUNT_ID or feature != "profile":
+            raise AIUsageError(503, "AI is unavailable outside the profile pilot.")
     # Serialize quota allocation across all AI tasks/processes, but release the
     # lock with the caller's pre-provider commit. Never lock during network I/O.
     if session.scalar(select(User.id).where(User.id == owner_id, User.is_active.is_(True)).with_for_update()) is None:
@@ -40,6 +43,21 @@ def reserve(session, owner_id, settings, feature=None, *, bypass_monthly_limits=
     usage.active_token = token
     usage.active_until = now + timedelta(seconds=settings.JOBPILOT_AI_TIMEOUT_SECONDS + 10)
     return token
+
+
+def claim_pilot_dispatch(session, owner_id, settings):
+    """Consume the one-shot claim before HTTP dispatch; ambiguous failures stay consumed."""
+    if settings.ENVIRONMENT != "production" or not settings.JOBPILOT_AI_PILOT_ENABLED:
+        return
+    if str(owner_id) != settings.JOBPILOT_AI_PILOT_ACCOUNT_ID:
+        raise AIUsageError(503, "AI profile pilot is unavailable.")
+    claimed = session.execute(update(AIPilotDispatch).where(
+        AIPilotDispatch.id == 1, AIPilotDispatch.claimed_at.is_(None),
+    ).values(owner_id=owner_id, feature="profile", claimed_at=datetime.now(timezone.utc))
+        .returning(AIPilotDispatch.id)).scalar_one_or_none()
+    if claimed is None:
+        raise AIUsageError(409, "The production AI pilot request has already been used.")
+    session.commit()
 
 
 def release(session, owner_id, token):

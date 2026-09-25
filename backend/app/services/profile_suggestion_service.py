@@ -200,6 +200,7 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
     try:
         ai_usage.dispatch_guard(session, record.owner_id)
         require_consent(session, record.owner_id, "ai_profile_suggestions")
+        ai_usage.claim_pilot_dispatch(session, record.owner_id, settings)
     except Exception:
         record.status = "failed"
         record.outcome_message = "Dispatch cancelled before provider request; consent or account access changed."
@@ -234,7 +235,7 @@ def _finish_generation(session: Session, *, record: ProfileSuggestionSet, token,
 
         covered_roles = {index for item in suggestions if item["field"] == "experience"
                          if (index := role_index(item)) is not None}
-        if work_text and (not work_blocks or len(covered_roles) < len(work_blocks)):
+        if not settings.JOBPILOT_AI_PILOT_ENABLED and work_text and (not work_blocks or len(covered_roles) < len(work_blocks)):
             # One focused retry belongs to this explicit generation request.
             try:
                 suggest_experience = getattr(provider, "suggest_experience", provider.suggest)

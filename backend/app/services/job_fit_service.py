@@ -64,6 +64,8 @@ def validate_output(output: ProviderJobFitOutput, description: str, facts: list[
         refs = set(requirement.candidate_fact_ids)
         if requirement.job_quote not in description:
             raise JobFitError(502, "The AI response contained unsupported job evidence.")
+        if requirement.skill_name and requirement.skill_name.casefold() not in requirement.job_quote.casefold():
+            raise JobFitError(502, "The AI response named a skill absent from the quoted requirement.")
         if not refs <= fact_ids:
             raise JobFitError(502, "The AI response referenced unknown candidate evidence.")
         if requirement.assessment in {"supported", "partially_supported", "explicit_mismatch"} and not refs:
@@ -75,7 +77,7 @@ def validate_output(output: ProviderJobFitOutput, description: str, facts: list[
             raise JobFitError(502, "The AI response elevated a requirement without explicit job evidence.")
         if requirement.importance == "preferred" and not re.search(r"\b(preferred|preferably|bonus|nice to have)\b", quote):
             raise JobFitError(502, "The AI response labeled a preference without explicit job evidence.")
-    return output.model_dump(mode="json")
+    return output.model_dump(mode="json", exclude={"missing_skills"})
 
 
 def counts(result: dict | None) -> dict[str, int]:

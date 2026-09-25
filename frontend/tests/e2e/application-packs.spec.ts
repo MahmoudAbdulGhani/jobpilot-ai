@@ -127,7 +127,7 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
   await page.getByRole('button', { name: /Approve version/ }).click();
   await page.getByLabel('I reviewed both documents and confirm their accuracy.').check();
   await page.getByRole('button', { name: 'Confirm approval' }).click();
-  await expect(page.getByText(/Approved version/)).toBeVisible();
+  await expect(page.getByText(/Approved version/).first()).toBeVisible();
 
   const pdfDownloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /CV PDF/ }).click();

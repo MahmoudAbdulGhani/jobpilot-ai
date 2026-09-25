@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote_plus, urlsplit
 import os
+import uuid
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -101,6 +102,8 @@ class Settings(BaseSettings):
     RESUME_EXTRACTION_MAX_BLOCKS: int = 10_000
 
     JOBPILOT_AI_ENABLED: bool = False
+    JOBPILOT_AI_PILOT_ENABLED: bool = False
+    JOBPILOT_AI_PILOT_ACCOUNT_ID: str = ""
     JOBPILOT_QA_STRUCTURED_FALLBACK: bool = False
     JOBPILOT_GOOGLE_CLIENT_ID: str = Field(default="", repr=False, exclude=True)
     JOBPILOT_GOOGLE_CLIENT_SECRET: str = Field(default="", repr=False, exclude=True)
@@ -165,6 +168,16 @@ class Settings(BaseSettings):
 
     # Optional speech input/output only. Existing AI configurations are unchanged.
     JOBPILOT_VOICE_ENABLED: bool = False
+    JOBPILOT_LIVE_VOICE_ENABLED: bool = False
+    JOBPILOT_LIVE_VOICE_MODEL: Literal["gpt-realtime-2.1"] = "gpt-realtime-2.1"
+    JOBPILOT_LIVE_VOICE_MAX_MINUTES: int = Field(default=10, ge=1, le=10)
+
+    @field_validator("JOBPILOT_AI_PILOT_ACCOUNT_ID")
+    @classmethod
+    def valid_pilot_account(cls, value: str) -> str:
+        if value:
+            uuid.UUID(value)
+        return value
     JOBPILOT_VOICE_PROVIDER: Literal["openai"] = "openai"
     JOBPILOT_VOICE_TRANSCRIPTION_MODEL: Literal["whisper-1"] = "whisper-1"
     JOBPILOT_VOICE_SPEECH_MODEL: Literal["tts-1"] = "tts-1"
@@ -261,6 +274,11 @@ class Settings(BaseSettings):
         _check("JOBPILOT_MAILBOX_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_MAILBOX_TEST_PROVIDER)
         _check("JOBPILOT_DISCOVERY_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_DISCOVERY_TEST_PROVIDER)
         _check("JOBPILOT_VOICE_TEST_PROVIDER", "forbidden_flags", not self.JOBPILOT_VOICE_TEST_PROVIDER)
+        _check("JOBPILOT_AI_PILOT_ENABLED", "ai_pilot",
+               not self.JOBPILOT_AI_PILOT_ENABLED or (
+                   self.JOBPILOT_AI_ENABLED
+                   and bool(self.JOBPILOT_AI_PILOT_ACCOUNT_ID)
+                   and self.JOBPILOT_AI_PROVIDER == "openai"))
         _check("JOBPILOT_ACCOUNT_MAIL_TRANSPORT", "forbidden_flags",
                self.JOBPILOT_ACCOUNT_MAIL_TRANSPORT != "test")
         _check("JOBPILOT_DIGEST_MAIL_TRANSPORT", "forbidden_flags",

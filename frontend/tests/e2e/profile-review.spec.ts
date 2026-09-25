@@ -85,7 +85,7 @@ test('refreshes an applied old suggestion set from the saved CV without another 
   await expect(region.getByText('Engineer · Pine Works')).toBeVisible();
   await page.getByRole('button', { name: 'Save profile changes' }).click();
   await expect(page.getByRole('link', { name: 'View your profile' })).toBeVisible();
-  const expected = [{ title: 'Developer', organization: 'Cedar Labs', period: 'June 2022 - July 2024', notes: null }, { title: 'Engineer', organization: 'Pine Works', period: 'Jan 2020 - May 2022', notes: null }];
+  const expected = [{ title: 'Developer', organization: 'Cedar Labs', period: 'June 2022 - July 2024', notes: 'Built APIs' }, { title: 'Engineer', organization: 'Pine Works', period: 'Jan 2020 - May 2022', notes: 'Built tests' }];
   expect(database({ action: 'check', email: user.email, set_id: latest.id, status: 'applied', expected: { experience: expected } }).matched).toBe(true);
   expect((await (await request.get(`${API}/profile`, { headers: auth })).json()).experience).toEqual(expected);
   await page.reload();

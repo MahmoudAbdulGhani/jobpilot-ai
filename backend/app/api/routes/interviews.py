@@ -1,14 +1,22 @@
 import uuid
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from app.api.routes.jobs import CurrentUser, Database
 from app.core.config import get_settings
 from app.models import ApplicationPack, ApplicationPackVersion, InterviewSession, InterviewOperation, Resume, ResumeExtraction
 from app.schemas.interviews import InterviewSelection, InterviewStart, AnswerSave, Advance
 from app.services import interview_service as service
+from app.services import interview_live_voice
 from app.services.application_pack_service import PackError, owned_job
 
 router = APIRouter(tags=["interview practice"])
+
+
+class LiveVoiceConfirm(BaseModel):
+    confirm: Literal[True]
+    turns: list[interview_live_voice.ReviewedTurn] = Field(min_length=2, max_length=6)
 
 
 def handle(operation):
@@ -84,6 +92,29 @@ def save(id: uuid.UUID, body: AnswerSave, db: Database, current_user: CurrentUse
 def advance(id: uuid.UUID, body: Advance, db: Database, current_user: CurrentUser, response: Response, settings=Depends(get_settings)):
     response.headers["Cache-Control"] = "no-store"
     return handle(lambda: service.public(db, service.advance(db, current_user.id, id, body, settings)))
+
+
+@router.get("/interviews/{id}/live-voice/options")
+def live_voice_options(id: uuid.UUID, db: Database, current_user: CurrentUser,
+                       response: Response, settings=Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    handle(lambda: service.owned(db, current_user.id, id))
+    return {"available": interview_live_voice.available(settings),
+            "max_minutes": settings.JOBPILOT_LIVE_VOICE_MAX_MINUTES}
+
+
+@router.post("/interviews/{id}/live-voice/token")
+def live_voice_token(id: uuid.UUID, db: Database, current_user: CurrentUser,
+                     response: Response, settings=Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    return handle(lambda: interview_live_voice.token(db, current_user.id, id, settings))
+
+
+@router.post("/interviews/{id}/live-voice/confirm")
+def live_voice_confirm(id: uuid.UUID, body: LiveVoiceConfirm, db: Database,
+                       current_user: CurrentUser, response: Response, settings=Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    return handle(lambda: interview_live_voice.confirm(db, current_user.id, id, body.turns, settings))
 
 
 @router.delete("/interviews/{id}", status_code=204)

@@ -23,7 +23,7 @@ OPTIONAL_KEYS = {
     "ai_application_packs": "Confirmed CV text and profile facts sent to the pack provider for drafts.",
     "ai_qa": "Retrieved field excerpts sent to the AI provider for natural-language answers.",
     "ai_interview": "Selected interview evidence and answers sent for practice feedback.",
-    "ai_voice": "Selected question text or recorded audio sent for speech processing.",
+    "ai_voice": "Selected interview source, question text or microphone audio sent for speech processing and optional live practice.",
 }
 
 
@@ -61,7 +61,7 @@ def matrix(db: Session, owner_id: uuid.UUID, settings: Settings) -> list[dict]:
         for key, label, fields, provider, retention in [
             ("ai_interview", "interview practice", ["selected evidence", "answers"],
              f"{settings.JOBPILOT_INTERVIEW_PROVIDER}/{settings.JOBPILOT_INTERVIEW_MODEL}", "until session or account deletion"),
-            ("ai_voice", "voice practice", ["recorded audio", "selected question text"],
+            ("ai_voice", "voice practice", ["recorded audio", "microphone audio", "selected interview source", "selected question text"],
              settings.JOBPILOT_VOICE_PROVIDER, "audio is not persisted; transcripts expire")]
     ] + [
         {"domain": "profile", "fields_used": ["headline", "location", "skills", "experience",

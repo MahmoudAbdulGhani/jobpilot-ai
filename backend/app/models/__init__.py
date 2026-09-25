@@ -1,6 +1,8 @@
 from app.models.discovery_cache import DiscoveryCache
 from app.models.account_data import AccountExport, AccountDeletion
 from app.models.interview import InterviewSession, InterviewOperation
+from app.models.interview_live_voice import InterviewLiveVoice
+from app.models.ai_pilot import AIPilotDispatch
 from app.models.account_token import AccountToken, AccountThrottle
 from app.models.base import Base
 from app.models.application_pack import AIUsage, ApplicationPack, ApplicationPackVersion, ApplicationPackOperation
@@ -27,6 +29,8 @@ __all__ = [
     "AccountPlan", "UsageReservation", "ProfileGenerationRequest", "PlanAudit",
     "InterviewVoiceOperation",
     "InterviewSession", "InterviewOperation",
+    "InterviewLiveVoice",
+    "AIPilotDispatch",
     "ReplySync", "MailboxReply",
     "ReplyClassification",
     "FollowupSuggestion",

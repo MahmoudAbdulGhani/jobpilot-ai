@@ -165,9 +165,12 @@ def public(db, row):
     operations = list(db.scalars(select(InterviewOperation).where(InterviewOperation.session_id == row.id)
         .order_by(InterviewOperation.created_at, InterviewOperation.id)))
     active = next((o for o in operations if o.id == row.active_operation), None)
+    from app.models import InterviewLiveVoice
+    live = db.get(InterviewLiveVoice, row.id)
     return {"id": row.id, "job_id": row.job_id, "status": display_status(row, active),
         "revision": row.revision, "mode": row.mode, "question_count": row.question_count,
         "configuration": row.configuration, "source_snapshot": row.source_snapshot, "turns": row.turns,
+        "live_voice": None if live is None else {"status": live.status, "confirmed_turns": live.confirmed_turns},
         "created_at": row.created_at, "guidance": GUIDANCE, "actions": ACTIONS, "example_structures": STRUCTURES,
         "practice_actions": sorted({c["focus"] for t in row.turns if t.get("feedback")
             for c in t["feedback"].values() if c["assessment"] != "demonstrated"}),

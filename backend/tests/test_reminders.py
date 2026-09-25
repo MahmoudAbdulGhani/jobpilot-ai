@@ -36,7 +36,7 @@ def test_lifecycle_owner_duplicate_and_delete(tracking_client, tracking_users, d
     assert tracking_client.get(path, headers=auth_headers(other)).status_code == 404
     assert tracking_client.post(path, json=payload(), headers=auth_headers(other)).status_code == 404
     created = tracking_client.post(path, json=payload(), headers=h).json()
-    assert created['due_at'].startswith('2030-01-01T08:00:00')
+    assert datetime.fromisoformat(created['due_at']).astimezone(timezone.utc) == datetime(2030, 1, 1, 8, tzinfo=timezone.utc)
     assert created['revision'] == 1
     assert tracking_client.post(path, json=payload(), headers=h).json() == created
     assert tracking_client.get('/api/reminders?view=upcoming', headers=auth_headers(other)).json()['items'] == []

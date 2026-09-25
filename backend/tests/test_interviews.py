@@ -18,6 +18,7 @@ from app.core.security import create_access_token
 from app.models import (AIUsage, CandidateProfile, InterviewSession, InterviewOperation, Resume, ResumeExtraction, User)
 from app.schemas.interviews import Advance, AnswerSave, InterviewSelection, InterviewStart, InterviewOutput
 from app.services import interview_service as service
+from app.services import interview_live_voice as live_voice
 from app.services.ai_provider import ProviderFailure
 from app.services.application_pack_service import PackError
 from app.services.interview_provider import (TestInterviewProvider as Synthetic, OpenAIInterviewProvider, InterviewResult, request_bytes)
@@ -78,6 +79,37 @@ def test_snapshots_start_dedup_and_source_deletion(db_session,data,settings):
     db_session.delete(data.resume);db_session.commit()
     assert service.owned(db_session,data.owner.id,row.id).source_snapshot==snapshot
     assert db_session.get(AIUsage,data.owner.id) is None  # Preview/start sends no request.
+
+
+def test_live_voice_mints_once_then_saves_only_confirmed_text_and_mocked_feedback(db_session,data,settings,monkeypatch):
+    row,_=begin(db_session,data,settings)
+    grant_consent(db_session,data.owner.id,'ai_interview')
+    grant_consent(db_session,data.owner.id,'ai_voice')
+    enabled=settings.model_copy(update={'JOBPILOT_LIVE_VOICE_ENABLED':True,'JOBPILOT_OPENAI_API_KEY':'mock-key'})
+    calls=[]
+    class TokenResponse:
+        def raise_for_status(self):pass
+        def json(self):return {'value':'ephemeral-only'}
+    monkeypatch.setattr(live_voice.httpx,'post',lambda url,**kw:(calls.append((url,kw)) or TokenResponse()))
+    issued=live_voice.token(db_session,data.owner.id,row.id,enabled)
+    assert issued['value']=='ephemeral-only' and len(calls)==1
+    assert calls[0][0]=='https://api.openai.com/v1/realtime/client_secrets'
+    assert calls[0][1]['headers']['Authorization']=='Bearer mock-key'
+    with pytest.raises(PackError,match='already claimed'):
+        live_voice.token(db_session,data.owner.id,row.id,enabled)
+    assert row.turns==[]
+    reviewed=[live_voice.ReviewedTurn(question='Tell me about a project.',answer='I built a booking API.'),
+              live_voice.ReviewedTurn(question='How did you test it?',answer='I tested timeout paths.')]
+    def mocked_feedback(turns,config):
+        return live_voice.LiveFeedbackOutput(feedback=[Synthetic().practice({
+            'latest_answer':turn.answer,'final':True,'next_category':'behavioral','source':row.source_snapshot
+        }).output.feedback for turn in turns])
+    monkeypatch.setattr(live_voice,'_feedback',mocked_feedback)
+    result=live_voice.confirm(db_session,data.owner.id,row.id,reviewed,enabled)
+    assert result['status']=='completed' and len(result['turns'])==2
+    assert result['turns'][1]['answer']=='I tested timeout paths.'
+    assert result['turns'][0]['feedback']['specificity']['answer_quotes']==['I built a booking API.']
+    with pytest.raises(PackError):live_voice.confirm(db_session,data.owner.id,row.id,reviewed,enabled)
 
 
 def test_preview_rejects_changes_and_cross_owner_sources(db_session,data,settings):
@@ -174,7 +206,7 @@ def test_failure_retains_answer_no_retry(db_session,data,settings,monkeypatch,fa
 def test_quotas_input_limits_and_guarded_provider(db_session,data,settings):
     row,_=begin(db_session,data,settings)
     limited=settings.model_copy(update={'JOBPILOT_AI_MAX_REQUESTS_PER_USER':0})
-    with pytest.raises(PackError,match='request limit'):advance(db_session,data,row,limited)
+    with pytest.raises(PackError,match='unavailable on your current plan'):advance(db_session,data,row,limited)
     assert not row.turns
     db_session.rollback()
     with pytest.raises(PackError,match='restricted'):

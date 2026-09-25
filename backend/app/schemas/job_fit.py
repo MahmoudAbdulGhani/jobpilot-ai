@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 Importance = Literal["required", "preferred", "unspecified"]
 Assessment = Literal[
@@ -27,6 +27,7 @@ class ProviderRequirement(BaseModel):
     assessment: Assessment
     explanation: str = Field(min_length=1, max_length=1_000)
     candidate_fact_ids: list[str] = Field(default_factory=list, max_length=20)
+    skill_name: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ProviderJobFitOutput(BaseModel):
@@ -37,6 +38,14 @@ class ProviderJobFitOutput(BaseModel):
     actions: list[str] = Field(default_factory=list, max_length=20)
     summary: str = Field(default="", max_length=2_000)
 
+    @property
+    def missing_skills(self) -> list[dict[str, str]]:
+        return [{"skill": item.skill_name, "requirement_id": item.id,
+                 "job_quote": item.job_quote, "importance": item.importance}
+                for item in self.requirements
+                if item.skill_name and item.assessment == "not_evidenced"
+                and item.importance in {"required", "preferred"}]
+
     @model_validator(mode="after")
     def references_known_requirements(self):
         ids = {item.id for item in self.requirements}
@@ -46,6 +55,13 @@ class ProviderJobFitOutput(BaseModel):
             if any(not item.startswith(tuple(f"{key}:" for key in ids)) for item in items):
                 raise ValueError("narrative items must begin with a requirement ID")
         return self
+
+
+class JobFitResultResponse(ProviderJobFitOutput):
+    @computed_field
+    @property
+    def missing_skills(self) -> list[dict[str, str]]:
+        return super().missing_skills
 
 
 class JobFitGenerate(BaseModel):
@@ -60,7 +76,7 @@ class JobFitAnalysisResponse(BaseModel):
     status: str
     job_snapshot: dict
     profile_facts: list[CandidateFact]
-    result: ProviderJobFitOutput | None
+    result: JobFitResultResponse | None
     counts: dict[str, int]
     provider: str
     model: str
