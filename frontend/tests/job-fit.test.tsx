@@ -12,6 +12,16 @@ const job: Job = {id:'job-1',owner_id:'user-1',title:'Engineer',company:'Acme',l
 const analysis: Analysis = {id:'analysis-1',job_id:job.id,status:'ready',job_snapshot:{description:'Python is required'},profile_facts:[{id:'fact-1',path:'skills[0]',value:'Python'}],result:{requirements:[{id:'req-1',text:'Python',job_quote:'Python is required',importance:'required',assessment:'supported',explanation:'Relevant saved evidence.',candidate_fact_ids:['fact-1']}],strengths:['req-1: Python evidence'],gaps:[],actions:[],summary:'Evidence-backed review.'},counts:{supported:1,total:1},provider:'deterministic-test',model:'synthetic-v1',prompt_version:'job-fit-v1',outcome_message:null,is_outdated:false,created_at:'2026-09-14T10:00:00Z',updated_at:'2026-09-14T10:00:00Z'};
 
 describe('JobFitAnalysis',()=>{
+  it('directs a consent error to the selected-job privacy setting',async()=>{
+    apiMock.mockImplementation((_path:string,init?:RequestInit)=>init?.method==='POST'
+      ? Promise.reject(new Error('AI data-use consent is required. Review Privacy settings before continuing.'))
+      : Promise.reject(new Error('not found')));
+    render(<JobFitAnalysis job={job}/>);
+    fireEvent.click(screen.getByRole('button',{name:/Analyze fit/}));
+    const link=await screen.findByRole('link',{name:'Allow selected job AI use in Privacy settings'});
+    expect(link.getAttribute('href')).toBe('/settings#privacy');
+    expect(screen.queryByRole('link',{name:'Review profile'})).toBeNull();
+  });
   it('requires confirmation, saves a claimed skill, and marks fit stale',async()=>{
     const withGap:Analysis={...analysis,result:{...analysis.result!,requirements:[{id:'req-2',text:'Kubernetes',job_quote:'Kubernetes is required',importance:'required',assessment:'not_evidenced',explanation:'No saved profile evidence.',candidate_fact_ids:[],skill_name:'Kubernetes'}],missing_skills:[{skill:'Kubernetes',requirement_id:'req-2',job_quote:'Kubernetes is required',importance:'required'}]}};
     const profile={id:'profile-1',owner_id:'user-1',skills:['Python']};
