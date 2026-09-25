@@ -287,6 +287,12 @@ def include_confirmed_job_skills(output, snapshot):
         blocks = payload[name]["blocks"]
         body = " ".join(block["text"].casefold() for block in blocks if block["kind"] != "heading")
         missing = [fact for fact in relevant if not mentions(body, fact["value"])]
+        if missing and name == "cv" and len(blocks) <= 98 and not any(block["kind"] == "heading" and block["text"] == "Skills" for block in blocks):
+            heading_id = "confirmed-skills-heading"
+            existing_ids = {block["id"] for block in blocks}
+            while heading_id in existing_ids:
+                heading_id += "-1"
+            blocks.append({"id": heading_id, "kind": "heading", "text": "Skills", "evidence": []})
         for offset in range(0, len(missing), 10):
             group = missing[offset:offset + 10]
             if len(blocks) >= 100:
@@ -295,9 +301,19 @@ def include_confirmed_job_skills(output, snapshot):
             existing_ids = {block["id"] for block in blocks}
             while block_id in existing_ids:
                 block_id += "-1"
-            blocks.append({"id": block_id, "kind": "paragraph",
-                           "text": "My skills include: " + ", ".join(fact["value"] for fact in group),
-                           "evidence": [{"fact_id": fact["id"], "cv_quote": None} for fact in group]})
+            addition = {"id": block_id, "kind": "bullet" if name == "cv" else "paragraph",
+                        "text": ("" if name == "cv" else "My skills include: ") + ", ".join(fact["value"] for fact in group),
+                        "evidence": [{"fact_id": fact["id"], "cv_quote": None} for fact in group]}
+            if name == "cv":
+                section = next((index for index, block in enumerate(blocks)
+                                if block["kind"] == "heading" and block["text"] == "Skills"), len(blocks) - 1)
+                after = next((index for index in range(section + 1, len(blocks))
+                              if blocks[index]["kind"] == "heading"), len(blocks))
+                blocks.insert(after, addition)
+            else:
+                body_indices = [index for index, block in enumerate(blocks) if block["kind"] != "heading"]
+                before_closing = body_indices[-1] if len(body_indices) > 1 else len(blocks)
+                blocks.insert(before_closing, addition)
             added += 1
     if added:
         payload["review_notes"] = [*payload["review_notes"][:19],

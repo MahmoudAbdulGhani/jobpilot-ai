@@ -34,8 +34,9 @@ it('requires current job fit before generating an AI pack', async () => {
 
 it('shows generated documents for review without edit controls', async () => {
   const block = { id: 'one', kind: 'paragraph', text: 'Python', origin: 'ai', evidence: [{ fact_id: 'fact-1', cv_quote: null }] };
+  const heading = { id: 'title', kind: 'heading', text: 'Curriculum vitae', origin: 'ai', evidence: [] };
   const pack = { id: 'pack-1', job_id: job.id, resume_id: 'resume-1', status: 'ready', current_version: 1,
-    version: { id: 'version-1', number: 1, cv: { blocks: [block] }, cover_letter: { blocks: [block] }, approved_at: null, created_at: '2026-09-25T00:00:00Z' },
+    version: { id: 'version-1', number: 1, cv: { blocks: [heading, block] }, cover_letter: { blocks: [{ ...heading, text: 'Cover letter' }, block] }, approved_at: null, created_at: '2026-09-25T00:00:00Z' },
     review_notes: [], source_snapshot: { cv_text: 'Python', profile_facts: [{ id: 'fact-1', path: 'skills[0]', value: 'Python' }], job: { description: job.description } },
     is_outdated: false, provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: null, created_at: '2026-09-25T00:00:00Z' };
   apiMock.mockImplementation((path: string) => {
@@ -45,6 +46,7 @@ it('shows generated documents for review without edit controls', async () => {
   });
   render(<ApplicationPacks job={job} />);
   expect(await screen.findByRole('button', { name: /Approve version 1/ })).not.toBeNull();
+  expect(screen.getByRole('heading', { name: 'Curriculum vitae' }).classList.contains('pack-paper-title')).toBe(true);
   expect(screen.queryByRole('textbox', { name: /block 1 text/ })).toBeNull();
   expect(screen.queryByRole('button', { name: /Save both drafts/ })).toBeNull();
 });

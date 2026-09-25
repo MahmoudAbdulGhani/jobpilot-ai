@@ -24,6 +24,7 @@ function DocumentReview({ name, document, original, editable, facts, onChange }:
   onChange: (document: PackDocument) => void;
 }) {
   const originals = new Map(original.blocks.map(block => [block.id, block]));
+  const firstHeading = document.blocks.findIndex(block => block.kind === 'heading');
   function update(index: number, values: Partial<PackBlock>) {
     onChange({ blocks: document.blocks.map((block, current) => current === index ? { ...block, ...values } : block) });
   }
@@ -34,13 +35,13 @@ function DocumentReview({ name, document, original, editable, facts, onChange }:
   }
   return <section className="pack-document" aria-labelledby={`pack-${name}-heading`}>
     <h3 id={`pack-${name}-heading`}><FileText size={21} />{names[name]}</h3>
-    <div className="pack-paper" aria-label={`${names[name]} preview`}>
-      {document.blocks.map(block => block.kind === 'heading'
-        ? <h4 key={block.id}>{block.text}</h4>
+    <div className={`pack-paper pack-paper-${name}`} aria-label={`${names[name]} preview`}>
+      {document.blocks.map((block, index) => block.kind === 'heading'
+        ? <h4 className={index === firstHeading ? 'pack-paper-title' : 'pack-paper-section'} key={block.id}>{block.text}</h4>
         : block.kind === 'bullet' ? <p className="pack-bullet" key={block.id}><span aria-hidden="true">•</span>{block.text}</p>
           : <p key={block.id}>{block.text}</p>)}
     </div>
-    <details className="pack-edit" open>
+    <details className="pack-edit">
       <summary>{editable ? 'Review evidence and edit' : 'Review saved evidence'}</summary>
       <p className="muted pack-help">Supporting references help you check a claim. They do not prove it is accurate. Check every name, date, qualification and metric before approval.</p>
       {document.blocks.map((block, index) => {

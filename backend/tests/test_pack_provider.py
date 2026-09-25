@@ -51,6 +51,8 @@ def test_pack_responses_contract_is_bounded_structured_tool_free_and_not_stored(
     assert "untrusted data" in captured["instructions"]
     assert "never evidence" in captured["instructions"]
     assert "recipient names" in captured["instructions"]
+    assert "readable professional document" in captured["instructions"]
+    assert "Reorder evidenced skills and examples by relevance" in captured["instructions"]
 
 
 def test_pack_client_has_timeout_and_no_automatic_retries(monkeypatch, source):

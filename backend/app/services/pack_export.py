@@ -97,9 +97,14 @@ def _register_fonts() -> None:
 def _pdf(blocks: list[dict[str, str]], deadline: float) -> bytes:
     _register_fonts()
     styles = {
+        "title": ParagraphStyle(
+            "Pack title", fontName="PackVeraBold", fontSize=19, leading=24,
+            textColor=HexColor("#183d31"), spaceAfter=17,
+            keepWithNext=True, allowWidows=0, allowOrphans=0,
+        ),
         "heading": ParagraphStyle(
-            "Pack heading", fontName="PackVeraBold", fontSize=13, leading=17,
-            textColor=HexColor("#183d31"), spaceBefore=12, spaceAfter=7,
+            "Pack heading", fontName="PackVeraBold", fontSize=11, leading=15,
+            textColor=HexColor("#244d3c"), spaceBefore=17, spaceAfter=7,
             keepWithNext=True, allowWidows=0, allowOrphans=0,
         ),
         "paragraph": ParagraphStyle(
@@ -115,16 +120,20 @@ def _pdf(blocks: list[dict[str, str]], deadline: float) -> bytes:
         ),
     }
     story = []
+    title_used = False
     for block in blocks:
         _check_deadline(deadline)
-        style = styles[block["kind"]]
+        style_name = "title" if block["kind"] == "heading" and not title_used else block["kind"]
+        style = styles[style_name]
+        if style_name == "title":
+            title_used = True
         cmap = pdfmetrics.getFont(style.fontName).face.charToGlyph
         for char in block["text"]:
             if char not in "\n\t" and ord(char) not in cmap:
                 raise ExportFailure(
                     "unsupported_glyph",
                     "The PDF font cannot display one or more characters in this draft. "
-                    "Download DOCX, which preserves Unicode text, or edit those characters.",
+                    "Download DOCX, which preserves Unicode text.",
                 )
         # Paragraph supports markup, so all user text must be escaped first.
         value = escape(block["text"]).replace(
@@ -181,10 +190,20 @@ def _docx(blocks: list[dict[str, str]], deadline: float) -> bytes:
     heading.paragraph_format.keep_with_next = True
     heading.paragraph_format.space_before = Pt(12)
     heading.paragraph_format.space_after = Pt(7)
+    title = document.styles["Title"]
+    title.font.name, title.font.size = "Arial", Pt(19)
+    title.font.bold = True
+    title.font.color.rgb = RGBColor.from_string("183D31")
+    title.paragraph_format.keep_with_next = True
+    title.paragraph_format.space_before = Pt(0)
+    title.paragraph_format.space_after = Pt(15)
+    title_used = False
     for block in blocks:
         _check_deadline(deadline)
-        style = {"heading": "Heading 1", "paragraph": "Normal",
-                 "bullet": "List Bullet"}[block["kind"]]
+        style = ("Title" if block["kind"] == "heading" and not title_used else
+                 {"heading": "Heading 1", "paragraph": "Normal", "bullet": "List Bullet"}[block["kind"]])
+        if style == "Title":
+            title_used = True
         paragraph = document.add_paragraph(block["text"], style)
         paragraph.paragraph_format.widow_control = True
         if block["kind"] == "bullet":

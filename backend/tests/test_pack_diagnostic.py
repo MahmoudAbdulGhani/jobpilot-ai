@@ -101,7 +101,7 @@ def test_compact_pack_schema_preserves_every_validation_keyword():
             return [without_annotations(value) for value in node]
         return node
     assert proposed["text"]["format"]["schema"] == without_annotations(previous["text"]["format"]["schema"])
-    assert "application-pack-v2" == evaluation.PACK_PROMPT_VERSION
+    assert "application-pack-v3" == evaluation.PACK_PROMPT_VERSION
     assert "Keep each career fact associated only" in proposed["instructions"]
     assert "Never combine separately supported facts" in proposed["instructions"]
     assert "exact contiguous source excerpts" in proposed["instructions"]

@@ -52,7 +52,9 @@ def test_docx_export_exact_unicode_headings_pagination_and_private_metadata():
     result = pack_export.render_document(source, "docx")
     document = Document(BytesIO(result))
     assert [p.text for p in document.paragraphs] == [b["text"] for b in source["blocks"]]
-    assert document.paragraphs[0].style.name == "Heading 1"
+    assert document.paragraphs[0].style.name == "Title"
+    assert document.paragraphs[2].style.name == "Heading 1"
+    assert document.styles["Title"].paragraph_format.keep_with_next is True
     assert document.styles["Heading 1"].paragraph_format.keep_with_next is True
     assert all(p.paragraph_format.widow_control for p in document.paragraphs)
     assert document.paragraphs[4].style.name == "List Bullet"

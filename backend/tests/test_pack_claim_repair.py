@@ -73,6 +73,12 @@ def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():
         matching = [block for block in document.blocks if "Kubernetes" in block.text]
         assert matching
         assert any(ref.fact_id == "fact-6" for block in matching for ref in block.evidence)
+    cv_blocks = checked.cv.blocks
+    skills_heading = next(index for index, block in enumerate(cv_blocks) if block.kind == "heading" and block.text == "Skills")
+    assert cv_blocks[skills_heading + 1].kind == "bullet"
+    assert "Kubernetes" in cv_blocks[skills_heading + 1].text
+    assert any(block.kind == "paragraph" and "My skills include: Kubernetes" in block.text
+               for block in checked.cover_letter.blocks)
     assert "included as sourced statements" in checked.review_notes[-1]
 
 
