@@ -13,7 +13,9 @@ AI availability and allowance. Existing AI/speech provider settings are unchange
 `pack`, `interview`, `transcription`, `speech` limits (integers 0–10,000).
 An omitted/null feature limit inherits the plan total, except continuity features
 inherit `JOBPILOT_AI_MAX_REQUESTS_PER_USER`. Zero explicitly excludes a feature;
-zero total permits no new reservations. Invalid policy fails configuration validation.
+zero total blocks ordinary shared-budget requests. A new confirmed CV's first
+profile generation can exceed the shared monthly cap if the plan still enables
+the profile feature. Invalid policy fails configuration validation.
 
 Default policy:
 
@@ -68,6 +70,22 @@ so no backfilled counts or billing claims are fabricated.
 | Interview | One question/answer-assessment request, including the first question and final feedback |
 | Transcription | One bounded recording request, up to the configured 60-second maximum |
 | Spoken question | One bounded question/excerpt speech-generation request |
+
+Regular accounts get one initial profile generation for each distinct confirmed
+CV text and two additional profile refreshes per UTC month across all their CVs.
+An initial generation bypasses the shared monthly ceiling but still creates a
+usage reservation and remains visible in usage totals. A disabled profile feature
+cannot use this exception. Configured plan administrators bypass generation
+ceilings. The resume-specific eligibility endpoint reports the next request type,
+remaining refreshes and reset date; the server rechecks under the account lock.
+Profile review, saving and manual editing use no AI reservation.
+
+`profile_generation_requests` stores only the account, a SHA-256 hash of the
+confirmed text, request type and timestamps, independently of resume rows.
+Deleting and reuploading the same text does not grant another initial request.
+The ledger is included in account export and cascades on account deletion.
+The migration backfills surviving suggestion sets as legacy source claims;
+deleted historical CVs cannot be reconstructed.
 
 All plans use **calendar months in UTC**, resetting on the first day at **00:00
 UTC**. No reset worker edits counters. The current UTC bucket is selected at

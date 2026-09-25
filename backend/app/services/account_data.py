@@ -38,6 +38,7 @@ EXPORT_COLUMNS = {
     "ai_usage": "requests",
     "account_plans": "base_plan beta_expires_at beta_revoked_at created_at updated_at",
     "usage_reservations": "id feature period_start created_at released_at",
+    "profile_generation_requests": "id source_hash kind period_start created_at",
     "plan_audits": "id action reason expires_at created_at",
 }
 PARENTS = {"resume_extractions": ("resume_id", "resumes"),

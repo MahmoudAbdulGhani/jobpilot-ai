@@ -27,6 +27,22 @@ class UsageReservation(Base):
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ProfileGenerationRequest(Base):
+    """Content fingerprint survives resume deletion; account deletion cascades it."""
+    __tablename__ = "profile_generation_requests"
+    __table_args__ = (
+        Index("ix_profile_generation_owner_period", "owner_id", "period_start"),
+        Index("ix_profile_generation_owner_source", "owner_id", "source_hash"),
+        CheckConstraint("kind IN ('initial', 'refresh', 'admin', 'legacy')", name="profile_generation_kind_allowed"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlanAudit(Base):
     __tablename__ = "plan_audits"
     __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_plan_audit_key"),)

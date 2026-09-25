@@ -2,17 +2,19 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import _require_bearer_user
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import User
+from app.models import User, ResumeExtraction
 from app.schemas.profile_suggestions import (
     ApplySuggestionRequest, SuggestionSetResponse, ReviewSuggestionRequest, SuggestionReviewResponse,
 )
 from app.schemas.profile import CandidateProfileResponse
 from app.services import profile_service, profile_suggestion_service, resume_service
+from app.services import profile_generation_quota
 
 router = APIRouter(prefix="/profile-suggestions", tags=["AI profile suggestions"])
 CurrentUser = Annotated[User, Depends(_require_bearer_user)]
@@ -42,6 +44,16 @@ def generate(resume_id: uuid.UUID, db: Database, current_user: CurrentUser):
         )
     except profile_suggestion_service.SuggestionError as error:
         raise HTTPException(error.status_code, error.message) from error
+
+
+@router.get("/resumes/{resume_id}/eligibility")
+def generation_eligibility(resume_id: uuid.UUID, db: Database, current_user: CurrentUser, response: Response):
+    resume = resume_service.get_resume(db, owner_id=current_user.id, resume_id=resume_id)
+    if resume is None:
+        raise HTTPException(404, "Resume not found")
+    extraction = db.scalar(select(ResumeExtraction).where(ResumeExtraction.resume_id == resume.id))
+    response.headers["Cache-Control"] = "no-store"
+    return profile_generation_quota.eligibility(db, current_user.id, extraction, get_settings())
 
 
 @router.get("/resumes/{resume_id}/latest", response_model=SuggestionSetResponse)

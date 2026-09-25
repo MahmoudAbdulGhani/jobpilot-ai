@@ -16,7 +16,7 @@ class AIUsageError(Exception):
         super().__init__(message)
 
 
-def reserve(session, owner_id, settings, feature=None):
+def reserve(session, owner_id, settings, feature=None, *, bypass_monthly_limits=False):
     # Serialize quota allocation across all AI tasks/processes, but release the
     # lock with the caller's pre-provider commit. Never lock during network I/O.
     if session.scalar(select(User.id).where(User.id == owner_id, User.is_active.is_(True)).with_for_update()) is None:
@@ -32,7 +32,8 @@ def reserve(session, owner_id, settings, feature=None):
     token = uuid.uuid4()
     from app.services.entitlements import reserve as reserve_entitlement, EntitlementError
     try:
-        reserve_entitlement(session, owner_id, token, feature, settings)
+        reserve_entitlement(session, owner_id, token, feature, settings,
+                            bypass_monthly_limits=bypass_monthly_limits)
     except EntitlementError as error:
         raise AIUsageError(error.status_code, error.message) from None
     usage.requests += 1

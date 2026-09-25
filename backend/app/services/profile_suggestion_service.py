@@ -165,9 +165,9 @@ def _prepare_generation(session: Session, *, owner_id: uuid.UUID, resume: Resume
         ):
             raise SuggestionError(409, "Suggestions are already being generated for this resume.")
     provider_name, model, _ = provider_configuration(settings)
-    from app.services import ai_usage
+    from app.services import ai_usage, profile_generation_quota
     try:
-        token = ai_usage.reserve(session, owner_id, settings, feature="profile")
+        token = profile_generation_quota.reserve(session, owner_id, source_hash(source), settings)
     except ai_usage.AIUsageError as error:
         raise SuggestionError(error.status_code, error.message) from None
     profile = session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner_id))

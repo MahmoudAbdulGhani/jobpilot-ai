@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select, text
-from app.models import AccountPlan, PlanAudit, UsageReservation, User
+from app.models import AccountPlan, PlanAudit, ProfileGenerationRequest, UsageReservation, User
 
 FEATURES = {"profile": "AI profile suggestions", "fit": "Job-fit analysis",
     "pack": "Application packs", "interview": "Text interview requests",
@@ -65,7 +65,7 @@ def consumption(db, owner, start):
     return sum(counts.values()), counts
 
 
-def reserve(db, owner, token, feature, settings):
+def reserve(db, owner, token, feature, settings, *, bypass_monthly_limits=False):
     # Caller must hold the active user's FOR UPDATE lock. This ledger and the
     # existing aggregate counter/lease commit in the same dispatch transaction.
     if feature not in FEATURES:
@@ -75,11 +75,9 @@ def reserve(db, owner, token, feature, settings):
         at = now(); start, _ = period(at)
         _, total, allowances, _ = policy(db, owner, settings, at)
         used, counts = consumption(db, owner, start)
-        if used >= total:
-            raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
         if allowances[feature] == 0:
             raise EntitlementError(403, "This feature is unavailable on your current plan. Billing is not available.")
-        if counts.get(feature, 0) >= allowances[feature]:
+        if not bypass_monthly_limits and (used >= total or counts.get(feature, 0) >= allowances[feature]):
             raise EntitlementError(429, "AI request limit reached for this account's current UTC month. See Settings usage.")
     else:
         at = now(); start, _ = period(at)
@@ -108,6 +106,12 @@ def snapshot(db, owner, settings):
     admin = is_plan_admin(db, owner, settings)
     name, total, allowances, row = policy(db, owner, settings, at)
     used, counts = consumption(db, owner, start)
+    from app.services.profile_generation_quota import MONTHLY_REFRESHES
+    refresh_used = db.scalar(select(func.count()).select_from(ProfileGenerationRequest).where(
+        ProfileGenerationRequest.owner_id == owner,
+        ProfileGenerationRequest.period_start == start,
+        ProfileGenerationRequest.kind == "refresh",
+    )) or 0
     features = {}
     for feature, label in FEATURES.items():
         if admin:
@@ -122,6 +126,9 @@ def snapshot(db, owner, settings):
         "beta_expires_at": row.beta_expires_at if row else None,
         "beta_revoked_at": row.beta_revoked_at if row else None,
         "period_start": start, "reset_at": end, "reset_timezone": "UTC",
+        "profile_refreshes": {"allowance": None if admin else MONTHLY_REFRESHES,
+            "consumed": refresh_used, "remaining": None if admin else max(0, MONTHLY_REFRESHES - refresh_used),
+            "new_cv_initial_generation": True},
         "total": {"allowance": total, "consumed": used, "remaining": 999999 if admin else max(0, total-used)},
         "features": features, "admin": admin, "billing_available": False,
         "proposed_monthly_price_usd": str(settings.JOBPILOT_PROPOSED_MONTHLY_PRICE_USD),

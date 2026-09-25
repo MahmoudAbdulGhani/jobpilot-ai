@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
-from app.models import User, CandidateProfile, ResumeExtraction, Resume, ProfileSuggestionSet
+from app.models import User, CandidateProfile, ResumeExtraction, Resume, ProfileSuggestionSet, ProfileGenerationRequest, UsageReservation
 from app.schemas.profile_suggestions import ProviderSuggestionOutput
 from app.services.profile_suggestion_service import source_hash, validate_output, profile_revision
 
@@ -65,6 +65,16 @@ def main():
                 assert record.status == data["status"]
                 assert bool(record.applied_at) == (data["status"] == "applied")
                 print(json.dumps({"matched": True, "fields": len(data["expected"])}))
+            elif data["action"] == "quota":
+                requests = list(db.scalars(select(ProfileGenerationRequest).where(
+                    ProfileGenerationRequest.owner_id == owner.id,
+                ).order_by(ProfileGenerationRequest.created_at, ProfileGenerationRequest.id)))
+                reservations = list(db.scalars(select(UsageReservation).where(
+                    UsageReservation.owner_id == owner.id,
+                    UsageReservation.feature == "profile",
+                )))
+                print(json.dumps({"kinds": [item.kind for item in requests],
+                                  "reservation_count": len(reservations)}))
             else:
                 raise ValueError("Unknown action")
     finally:

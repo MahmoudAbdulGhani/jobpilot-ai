@@ -24,7 +24,7 @@ from app.models.data_use_consent import DataUseConsent
 from app.models.digest_preference import DigestPreference
 
 __all__ = [
-    "AccountPlan", "UsageReservation", "PlanAudit",
+    "AccountPlan", "UsageReservation", "ProfileGenerationRequest", "PlanAudit",
     "InterviewVoiceOperation",
     "InterviewSession", "InterviewOperation",
     "ReplySync", "MailboxReply",
@@ -44,4 +44,4 @@ __all__ = [
     "AtsReport",
 ]
 from app.models.interview_voice import InterviewVoiceOperation
-from app.models.entitlements import AccountPlan, UsageReservation, PlanAudit
+from app.models.entitlements import AccountPlan, UsageReservation, ProfileGenerationRequest, PlanAudit

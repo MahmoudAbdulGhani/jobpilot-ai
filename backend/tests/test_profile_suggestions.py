@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import create_application
-from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, UsageReservation, User
+from app.models import AIUsage, CandidateProfile, ProfileSuggestionSet, ProfileGenerationRequest, UsageReservation, User
 from app.schemas.profile import CandidateProfileUpdate
 from app.schemas.profile_suggestions import (
     ALL_SUGGESTION_FIELDS, ProviderSuggestionOutput, ProviderWireSuggestionOutput,
@@ -23,6 +23,7 @@ from app.schemas.profile_suggestions import (
 )
 from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure, _profile_failure_field
 from app.services import ai_usage, profile_suggestion_service
+from app.schemas.plans import PlanLimits
 from consent_helpers import grant_consent
 from tests.test_resume_extraction import pdf_bytes
 
@@ -2037,6 +2038,89 @@ def test_openai_profile_async_queue_polls_without_duplicate_provider_calls(
         f"/api/profile-suggestions/resumes/{resume_id}", headers=headers(owner))
     assert duplicate.status_code == 409
     assert len(submitted) == 1
+
+
+def test_profile_refresh_quota_survives_cv_deletion_and_allows_different_cv(
+    suggestion_client, suggestion_users, db_session, monkeypatch,
+):
+    owner, other = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    grant_consent(db_session, other.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    settings = get_settings()
+    plans = dict(settings.JOBPILOT_PLAN_LIMITS)
+    plans["legacy"] = PlanLimits(total=3, profile=3)
+    plans["free"] = PlanLimits(total=3, profile=3)
+    monkeypatch.setattr(settings, "JOBPILOT_PLAN_LIMITS", plans)
+
+    original = confirmed_resume(suggestion_client, owner, "Synthetic Engineer Alpha")
+    endpoint = f"/api/profile-suggestions/resumes/{original}"
+    eligibility = suggestion_client.get(endpoint + "/eligibility", headers=headers(owner))
+    assert eligibility.status_code == 200
+    assert eligibility.json()["kind"] == "initial"
+    for number in range(3):
+        result = suggestion_client.post(endpoint, headers=headers(owner))
+        assert result.status_code == 200, result.text
+        next_state = suggestion_client.get(endpoint + "/eligibility", headers=headers(owner)).json()
+        assert next_state["remaining_refreshes"] == 2 - number
+    assert next_state["kind"] == "refresh" and not next_state["allowed"]
+    assert suggestion_client.post(endpoint, headers=headers(owner)).status_code == 429
+
+    different = confirmed_resume(suggestion_client, owner, "Synthetic Engineer Beta")
+    different_endpoint = f"/api/profile-suggestions/resumes/{different}"
+    assert suggestion_client.get(different_endpoint + "/eligibility", headers=headers(owner)).json()["kind"] == "initial"
+    assert suggestion_client.post(different_endpoint, headers=headers(owner)).status_code == 200
+    assert suggestion_client.delete(f"/api/resumes/{original}", headers=headers(owner)).status_code == 204
+    reuploaded = confirmed_resume(suggestion_client, owner, "Synthetic Engineer Alpha")
+    reuploaded_endpoint = f"/api/profile-suggestions/resumes/{reuploaded}"
+    assert suggestion_client.get(reuploaded_endpoint + "/eligibility", headers=headers(owner)).json()["kind"] == "refresh"
+    assert suggestion_client.post(reuploaded_endpoint, headers=headers(owner)).status_code == 429
+
+    # Neither the reservation nor source classification belongs to another owner.
+    other_resume = confirmed_resume(suggestion_client, other, "Synthetic Engineer Alpha")
+    assert suggestion_client.get(f"/api/profile-suggestions/resumes/{other_resume}/eligibility", headers=headers(other)).json()["kind"] == "initial"
+    assert suggestion_client.get(reuploaded_endpoint + "/eligibility", headers=headers(other)).status_code == 404
+    assert db_session.scalar(select(ProfileGenerationRequest.id).where(
+        ProfileGenerationRequest.owner_id == owner.id,
+        ProfileGenerationRequest.kind == "initial",
+    ).limit(1)) is not None
+    from app.services import entitlements
+    reset = eligibility.json()["reset_at"]
+    monkeypatch.setattr(entitlements, "now", lambda: datetime.fromisoformat(reset.replace("Z", "+00:00")))
+    renewed = suggestion_client.get(reuploaded_endpoint + "/eligibility", headers=headers(owner)).json()
+    assert renewed["allowed"] and renewed["remaining_refreshes"] == 2
+
+
+def test_disabled_profile_plan_rejects_new_cv_without_ledger_entry(
+    suggestion_client, suggestion_users, db_session, monkeypatch,
+):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    settings = get_settings()
+    plans = dict(settings.JOBPILOT_PLAN_LIMITS)
+    plans["legacy"] = PlanLimits(total=20, profile=0)
+    plans["free"] = PlanLimits(total=20, profile=0)
+    monkeypatch.setattr(settings, "JOBPILOT_PLAN_LIMITS", plans)
+    resume_id = confirmed_resume(suggestion_client, owner, "Synthetic Disabled Profile")
+    endpoint = f"/api/profile-suggestions/resumes/{resume_id}"
+    assert not suggestion_client.get(endpoint + "/eligibility", headers=headers(owner)).json()["allowed"]
+    assert suggestion_client.post(endpoint, headers=headers(owner)).status_code == 403
+    assert not list(db_session.scalars(select(ProfileGenerationRequest).where(ProfileGenerationRequest.owner_id == owner.id)))
+
+
+def test_plan_admin_can_refresh_without_limit(suggestion_client, suggestion_users, db_session, monkeypatch):
+    owner, _ = suggestion_users
+    grant_consent(db_session, owner.id, "ai_profile_suggestions")
+    enable_fake(monkeypatch)
+    monkeypatch.setattr(get_settings(), "JOBPILOT_PLAN_ADMIN_EMAILS", [owner.email])
+    resume_id = confirmed_resume(suggestion_client, owner, "Synthetic Admin Engineer")
+    endpoint = f"/api/profile-suggestions/resumes/{resume_id}"
+    for _ in range(4):
+        assert suggestion_client.post(endpoint, headers=headers(owner)).status_code == 200
+    eligibility = suggestion_client.get(endpoint + "/eligibility", headers=headers(owner)).json()
+    assert eligibility["allowed"] and eligibility["kind"] == "unlimited"
+    assert eligibility["remaining_refreshes"] is None
 
 
 def test_openai_profile_async_worker_completes_and_releases_reservation(
