@@ -66,6 +66,30 @@ def test_public_first_page_and_detail_use_fixed_endpoints():
     assert all("authorization" not in request.headers for request in calls)
 
 
+def test_preview_recovers_source_text_from_described_search_by_exact_id():
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if request.url.path.endswith(ID):
+            return httpx.Response(200, json={"data": listing(description=None, has_description=True,
+                company_slug="icf")})
+        return httpx.Response(200, json={"data": [listing(id="b2345678-1234-4234-8234-123456789abc"), listing()]})
+    job = JobOpportunitiesProvider(httpx.MockTransport(handler)).preview(ID)
+    assert job.description == "Python required; Java preferred."
+    assert len(calls) == 2
+    assert calls[1].url.path == "/public/jobs"
+    assert dict(calls[1].url.params) == {"q":"Backend Engineer","limit":"50",
+        "has_description":"true","include_description":"true","company":"icf","country":"US","city":"New York"}
+
+
+def test_preview_never_uses_description_from_another_listing():
+    def handler(request):
+        if request.url.path.endswith(ID):
+            return httpx.Response(200, json={"data": listing(description=None, has_description=True)})
+        return httpx.Response(200, json={"data": [listing(id="b2345678-1234-4234-8234-123456789abc")]})
+    assert JobOpportunitiesProvider(httpx.MockTransport(handler)).preview(ID).description is None
+
+
 def test_one_listing_without_a_safe_application_link_does_not_hide_valid_results():
     def handler(request):
         return httpx.Response(200, json={"data": [listing(apply_url=None), listing()]})

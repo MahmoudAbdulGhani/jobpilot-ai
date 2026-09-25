@@ -1,6 +1,7 @@
 """Bounded, keyless Job Opportunities API adapter. No arbitrary provider URLs are fetched."""
 import ipaddress
 import json
+import re
 import uuid
 from urllib.parse import urlsplit
 
@@ -120,9 +121,29 @@ class JobOpportunitiesProvider:
         raw = self._get("/public/jobs/" + identifier)
         if not isinstance(raw, dict) or not isinstance(raw.get("data"), dict):
             raise DiscoveryError(502, "Worldwide source returned an invalid listing.")
-        job = parse_job(raw["data"])
+        detail = raw["data"]
+        job = parse_job(detail)
         if job.external_id != identifier:
             raise DiscoveryError(502, "Worldwide source returned a different listing.")
+        if not job.description and detail.get("has_description") is True:
+            # The public detail response can omit text despite has_description=true.
+            # Recover it from a narrow described-only search, matching the UUID.
+            params = {"q": job.title, "limit": 50, "has_description": "true", "include_description": "true"}
+            company_slug = detail.get("company_slug")
+            if isinstance(company_slug, str) and re.fullmatch(r"[a-z0-9-]{1,100}", company_slug):
+                params["company"] = company_slug
+            if job.workplace_country and re.fullmatch(r"[A-Za-z]{2}", job.workplace_country):
+                params["country"] = job.workplace_country
+            if job.workplace_city:
+                params["city"] = job.workplace_city
+            described = self._get("/public/jobs", params)
+            if not isinstance(described, dict) or not isinstance(described.get("data"), list) or len(described["data"]) > 50:
+                raise DiscoveryError(502, "Worldwide source returned invalid described results.")
+            for row in described["data"]:
+                if isinstance(row, dict) and row.get("id") == identifier:
+                    candidate = parse_job(row)
+                    if candidate.description:
+                        return candidate
         return job
 
 

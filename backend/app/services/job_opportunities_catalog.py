@@ -20,7 +20,7 @@ class JobOpportunitiesCatalog:
     def __init__(self, db, provider=None):
         self.db, self.provider = db, provider or JobOpportunitiesProvider()
 
-    def _guard(self):
+    def _guard(self, cost=1):
         db = self.db
         db.execute(insert(DiscoveryCache).values(source="joa-rate", payload={"count": 0}, next_attempt_at=now()).on_conflict_do_nothing())
         row = db.scalar(select(DiscoveryCache).where(DiscoveryCache.source == "joa-rate").with_for_update())
@@ -28,10 +28,10 @@ class JobOpportunitiesCatalog:
             row.next_attempt_at = now() + timedelta(minutes=1)
             row.payload = {"count": 0}
         count = row.payload.get("count", 0)
-        if count >= 35:
+        if count + cost > 35:
             db.commit()
             raise DiscoveryError(429, "Worldwide search is busy. Try again in a minute.")
-        row.payload = {"count": count + 1}
+        row.payload = {"count": count + cost}
         db.commit()  # Durable allowance claim before transport.
 
     def _cleanup(self):
@@ -39,7 +39,7 @@ class JobOpportunitiesCatalog:
             DiscoveryCache.source != "joa-rate", DiscoveryCache.next_attempt_at < now() - timedelta(hours=1)))
         self.db.commit()
 
-    def _cached(self, kind, identifier, fetch, ttl):
+    def _cached(self, kind, identifier, fetch, ttl, cost=1):
         db = self.db
         key = "joa-" + kind + ":" + hashlib.sha256(identifier.encode()).hexdigest()[:20]
         db.execute(insert(DiscoveryCache).values(source=key, payload={}, next_attempt_at=now()).on_conflict_do_nothing())
@@ -56,7 +56,7 @@ class JobOpportunitiesCatalog:
         row.payload = {}
         db.commit()
         try:
-            self._guard()
+            self._guard(cost)
             value = fetch()
         except DiscoveryError as error:
             row = db.get(DiscoveryCache, key, populate_existing=True)
@@ -83,5 +83,5 @@ class JobOpportunitiesCatalog:
         return jobs, len(jobs)
 
     def preview(self, external_id):
-        value = self._cached("ad", external_id, lambda: self.provider.preview(external_id).model_dump(mode="json"), timedelta(minutes=10))
+        value = self._cached("ad2", external_id, lambda: self.provider.preview(external_id).model_dump(mode="json"), timedelta(minutes=10), cost=2)
         return DiscoveryJob.model_validate(value)
