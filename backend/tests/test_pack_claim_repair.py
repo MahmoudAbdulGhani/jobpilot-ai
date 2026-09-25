@@ -6,7 +6,8 @@ import pytest
 from app.evaluation.fixtures import cases
 from app.services.ai_provider import DeterministicTestProvider
 from app.services.application_pack_service import (
-    PackError, UnsupportedPackClaim, repair_unsupported_claims, validate_generated,
+    PackError, UnsupportedPackClaim, include_confirmed_job_skills,
+    repair_unsupported_claims, validate_generated,
 )
 
 
@@ -60,3 +61,32 @@ def test_unsupported_claim_without_usable_source_still_fails():
     block["evidence"] = []
     with pytest.raises(PackError, match="missing source evidence"):
         validate_generated(repair_unsupported_claims(output, source), source)
+
+
+def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():
+    source, output = draft()
+    source["job"]["description"] = "Python and Kubernetes are required."
+    source["profile_facts"].append({"id": "fact-6", "path": "skills[2]", "value": "Kubernetes"})
+    enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
+    checked = validate_generated(enhanced, source)
+    for document in (checked.cv, checked.cover_letter):
+        matching = [block for block in document.blocks if "Kubernetes" in block.text]
+        assert matching
+        assert any(ref.fact_id == "fact-6" for block in matching for ref in block.evidence)
+    assert "included as sourced statements" in checked.review_notes[-1]
+
+
+def test_job_skill_matching_uses_word_boundaries():
+    source, output = draft()
+    source["job"]["description"] = "PostgreSQL required."
+    source["profile_facts"].append({"id": "fact-6", "path": "skills[2]", "value": "SQL"})
+    enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
+    assert not any("My skills include: SQL" == block.text for block in enhanced.cv.blocks)
+
+
+def test_unconfirmed_job_requirement_is_not_added_to_documents():
+    source, output = draft()
+    source["job"]["description"] = "Kubernetes is required."
+    enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
+    assert all("Kubernetes" not in block.text for document in (enhanced.cv, enhanced.cover_letter)
+               for block in document.blocks)

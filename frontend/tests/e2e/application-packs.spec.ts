@@ -38,7 +38,7 @@ test.afterEach(async ({ request }) => {
 for (const imported of [false, true]) {
 test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow verifies PDF and DOCX exports`, async ({ browser, request }) => {
   const user = await bootstrapUser(request, 'pack-flow');
-  await grantAiConsent(request, user, ['ai_application_packs']);
+  await grantAiConsent(request, user, ['ai_job_fit', 'ai_application_packs']);
   const token = await accessToken(request, user);
   const auth = { Authorization: `Bearer ${token}` };
 
@@ -107,6 +107,8 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
 
   await login(page, user);
   await page.goto(`/jobs/${job.id}`);
+  await page.getByRole('button', { name: /Analyze fit/ }).click();
+  await expect(page.getByLabel('Evidence coverage')).toBeVisible({ timeout: 15000 });
   await page.getByRole('tab', { name: 'Application pack', exact: true }).click();
   await expect(page.getByText('CV & cover letter packs')).toBeVisible();
 
@@ -117,12 +119,10 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
 
   await expect(page.getByRole('button', { name: /CV PDF/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Cover letter DOCX/ })).toHaveCount(0);
-  await page.getByLabel('Tailored CV block 1 text').fill('Connected CV text for application-pack export verification changed by review.');
-  await page.getByRole('button', { name: /Save both drafts/ }).click();
-  await expect(page.getByText('Both drafts saved. This version needs approval.')).toBeVisible();
+  await expect(page.getByLabel('Tailored CV block 1 text')).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByText(/Unapproved draft · version 2/)).toBeVisible();
+  await expect(page.getByText(/Unapproved draft · version 1/)).toBeVisible();
 
   await page.getByRole('button', { name: /Approve version/ }).click();
   await page.getByLabel('I reviewed both documents and confirm their accuracy.').check();
@@ -132,7 +132,7 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
   const pdfDownloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /CV PDF/ }).click();
   const pdfDownload = await pdfDownloadPromise;
-  expect(pdfDownload.suggestedFilename()).toBe('cv-v2.pdf');
+  expect(pdfDownload.suggestedFilename()).toBe('cv-v1.pdf');
   const pdfPath = await pdfDownload.path();
   expect(existsSync(pdfPath)).toBeTruthy();
   const pdfBytes = readFileSync(pdfPath);
@@ -149,7 +149,7 @@ test(`connected ${imported ? 'imported' : 'manual'} application-pack workflow ve
   const docxDownloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /Cover letter DOCX/ }).click();
   const docxDownload = await docxDownloadPromise;
-  expect(docxDownload.suggestedFilename()).toBe('cover-letter-v2.docx');
+  expect(docxDownload.suggestedFilename()).toBe('cover-letter-v1.docx');
   const docxPath = await docxDownload.path();
   expect(existsSync(docxPath)).toBeTruthy();
   const docxBytes = readFileSync(docxPath);

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -273,6 +274,37 @@ def repair_unsupported_claims(output, snapshot):
     return PackProviderOutput.model_validate(payload)
 
 
+def include_confirmed_job_skills(output, snapshot):
+    """Ensure job-relevant saved skills appear in both reviewed documents."""
+    payload = output.model_dump(mode="json")
+    job_text = (snapshot.get("job", {}).get("description") or "").casefold()
+    def mentions(text, skill):
+        return bool(re.search(r"(?<![\w+#.-])" + re.escape(skill.casefold()) + r"(?![\w+#.-])", text))
+    relevant = [fact for fact in snapshot["profile_facts"]
+                if fact["path"].startswith("skills[") and mentions(job_text, fact["value"])]
+    added = 0
+    for name in ("cv", "cover_letter"):
+        blocks = payload[name]["blocks"]
+        body = " ".join(block["text"].casefold() for block in blocks if block["kind"] != "heading")
+        missing = [fact for fact in relevant if not mentions(body, fact["value"])]
+        for offset in range(0, len(missing), 10):
+            group = missing[offset:offset + 10]
+            if len(blocks) >= 100:
+                break
+            block_id = f"confirmed-skills-{offset // 10 + 1}"
+            existing_ids = {block["id"] for block in blocks}
+            while block_id in existing_ids:
+                block_id += "-1"
+            blocks.append({"id": block_id, "kind": "paragraph",
+                           "text": "My skills include: " + ", ".join(fact["value"] for fact in group),
+                           "evidence": [{"fact_id": fact["id"], "cv_quote": None} for fact in group]})
+            added += 1
+    if added:
+        payload["review_notes"] = [*payload["review_notes"][:19],
+            "Job-relevant saved profile skills omitted by the AI were included as sourced statements. Confirm each skill before approval."]
+    return PackProviderOutput.model_validate(payload)
+
+
 def store_generated(document):
     return {"blocks": [{**block.model_dump(mode="json"), "origin": "ai"} for block in document.blocks]}
 
@@ -335,6 +367,7 @@ def generate(db, owner_id, job_id, body, settings):
             output = validate_generated(result, snapshot)
         except UnsupportedPackClaim:
             output = validate_generated(repair_unsupported_claims(result, snapshot), snapshot)
+        output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
         failure = None
     except PackError as error:
         output, failure = None, error.message
