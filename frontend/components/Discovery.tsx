@@ -159,10 +159,10 @@ export function Discovery() {
       <PossibleDuplicates job={preview.job} />
       <h3 className="mt-4 font-serif text-xl leading-snug text-[var(--ink)]">Description</h3>
       <p className="preserve-lines">{preview.job.description || 'No plain-text description supplied. Check the source before importing.'}</p>
-      {!preview.job.description&&<p role="alert">AI tailoring needs a job description. Add or confirm one in the saved job before generating a pack.</p>}
+      {!preview.job.description&&<p role="alert">The source has no advert text for this listing, so it cannot be imported for a tailored pack. Choose another job with a description.</p>}
       <p className="mt-3 text-sm text-muted-foreground">This saves the previewed snapshot. It will not refresh automatically or overwrite your edits. Preview expires in 15 minutes. Dates and availability should be checked at the source.</p>
       <div className="mt-4 flex flex-wrap items-center gap-4">
-        {preview.job.existing_job_id ? <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={`/jobs/${preview.job.existing_job_id}`}>Already saved — open existing job</Link> : <Button disabled={!!busy} onClick={importJob}>Import this job into saved jobs</Button>}
+        {preview.job.existing_job_id ? <Link className="text-[var(--forest)] underline underline-offset-4 hover:text-[var(--forest-hover)]" href={`/jobs/${preview.job.existing_job_id}`}>Already saved — open existing job</Link> : <Button disabled={!!busy || !preview.job.description} onClick={importJob}>Import this job into saved jobs</Button>}
         <Button variant="ghost" disabled={!!busy} onClick={() => setPreview(null)}>Close preview</Button>
       </div>
     </section>}

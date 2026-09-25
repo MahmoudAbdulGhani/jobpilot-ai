@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -6,6 +7,7 @@ from app.api.routes.jobs import CurrentUser, Database
 from app.core.config import get_settings
 from app.schemas.discovery import (DiscoverySearch, DiscoveryPreview, DiscoveryImport,
     DiscoveryImported, ExternalId)
+from app.schemas.jobs import SavedJobResponse
 from app.services import discovery_provider, discovery_service, discovery_sources
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -72,5 +74,15 @@ def import_job(body: DiscoveryImport, db: Database, current_user: CurrentUser,
         job, duplicate = discovery_service.import_preview(db, current_user.id, body.preview_token, settings)
         response.status_code = 200 if duplicate else 201
         return DiscoveryImported(job=job, already_saved=duplicate)
+    except discovery_provider.DiscoveryError as error:
+        raise HTTPException(error.status, error.message) from None
+
+
+@router.post("/saved/{job_id}/refresh-description", response_model=SavedJobResponse)
+def refresh_description(job_id: uuid.UUID, db: Database, current_user: CurrentUser,
+    response: Response, settings=Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return discovery_service.refresh_missing_description(db, current_user.id, job_id, settings)
     except discovery_provider.DiscoveryError as error:
         raise HTTPException(error.status, error.message) from None

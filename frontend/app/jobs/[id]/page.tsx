@@ -32,14 +32,25 @@ export default function Detail() {
   const [notFound, setNotFound] = useState(false);
   const [reload, setReload] = useState(0);
   const [actionError, setActionError] = useState('');
+  const [sourceWarning, setSourceWarning] = useState('');
   const [tab, setTab] = useState<Tab>('overview');
   const [modal, setModal] = useState<'edit' | 'notes' | 'delete' | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
-    setJob(null); setError(''); setActionError('');
-    api<Job>(`/jobs/${id}`).then(value => { if (active) setJob(value); }).catch(caught => { if (active) { setNotFound(caught.status === 404 || caught.status === 422); setError(caught.message); } });
+    setJob(null); setError(''); setActionError(''); setSourceWarning('');
+    api<Job>(`/jobs/${id}`).then(async value => {
+      if (!active) return;
+      if (value.source_provider && !value.description?.trim()) {
+        try {
+          value = await api<Job>(`/discovery/saved/${id}/refresh-description`, { method: 'POST' });
+        } catch (caught) {
+          if (active) setSourceWarning(caught instanceof Error ? caught.message : 'The source description could not be loaded.');
+        }
+      }
+      if (active) setJob(value);
+    }).catch(caught => { if (active) { setNotFound(caught.status === 404 || caught.status === 422); setError(caught.message); } });
     return () => { active = false; };
   }, [id, reload]);
 
@@ -92,7 +103,7 @@ export default function Detail() {
       <div className="job-reading">
         <div className="job-tabs" role="tablist" aria-label="Job workspace">{TABS.map(({ id: key, label, icon: Icon }, index) => <button key={key} id={`job-tab-${key}`} role="tab" type="button" aria-selected={tab === key} aria-controls={`job-panel-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => changeTab(key)} onKeyDown={event => tabKey(event, index)}><Icon size={17} aria-hidden="true" />{label}</button>)}</div>
         <div className="job-tab-panel" id="job-panel-overview" role="tabpanel" aria-labelledby="job-tab-overview" hidden={tab !== 'overview'} tabIndex={0}>
-          <section className="description-section workflow-card"><div className="workflow-section-heading"><div><p className="eyebrow">The opportunity</p><h2>About the role</h2></div><FileText size={21} aria-hidden="true" /></div><Description text={job.description} />{job.source_provider&&<p><button className="primary-button" onClick={()=>changeTab('materials')}>Create tailored CV and cover letter</button></p>}{applyUrl&&<p><a className="text-button" href={applyUrl} target="_blank" rel="noopener noreferrer">Apply on employer site <ArrowSquareOut size={14}/></a></p>}</section>
+          <section className="description-section workflow-card"><div className="workflow-section-heading"><div><p className="eyebrow">The opportunity</p><h2>About the role</h2></div><FileText size={21} aria-hidden="true" /></div><Description text={job.description} />{sourceWarning&&<p role="alert">{sourceWarning}</p>}{job.source_provider&&job.description&&<p><button className="primary-button" onClick={()=>changeTab('materials')}>Create tailored CV and cover letter</button></p>}{applyUrl&&<p><a className="text-button" href={applyUrl} target="_blank" rel="noopener noreferrer">Apply on employer site <ArrowSquareOut size={14}/></a></p>}</section>
           <JobFitAnalysis job={job} />
         </div>
         <div className="job-tab-panel" id="job-panel-materials" role="tabpanel" aria-labelledby="job-tab-materials" hidden={tab !== 'materials'} tabIndex={0}><ApplicationPacks job={job} /><p>After approving a pack, download its CV and cover letter. Then <button className="text-button" onClick={()=>changeTab('email')}>review an email application</button>{applyUrl&&<> or <a className="text-button" href={applyUrl} target="_blank" rel="noopener noreferrer">apply on the employer site <ArrowSquareOut size={14}/></a></>}.</p><AtsReport job={job} /></div>

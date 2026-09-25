@@ -56,6 +56,8 @@ def import_preview(db, owner_id, token, settings):
     existing = existing_job(db, owner_id, source.external_id, source.source)
     if existing:
         return existing, True
+    if not (source.description or "").strip():
+        raise DiscoveryError(422, "This source has no job description. Choose a listing with advert text.")
     job = SavedJob(owner_id=owner_id, **values.model_dump(mode="json"),
         source_provider=source.source, source_external_id=source.external_id,
         source_snapshot=source.model_dump(mode="json"), imported_at=datetime.now(timezone.utc))
@@ -72,3 +74,30 @@ def import_preview(db, owner_id, token, settings):
     db.commit()
     db.refresh(job)
     return job, False
+
+
+def refresh_missing_description(db, owner_id, job_id, settings):
+    """Fill an old import from its fixed public source, preserving saved edits."""
+    from app.services.discovery_provider import provider_for
+
+    job = db.scalar(select(SavedJob).where(SavedJob.id == job_id, SavedJob.owner_id == owner_id))
+    if job is None:
+        raise DiscoveryError(404, "Job not found.")
+    if (job.description or "").strip():
+        return job
+    if not job.source_provider or not job.source_external_id:
+        raise DiscoveryError(409, "This saved job has no connected public source.")
+    fresh = provider_for(settings, job.source_provider, db).preview(job.source_external_id)
+    if fresh.source != job.source_provider or fresh.external_id != job.source_external_id:
+        raise DiscoveryError(502, "The source returned a different listing.")
+    if not (fresh.description or "").strip():
+        raise DiscoveryError(409, "The source does not provide a description for this listing. Choose another described job.")
+    locked = db.scalar(select(SavedJob).where(SavedJob.id == job_id, SavedJob.owner_id == owner_id).with_for_update())
+    if locked is None:
+        raise DiscoveryError(404, "Job not found.")
+    if not (locked.description or "").strip():
+        locked.description = fresh.description
+        locked.source_snapshot = fresh.model_dump(mode="json")
+        db.commit()
+        db.refresh(locked)
+    return locked

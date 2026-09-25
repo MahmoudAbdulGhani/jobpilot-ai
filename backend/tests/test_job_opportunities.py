@@ -1,10 +1,13 @@
 """Worldwide source contract checks. Every transport is mocked."""
 from datetime import timedelta
 from types import SimpleNamespace
+import uuid
 
 import httpx
+import jwt
 import pytest
 
+from app.services import discovery_provider, discovery_service
 from app.services.discovery_provider import DiscoveryError, JobTechProvider
 from app.services.discovery_sources import SOURCES, validate
 from app.services.job_opportunities_provider import JobOpportunitiesProvider, parse_job, safe_link
@@ -146,3 +149,56 @@ def test_shared_query_cache_and_durable_rate_claim_without_network():
     rate.payload = {"count":35}
     with pytest.raises(DiscoveryError) as caught: catalog.search(**filters)
     assert caught.value.status == 429 and stub.calls == 1
+
+
+def test_import_refuses_source_snapshot_without_description():
+    owner = uuid.uuid4()
+    settings = SimpleNamespace(SECRET_KEY="test-only-secret-key-with-at-least-32-chars", E2E_TEST_MODE=False, POSTGRES_DB="main", POSTGRES_TEST_DB="test")
+    source = parse_job(listing(description=None))
+    token = jwt.encode({"sub": str(owner), "type": "discovery-preview", "job": source.model_dump(mode="json"),
+        "iss": "jobpilot-discovery", "aud": "reviewed-job-import", "exp": discovery_service.datetime.now(discovery_service.timezone.utc) + timedelta(minutes=5)},
+        settings.SECRET_KEY, algorithm="HS256")
+    class FakeDB:
+        def scalar(self, statement): return None
+    with pytest.raises(DiscoveryError, match="no job description") as caught:
+        discovery_service.import_preview(FakeDB(), owner, token, settings)
+    assert caught.value.status == 422
+
+
+def test_old_import_fetches_missing_description_without_overwriting_saved_edits(monkeypatch):
+    owner, identifier = uuid.uuid4(), uuid.uuid4()
+    job = SimpleNamespace(id=identifier, owner_id=owner, title="My edited title", notes="My notes",
+        description=None, source_provider="jobopportunities", source_external_id=ID, source_snapshot={"description": None})
+    class FakeDB:
+        commits = 0
+        def scalar(self, statement): return job
+        def commit(self): self.commits += 1
+        def refresh(self, value): pass
+    class FakeSource:
+        calls = 0
+        def preview(self, external_id):
+            self.calls += 1
+            assert external_id == ID
+            return parse_job(listing())
+    db, source = FakeDB(), FakeSource()
+    monkeypatch.setattr(discovery_provider, "provider_for", lambda settings, name, session: source)
+    refreshed = discovery_service.refresh_missing_description(db, owner, identifier, object())
+    assert refreshed.description == "Python required; Java preferred."
+    assert refreshed.source_snapshot["description"] == refreshed.description
+    assert refreshed.title == "My edited title" and refreshed.notes == "My notes"
+    assert db.commits == 1 and source.calls == 1
+    assert discovery_service.refresh_missing_description(db, owner, identifier, object()) is refreshed
+    assert source.calls == 1
+
+
+def test_old_import_reports_when_public_source_has_no_description(monkeypatch):
+    owner, identifier = uuid.uuid4(), uuid.uuid4()
+    job = SimpleNamespace(id=identifier, owner_id=owner, description=None,
+        source_provider="jobopportunities", source_external_id=ID)
+    class FakeDB:
+        def scalar(self, statement): return job
+    monkeypatch.setattr(discovery_provider, "provider_for", lambda settings, name, session:
+        SimpleNamespace(preview=lambda external_id: parse_job(listing(description=None))))
+    with pytest.raises(DiscoveryError, match="does not provide a description") as caught:
+        discovery_service.refresh_missing_description(FakeDB(), owner, identifier, object())
+    assert caught.value.status == 409

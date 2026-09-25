@@ -72,6 +72,15 @@ describe('reviewed discovery',()=>{
     expect(screen.getByRole('link',{name:'View employer posting'}).getAttribute('href')).toBe(item.source_url);
     expect(screen.queryByRole('button',{name:'Next results'})).toBeNull();
   });
+  it('does not offer a textless source listing for import',async()=>{
+    item={...job,source:'jobopportunities',description:null};
+    render(<Discovery/>);
+    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'jobopportunities'}});
+    fireEvent.click(screen.getByRole('button',{name:'Search Job Opportunities API'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Preview job'}));
+    expect(await screen.findByText(/source has no advert text for this listing/)).not.toBeNull();
+    expect(screen.getByRole('button',{name:'Import this job into saved jobs'}).hasAttribute('disabled')).toBe(true);
+  });
   it('surfaces safe errors and restores the search button',async()=>{
     apiMock.mockImplementation((path:string)=>path.startsWith('/discovery?')?Promise.reject(new Error('Source unavailable')):path==='/discovery/sources'?Promise.resolve({sources}):Promise.resolve({cadence:'off'}));
     render(<Discovery/>);fireEvent.click(screen.getByRole('button',{name:'Search JobTech JobSearch'}));
