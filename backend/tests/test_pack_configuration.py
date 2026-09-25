@@ -33,7 +33,7 @@ def test_pack_settings_reach_wire_without_changing_profile_fit_configuration(mon
         assert str(request.url) == "https://api.openai.com/v1/responses"
         return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
     def client(**kw):
-        assert kw["max_retries"] == 0 and kw["timeout"] == 60
+        assert kw["max_retries"] == 0 and kw["timeout"] == 90
         result = OpenAI(**kw, http_client=httpx.Client(transport=httpx.MockTransport(transport)))
         clients.append(result)
         return result
@@ -48,7 +48,7 @@ def test_pack_settings_reach_wire_without_changing_profile_fit_configuration(mon
         assert len(requests) == 1
         wire = requests[0]
         assert wire["reasoning"] == {"effort": "minimal"}
-        assert wire["max_output_tokens"] == 4000
+        assert wire["max_output_tokens"] == 10000
         assert wire["text"]["format"]["strict"] is True
         assert wire["model"] == "gpt-5-mini" and wire["store"] is False
         assert provider._profile_request_options() == {}

@@ -32,7 +32,7 @@ ProviderFailureCategory = Literal[
     "structured_output_invalid", "request_contract_invalid",
     "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
     "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
-    "invalid_preference_value", "response_contract_invalid",
+    "invalid_preference_value", "response_contract_invalid", "output_limit",
 ]
 SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
     "authentication", "billing", "rate_limit", "model_unavailable",
@@ -40,7 +40,7 @@ SAFE_PROVIDER_FAILURE_CATEGORIES = frozenset({
     "structured_output_invalid", "request_contract_invalid",
     "invalid_field_value", "invalid_evidence_reference", "unsupported_claim",
     "invalid_experience_shape", "invalid_education_shape", "invalid_salary_shape",
-    "invalid_preference_value", "response_contract_invalid",
+    "invalid_preference_value", "response_contract_invalid", "output_limit",
 })
 # Closed set of field identifiers that may accompany an invalid_field_value
 # failure. Field labels are schema constants, never generated values.
@@ -899,14 +899,19 @@ class OpenAIResponsesProvider:
                 **self._pack_request_options(),
             )
             if getattr(response, "status", None) != "completed":
-                raise ProviderFailure("The AI response was incomplete.")
+                details = getattr(response, "incomplete_details", None)
+                reason = getattr(details, "reason", None)
+                raise ProviderFailure("The AI response was incomplete.",
+                    category="output_limit" if reason == "max_output_tokens" else "structured_output_invalid")
             if response.output_parsed is None:
-                raise ProviderFailure("The AI provider refused or returned no structured result.")
+                raise ProviderFailure("The AI provider refused or returned no structured result.", category="structured_output_invalid")
             return PackProviderOutput.model_validate(response.output_parsed)
         except ProviderFailure:
             raise
         except Exception as error:
-            raise ProviderFailure("The AI provider is currently unavailable. Try again later.") from error
+            from openai import LengthFinishReasonError
+            category = "output_limit" if isinstance(error, LengthFinishReasonError) else classify_provider_failure(error)
+            raise ProviderFailure("The AI provider is currently unavailable. Try again later.", category=category) from None
 
     def improve_pack(self, revision: dict) -> PackProviderOutput:
         try:
@@ -935,14 +940,19 @@ class OpenAIResponsesProvider:
                 **self._pack_request_options(),
             )
             if getattr(response, "status", None) != "completed":
-                raise ProviderFailure("The AI response was incomplete.")
+                details = getattr(response, "incomplete_details", None)
+                reason = getattr(details, "reason", None)
+                raise ProviderFailure("The AI response was incomplete.",
+                    category="output_limit" if reason == "max_output_tokens" else "structured_output_invalid")
             if response.output_parsed is None:
-                raise ProviderFailure("The AI provider refused or returned no structured result.")
+                raise ProviderFailure("The AI provider refused or returned no structured result.", category="structured_output_invalid")
             return PackProviderOutput.model_validate(response.output_parsed)
         except ProviderFailure:
             raise
         except Exception as error:
-            raise ProviderFailure("The AI provider is currently unavailable. Try again later.") from error
+            from openai import LengthFinishReasonError
+            category = "output_limit" if isinstance(error, LengthFinishReasonError) else classify_provider_failure(error)
+            raise ProviderFailure("The AI provider is currently unavailable. Try again later.", category=category) from None
 
     def answer(self, question: str, citations: list[dict]) -> ProviderQaOutput:
         payload = {"question": question[:500], "citations": citations}

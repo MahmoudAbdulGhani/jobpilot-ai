@@ -35,6 +35,22 @@ class PackError(Exception):
         super().__init__(message)
 
 
+def pack_failure_message(error: ProviderFailure) -> str:
+    """Only provider failure categories, never upstream text, reach saved packs."""
+    messages = {
+        "output_limit": "The AI response reached the pack output limit before both documents were complete. No draft was saved.",
+        "timeout": "The AI provider timed out before both documents were complete. No draft was saved.",
+        "rate_limit": "The AI provider is rate limited. Try again later; no draft was saved.",
+        "billing": "The AI provider account cannot process this request. Check provider billing settings.",
+        "authentication": "The AI provider credential was rejected. Check the deployment secret.",
+        "model_unavailable": "The configured AI model is unavailable for application packs.",
+        "invalid_request": "The AI provider rejected the pack request. No draft was saved.",
+        "request_contract_invalid": "The AI provider rejected the pack response schema. No draft was saved.",
+        "structured_output_invalid": "The AI provider did not return a complete structured pack. No draft was saved.",
+    }
+    return messages.get(error.category, "The AI provider could not produce a complete supported draft. No draft was saved.")
+
+
 def pack_provider_configuration(settings):
     # Reuse enablement, credential and guarded-test gates; never fall back to
     # the profile/fit provider when pack credentials are absent.
@@ -273,6 +289,8 @@ def generate(db, owner_id, job_id, body, settings):
         failure = None
     except PackError as error:
         output, failure = None, error.message
+    except ProviderFailure as error:
+        output, failure = None, pack_failure_message(error)
     except Exception:
         output, failure = None, "The AI provider could not produce a complete supported draft. Retry generation."
     try:
@@ -428,6 +446,8 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
         failure = None
     except PackError as error:
         output, failure = None, error.message
+    except ProviderFailure as error:
+        output, failure = None, pack_failure_message(error)
     except Exception:
         output, failure = None, "The AI provider could not produce a supported improved draft. Retry."
     ai_usage.release(db, owner_id, token)

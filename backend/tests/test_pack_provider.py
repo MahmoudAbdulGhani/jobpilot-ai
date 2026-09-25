@@ -10,6 +10,7 @@ from app.services.ai_provider import (
     OpenAIResponsesProvider,
     ProviderFailure,
 )
+from app.services.application_pack_service import pack_failure_message
 
 
 @pytest.fixture()
@@ -82,6 +83,24 @@ def test_pack_refusal_incomplete_and_malformed_responses_are_failures(source, st
     provider = provider_for_response(SimpleNamespace(status=status, output_parsed=parsed))
     with pytest.raises(ProviderFailure, match=message):
         provider.create_pack(source)
+
+
+def test_pack_output_limit_is_classified_without_exposing_provider_content(source):
+    response = SimpleNamespace(status="incomplete", output_parsed=None,
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output_text="private CV and job content")
+    with pytest.raises(ProviderFailure) as caught:
+        provider_for_response(response).create_pack(source)
+    assert caught.value.category == "output_limit"
+    assert "private" not in pack_failure_message(caught.value)
+    assert "output limit" in pack_failure_message(caught.value)
+
+
+@pytest.mark.parametrize("category", ["timeout", "billing", "authentication", "rate_limit",
+    "structured_output_invalid", "request_contract_invalid", "unknown"])
+def test_pack_failure_messages_use_only_safe_categories(category):
+    message = pack_failure_message(ProviderFailure("private provider body and CV text", category=category))
+    assert "private" not in message and "CV text" not in message
 
 
 def test_pack_transport_error_does_not_expose_upstream_secrets(source):

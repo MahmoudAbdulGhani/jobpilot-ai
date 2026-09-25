@@ -153,8 +153,8 @@ class Settings(BaseSettings):
     JOBPILOT_PACK_PROVIDER: Literal["openai"] = "openai"
     JOBPILOT_PACK_MODEL: str = "gpt-5-mini"
     JOBPILOT_PACK_REASONING_EFFORT: Literal["minimal", "low", "medium", "high"] = "minimal"
-    JOBPILOT_PACK_MAX_OUTPUT_TOKENS: int = 4_000
-    JOBPILOT_PACK_TIMEOUT_SECONDS: int = 60
+    JOBPILOT_PACK_MAX_OUTPUT_TOKENS: int = 10_000
+    JOBPILOT_PACK_TIMEOUT_SECONDS: int = 90
 
     # Interview settings are independent of profile, fit and pack generation.
     JOBPILOT_INTERVIEW_PROVIDER: Literal["openai"] = "openai"
