@@ -1,0 +1,337 @@
+.lp-workflow{--workflow-green:#173f35;--workflow-paper:#f7f7ef;--workflow-muted:#63746a;position:relative;padding:48px 56px 78px;background:var(--workflow-green);color:#f7f7ef;scroll-margin-top:80px;overflow:clip}
+.lp-workflow .lp-workflow-inner{max-width:1240px;margin:0 auto}
+.lp-workflow .lp-workflow-section-label{display:flex;justify-content:space-between;gap:20px;padding-bottom:24px;border-bottom:1px solid #ffffff24;font:10px/1.5 var(--sans,sans-serif);letter-spacing:.15em;color:#b9ccc0}
+.lp-workflow .lp-workflow-pin{padding-top:64px;padding-bottom:20px}
+.lp-workflow .lp-workflow-shell{display:grid;grid-template-columns:minmax(250px,.77fr) minmax(0,1.7fr);gap:48px;align-items:start}
+.lp-workflow .lp-workflow-kicker{margin:0 0 20px;font-size:10px;letter-spacing:.13em;color:#b7d1bf}
+.lp-workflow .lp-workflow-copy h2{margin:0;font-family:var(--serif,Georgia,serif);font-size:clamp(42px,4.1vw,58px);font-weight:400;line-height:1.07;letter-spacing:-.045em;color:#fbfaef}
+.lp-workflow .lp-workflow-copy h2 em{font-weight:400;color:#bed4aa}
+.lp-workflow .lp-workflow-intro{max-width:275px;margin:22px 0 0;color:#c5d3c7;font-size:14px;line-height:1.7}
+.lp-workflow .lp-workflow-captions{display:none}
+.lp-workflow .lp-workflow-control-note{display:flex;align-items:center;gap:9px;margin:26px 0 0;font-size:11px;color:#c1d2c3}
+.lp-workflow .lp-workflow-control-note>span{width:5px;height:5px;border-radius:50%;background:#b7d29a}
+.lp-workflow .lp-workflow-stage{min-width:0;background:var(--workflow-paper);color:#233d32;border:1px solid #e0e5d6;border-radius:7px;box-shadow:0 22px 55px #05231a26;overflow:hidden}
+.lp-workflow .lp-workflow-stage-top{height:60px;padding:0 23px;border-bottom:1px solid #dce2d5;display:flex;align-items:center;justify-content:space-between;gap:15px;font-size:11px}
+.lp-workflow .lp-workflow-stage-brand,.lp-workflow .lp-workflow-stage-owner{display:flex;align-items:center;gap:9px;white-space:nowrap}
+.lp-workflow .lp-workflow-stage-brand{font-weight:600}
+.lp-workflow .lp-workflow-brand-mark{font-family:var(--serif,Georgia,serif);font-size:24px;font-style:italic}
+.lp-workflow .lp-workflow-stage-owner{color:#69796d;font-size:10px}
+.lp-workflow .lp-workflow-mini-avatar{display:inline-grid;place-items:center;width:23px;height:23px;border:1px solid #d5dccd;border-radius:50%;color:#486049;background:#e5eadc;font-size:8px;font-weight:600;flex-shrink:0}
+.lp-workflow .lp-workflow-stage-bottom{display:flex;justify-content:space-between;gap:12px;padding:15px 22px;border-top:1px solid #dce2d5;font-size:10px;color:#647263}
+.lp-workflow .lp-workflow-stage-bottom>span:first-child{display:flex;align-items:center;gap:7px}
+.lp-workflow .lp-workflow-status-dot{display:block;flex-shrink:0;width:5px;height:5px;border-radius:50%;background:#6b8b48}
+.lp-workflow .lp-workflow-scenes{position:relative}
+.lp-workflow .lp-workflow-scene{padding:28px;border-bottom:1px solid #dce2d5}
+.lp-workflow .lp-workflow-scene:last-child{border-bottom:0}
+.lp-workflow .lp-workflow-scene-heading{margin-bottom:26px}
+.lp-workflow .lp-workflow-scene-heading>span{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#697762}
+.lp-workflow .lp-workflow-scene-heading h3{margin:12px 0 10px;font:400 30px/1.13 var(--serif,Georgia,serif);letter-spacing:-.02em}
+.lp-workflow .lp-workflow-scene-heading>p{max-width:450px;color:#667262;font-size:13px;line-height:1.6;margin:0}
+.lp-workflow .lp-workflow-scene-grid{position:relative;isolation:isolate;display:grid;grid-template-columns:1.13fr 1fr;gap:32px;align-items:center;min-height:332px}
+.lp-workflow .lp-workflow-connector{position:absolute;inset:0;width:100%;height:100%;z-index:-1;overflow:visible;pointer-events:none}
+.lp-workflow .lp-workflow-connector-base{fill:none;stroke:#d7decc;stroke-width:1;stroke-dasharray:3 5}
+.lp-workflow .lp-workflow-connector-draw{fill:none;stroke:#738852;stroke-width:1.2}
+.lp-workflow .lp-workflow-connector-dot{fill:#edf0df;stroke:#738852;stroke-width:1}
+.lp-workflow .lp-workflow-document{padding:20px 22px 16px;background:#fffffb;border:1px solid #d9dfd1;box-shadow:0 10px 20px #324b3510;transform:rotate(-2deg)}
+.lp-workflow .lp-workflow-document-top{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.04em;color:#6e7b67}
+.lp-workflow .lp-workflow-document-top>span:last-child{margin-left:auto}
+.lp-workflow .lp-workflow-document h4,.lp-workflow .lp-workflow-profile h4{margin:23px 0 0;font:400 30px/1.1 var(--serif,Georgia,serif);letter-spacing:-.04em}
+.lp-workflow .lp-workflow-document-role{font-size:11px;color:#75816c;margin:4px 0 0}
+.lp-workflow .lp-workflow-rule{height:1px;background:#dce2d3;margin:20px 0}
+.lp-workflow .lp-workflow-eyebrow{display:flex;align-items:center;gap:6px;margin:0 0 11px;color:#6d7d68;font-size:10px;letter-spacing:.07em;line-height:1.5;font-weight:500}
+.lp-workflow .lp-workflow-document h5{font:500 12px/1.4 var(--sans,sans-serif);margin:0 0 9px}
+.lp-workflow .lp-workflow-document-text{font-size:11px;line-height:1.8;color:#61715e;margin:0}
+.lp-workflow .lp-workflow-evidence{background:linear-gradient(#e1e9b9,#e1e9b9) no-repeat 0 50%;background-size:100% 100%;color:#344329;padding:1px 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.lp-workflow .lp-workflow-text-lines{display:grid;gap:6px;margin:14px 0 23px}
+.lp-workflow .lp-workflow-text-lines i{height:3px;background:#ebeee5;width:100%}.lp-workflow .lp-workflow-text-lines i:nth-child(2){width:94%}.lp-workflow .lp-workflow-text-lines i:nth-child(3){width:67%}
+.lp-workflow .lp-workflow-document-bottom{display:flex;gap:7px;align-items:center;font-size:10px;color:#707d65}
+.lp-workflow .lp-workflow-insight{padding:22px 0 22px 6px}
+.lp-workflow .lp-workflow-insight-icon{display:grid;place-items:center;height:39px;width:39px;border:1px solid #cad5bb;border-radius:50%;background:#eef1e2;color:#687e48;margin:0 0 19px}
+.lp-workflow .lp-workflow-insight h4,.lp-workflow .lp-workflow-preferences h4{font:400 30px/1.08 var(--serif,Georgia,serif);letter-spacing:-.03em;margin:0 0 22px}
+.lp-workflow .lp-workflow-fact{display:flex;gap:8px;align-items:center;font-size:11px;line-height:1.6;color:#486244;margin:10px 0}
+.lp-workflow .lp-workflow-fact svg{flex-shrink:0;color:#6a884c}
+.lp-workflow .lp-workflow-small-note{display:block;margin:22px 0 0;font-size:10px;line-height:1.6;color:#6f7b65}
+.lp-workflow .lp-workflow-profile{padding:22px 20px;background:#fffef8;border:1px solid #d7dece;box-shadow:0 9px 20px #324b350b}
+.lp-workflow .lp-workflow-profile-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.lp-workflow .lp-workflow-avatar{display:grid;place-items:center;width:41px;height:41px;border:1px solid #cad7b5;background:#e6edd5;color:#506742;border-radius:50%;font:400 15px var(--serif,Georgia,serif)}
+.lp-workflow .lp-workflow-status{display:flex;align-items:center;gap:5px;color:#697b5d;font-size:10px}
+.lp-workflow .lp-workflow-status>span{width:4px;height:4px;border-radius:50%;background:#6a8b48}
+.lp-workflow .lp-workflow-profile h4{margin-top:17px;font-size:27px}
+.lp-workflow .lp-workflow-profile-headline{font-size:12px;line-height:1.5;margin:7px 0 13px}
+.lp-workflow .lp-workflow-profile .lp-workflow-rule{margin:17px 0}
+.lp-workflow .lp-workflow-source{display:flex;align-items:center;gap:6px;font-size:9px;color:#69785d;margin-top:14px;line-height:1.5}
+.lp-workflow .lp-workflow-profile-details{display:grid;gap:17px}
+.lp-workflow .lp-workflow-detail{padding:0 0 17px;border-bottom:1px solid #d9e0cf}
+.lp-workflow .lp-workflow-detail h5{font-size:12px;font-weight:500;margin:0 0 3px;line-height:1.5}
+.lp-workflow .lp-workflow-detail>p:last-child{font-size:10px;line-height:1.6;margin:0;color:#6c785f}
+.lp-workflow .lp-workflow-tags{display:flex;flex-wrap:wrap;gap:5px}
+.lp-workflow .lp-workflow-tag{display:inline-flex;align-items:center;padding:5px 7px;background:#e9eedc;border:1px solid #d4dec2;font-size:10px;line-height:1.1;color:#4b613e;border-radius:3px;white-space:nowrap}
+.lp-workflow .lp-workflow-tag.is-quiet{background:#f4f5ec;color:#687660;border-color:#dfe4d4}
+.lp-workflow .lp-workflow-edit-note{display:flex;align-items:center;gap:6px;font-size:10px;color:#6d7b60}
+.lp-workflow .lp-workflow-opportunity-grid{grid-template-columns:.84fr 1.25fr;gap:26px}
+.lp-workflow .lp-workflow-preferences{padding:8px 0}
+.lp-workflow .lp-workflow-preferences h4{font-size:30px;margin-bottom:20px}
+.lp-workflow .lp-workflow-preferences dl{margin:0}
+.lp-workflow .lp-workflow-preferences dl>div{padding:11px 0;border-top:1px solid #dce2d1}
+.lp-workflow .lp-workflow-preferences dt{font-size:10px;color:#6d785f;margin-bottom:4px}
+.lp-workflow .lp-workflow-preferences dd{font-size:11px;line-height:1.6;margin:0;color:#465c3e}
+.lp-workflow .lp-workflow-preferences .lp-workflow-source{font-size:10px;gap:7px}
+.lp-workflow .lp-workflow-jobs{display:grid;gap:12px}
+.lp-workflow .lp-workflow-job{padding:17px;background:#fffef9;border:1px solid #d5ddc9;box-shadow:0 7px 18px #304c300a}
+.lp-workflow .lp-workflow-job.is-primary{border-color:#a7b78c}
+.lp-workflow .lp-workflow-job.is-secondary{background:#f3f4e9;margin-left:15px}
+.lp-workflow .lp-workflow-job-top{display:flex;gap:9px;align-items:center;font-size:11px;color:#4b5d42}
+.lp-workflow .lp-workflow-job-top>svg{margin-left:auto;color:#7a8a67}
+.lp-workflow .lp-workflow-company{display:inline-grid;place-items:center;width:31px;height:31px;background:#e8ebd7;border:1px solid #d2d9ba;color:#5d7144;font:400 24px/.8 var(--serif,Georgia,serif);flex-shrink:0}
+.lp-workflow .lp-workflow-job-top small{display:block;margin-top:3px;font-size:9px;color:#6d785f}
+.lp-workflow .lp-workflow-job h4{font-size:14px;font-weight:500;line-height:1.5;margin:14px 0 6px}
+.lp-workflow .lp-workflow-job-location{display:flex;align-items:center;gap:5px;font-size:10px;color:#65745b;margin:0 0 13px;flex-wrap:wrap}
+.lp-workflow .lp-workflow-match{display:flex;align-items:center;gap:5px;margin-top:13px;padding-top:11px;border-top:1px solid #e1e5d7;font-size:10px;line-height:1.4;color:#637b4b}
+.lp-workflow .lp-workflow-review-grid{grid-template-columns:.8fr 1.3fr;gap:28px}
+.lp-workflow .lp-workflow-role-summary>.lp-workflow-company{height:41px;width:41px;font-size:29px;margin-bottom:19px}
+.lp-workflow .lp-workflow-role-summary h4,.lp-workflow .lp-workflow-tracking-card h4{font:400 26px/1.1 var(--serif,Georgia,serif);letter-spacing:-.035em;margin:0 0 12px}
+.lp-workflow .lp-workflow-role-summary>p:not(.lp-workflow-eyebrow){font-size:10px;color:#6a785e}
+.lp-workflow .lp-workflow-role-summary .lp-workflow-eyebrow{font-size:9px}
+.lp-workflow .lp-workflow-letter{padding:20px 18px;background:#fffef9;border:1px solid #d4dcc8;box-shadow:0 8px 20px #314e310d}
+.lp-workflow .lp-workflow-letter-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:15px;margin-bottom:18px;border-bottom:1px solid #e1e5d9}
+.lp-workflow .lp-workflow-letter-top>span:first-child{display:flex;align-items:center;gap:7px;font-size:11px}
+.lp-workflow .lp-workflow-letter p{font-size:11px;line-height:1.75;color:#64735b;margin:12px 0}
+.lp-workflow .lp-workflow-letter .lp-workflow-letter-greeting{font-family:var(--serif,Georgia,serif);font-size:21px;line-height:1.3;letter-spacing:-.02em;color:#3e5535}
+.lp-workflow .lp-workflow-review-reminder{display:flex;align-items:center;gap:9px;border-top:1px solid #e1e5d9;padding-top:15px;margin-top:18px;color:#6c7b5e;font-size:10px;line-height:1.5}
+.lp-workflow .lp-workflow-review-reminder strong{font-weight:500;color:#4e6440}
+.lp-workflow .lp-workflow-review-link{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;margin-top:13px;padding:0 12px;background:#284c36;color:#fbfbef;border-radius:3px;text-decoration:none;font-size:10px;transition:background .2s,transform .2s}
+.lp-workflow .lp-workflow-review-link:hover{background:#426243}.lp-workflow .lp-workflow-review-link:active{transform:translateY(1px)}
+.lp-workflow .lp-workflow-review-link:focus-visible{outline:2px solid #769755;outline-offset:4px}
+.lp-workflow .lp-workflow-tracking-card{padding:23px 20px;border:1px solid #c9d6b8;background:#fdfdf6;box-shadow:0 8px 19px #2e4a2c08}
+.lp-workflow .lp-workflow-tracking-card h4{margin-top:26px;font-size:29px}
+.lp-workflow .lp-workflow-tracking-card>p{font-size:11px;line-height:1.7;color:#718064;margin:18px 0}
+.lp-workflow .lp-workflow-tracking-card .lp-workflow-source{border-top:1px solid #e1e5d6;padding-top:18px;font-size:9px}
+.lp-workflow .lp-workflow-approval{display:flex;align-items:center;gap:7px;margin:18px 0 0;color:#5f7b45;font-size:10px}
+.lp-workflow .lp-workflow-tracking{padding-left:0}
+.lp-workflow .lp-workflow-tracking>.lp-workflow-eyebrow{font-size:9px;margin-bottom:23px}
+.lp-workflow .lp-workflow-tracking ol{list-style:none;margin:0;padding:0}
+.lp-workflow .lp-workflow-tracking li{position:relative;display:flex;gap:12px;min-height:71px;align-items:start}
+.lp-workflow .lp-workflow-tracking li:before{content:'';position:absolute;top:17px;bottom:1px;left:8px;width:1px;background:#d4ddc5}
+.lp-workflow .lp-workflow-tracking li:last-child:before{display:none}.lp-workflow .lp-workflow-tracking li:last-child{min-height:0}
+.lp-workflow .lp-workflow-timeline-point{position:relative;display:grid;place-items:center;flex-shrink:0;width:17px;height:17px;border:1px solid #c7d3b5;border-radius:50%;background:#f4f6e9;color:#f8faef}
+.lp-workflow .lp-workflow-tracking .is-complete .lp-workflow-timeline-point{background:#6e8754;border-color:#6e8754}
+.lp-workflow .lp-workflow-tracking .is-next .lp-workflow-timeline-point:after{content:'';width:5px;height:5px;background:#71894e;border-radius:50%}
+.lp-workflow .lp-workflow-tracking h5{font-size:12px;line-height:1.5;font-weight:500;margin:0 0 4px;color:#485e3a}
+.lp-workflow .lp-workflow-tracking li:not(.is-complete):not(.is-next) h5{color:#78836c}
+.lp-workflow .lp-workflow-tracking li p{font-size:10px;line-height:1.6;color:#6d795f;margin:0}
+.lp-workflow .lp-workflow-progress{display:none}
+
+@media(min-width:1000px){
+  .lp-workflow.is-animated .lp-workflow-pin{padding-top:33px;padding-bottom:30px}
+  .lp-workflow.is-animated .lp-workflow-shell{align-items:center}
+  .lp-workflow.is-animated .lp-workflow-scenes{height:405px}
+  .lp-workflow.is-animated .lp-workflow-scene{position:absolute;inset:0;padding:26px 28px;border:0}
+  .lp-workflow.is-animated .lp-workflow-scene-grid{height:100%;min-height:0}
+  .lp-workflow.is-animated .lp-workflow-scene-heading{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .lp-workflow.is-animated .lp-workflow-captions{display:block;position:relative;height:153px;margin-top:31px}
+  .lp-workflow.is-animated .lp-workflow-caption{position:absolute;inset:0}
+  .lp-workflow .lp-workflow-chapter-number{display:block;font-size:11px;color:#d1dfb9;font-variant-numeric:tabular-nums;margin-bottom:13px;letter-spacing:.1em}
+  .lp-workflow .lp-workflow-chapter-number>span{color:#829d89}
+  .lp-workflow .lp-workflow-caption h3{font-size:15px;line-height:1.35;font-weight:500;color:#f2f5e8;margin:0 0 10px}
+  .lp-workflow .lp-workflow-caption p{max-width:286px;margin:0;font-size:12px;line-height:1.65;color:#b8ccbc}
+  .lp-workflow.is-animated .lp-workflow-control-note{margin-top:24px;font-size:10px}
+  .lp-workflow.is-animated .lp-workflow-progress{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;list-style:none;padding:0;margin:41px 0 0}
+  .lp-workflow .lp-workflow-progress-track{display:block;height:1px;background:#f7f7ef2b;width:100%;margin-bottom:13px;overflow:hidden}
+  .lp-workflow .lp-workflow-progress-track>span{display:block;height:1px;background:#c5d8a8;width:100%}
+  .lp-workflow .lp-workflow-progress-label{display:flex;align-items:center;gap:13px;font-size:10px;color:#b6ccbc;transition:color .2s}
+  .lp-workflow .lp-workflow-progress-label>span{color:#a0b3a0;font-size:9px}
+  .lp-workflow .lp-workflow-progress-label>svg{margin-left:auto;opacity:0;transition:opacity .2s}
+  .lp-workflow .lp-workflow-progress .is-current .lp-workflow-progress-label{color:#eff3de}.lp-workflow .lp-workflow-progress .is-current svg{opacity:1}
+}
+
+@media(min-width:1000px) and (max-width:1199px){
+  .lp-workflow{padding-left:40px;padding-right:40px}
+  .lp-workflow .lp-workflow-shell{grid-template-columns:265px minmax(0,1fr);gap:28px}
+  .lp-workflow.is-animated .lp-workflow-scene{padding:24px 20px}
+  .lp-workflow .lp-workflow-scene-grid{gap:20px}
+  .lp-workflow .lp-workflow-document{padding:17px 15px}
+  .lp-workflow .lp-workflow-document h4{font-size:25px}
+  .lp-workflow .lp-workflow-insight h4{font-size:26px}
+  .lp-workflow .lp-workflow-fact{font-size:11px}
+  .lp-workflow .lp-workflow-tag{font-size:9px;padding:4px 5px}
+  .lp-workflow .lp-workflow-stage-bottom{font-size:9px;padding:14px 16px}
+  .lp-workflow .lp-workflow-stage-top{padding:0 17px}
+  .lp-workflow .lp-workflow-stage-owner{font-size:9px}
+  .lp-workflow .lp-workflow-letter{padding:17px 14px}
+  .lp-workflow .lp-workflow-tracking-card{padding:19px 15px}
+  .lp-workflow .lp-workflow-tracking-card h4{font-size:25px}
+  .lp-workflow .lp-workflow-tracking li{gap:9px}
+}
+
+@media(max-width:999px){
+  .lp-workflow{padding:38px 32px 58px}
+  .lp-workflow .lp-workflow-pin{padding-top:40px;padding-bottom:0}
+  .lp-workflow .lp-workflow-shell{grid-template-columns:1fr;gap:32px}
+  .lp-workflow .lp-workflow-copy h2{font-size:53px}
+  .lp-workflow .lp-workflow-intro{max-width:410px;margin-top:18px}
+  .lp-workflow .lp-workflow-control-note{margin-top:19px}
+  .lp-workflow .lp-workflow-scene{padding:34px}
+  .lp-workflow .lp-workflow-scene-heading h3{font-size:33px}
+  .lp-workflow .lp-workflow-scene-grid{gap:40px}
+  .lp-workflow .lp-workflow-document-top{font-size:9px}
+  .lp-workflow .lp-workflow-eyebrow{font-size:10px}
+  .lp-workflow .lp-workflow-document-text{font-size:13px}
+  .lp-workflow .lp-workflow-fact{font-size:12px}
+  .lp-workflow .lp-workflow-small-note{font-size:11px}
+  .lp-workflow .lp-workflow-tag{font-size:10px}
+  .lp-workflow .lp-workflow-source{font-size:9px}
+  .lp-workflow .lp-workflow-detail h5{font-size:14px}
+  .lp-workflow .lp-workflow-detail>p:last-child{font-size:11px}
+  .lp-workflow .lp-workflow-edit-note{font-size:10px}
+  .lp-workflow .lp-workflow-preferences dt{font-size:10px}
+  .lp-workflow .lp-workflow-preferences dd{font-size:13px}
+  .lp-workflow .lp-workflow-job-top{font-size:11px}
+  .lp-workflow .lp-workflow-job-top small{font-size:9px}
+  .lp-workflow .lp-workflow-job h4{font-size:14px}
+  .lp-workflow .lp-workflow-job-location,.lp-workflow .lp-workflow-match{font-size:10px}
+  .lp-workflow .lp-workflow-letter p{font-size:12px}
+  .lp-workflow .lp-workflow-letter-top>span:first-child{font-size:11px}
+  .lp-workflow .lp-workflow-review-reminder{font-size:10px}
+  .lp-workflow .lp-workflow-review-link{font-size:12px}
+  .lp-workflow .lp-workflow-tracking h5{font-size:12px}
+  .lp-workflow .lp-workflow-tracking li p{font-size:10px}
+  .lp-workflow .lp-workflow-tracking li{min-height:79px}
+  .lp-workflow .lp-workflow-role-summary .lp-workflow-eyebrow,.lp-workflow .lp-workflow-tracking>.lp-workflow-eyebrow{font-size:9px}
+}
+
+@media(max-width:599px){
+  .lp-workflow{padding:29px 22px 46px}
+  .lp-workflow .lp-workflow-section-label{font-size:8px;letter-spacing:.12em;padding-bottom:20px}
+  .lp-workflow .lp-workflow-section-label>span:last-child{display:none}
+  .lp-workflow .lp-workflow-pin{padding-top:33px}
+  .lp-workflow .lp-workflow-copy h2{font-size:47px}
+  .lp-workflow .lp-workflow-kicker{font-size:9px;margin-bottom:17px}
+  .lp-workflow .lp-workflow-intro{font-size:14px;max-width:295px}
+  .lp-workflow .lp-workflow-control-note{font-size:10px}
+  .lp-workflow .lp-workflow-stage{border-radius:5px}
+  .lp-workflow .lp-workflow-stage-top{height:55px;padding:0 16px}
+  .lp-workflow .lp-workflow-stage-owner{font-size:0;gap:0}
+  .lp-workflow .lp-workflow-stage-owner>.lp-workflow-mini-avatar{font-size:8px}
+  .lp-workflow .lp-workflow-stage-bottom{padding:15px 17px;flex-direction:column;gap:9px;font-size:9px}
+  .lp-workflow .lp-workflow-scene{padding:26px 19px 30px}
+  .lp-workflow .lp-workflow-scene-heading>span{font-size:9px}
+  .lp-workflow .lp-workflow-scene-heading h3{font-size:29px;max-width:270px}
+  .lp-workflow .lp-workflow-scene-heading>p{font-size:12px;line-height:1.7}
+  .lp-workflow .lp-workflow-scene-grid{grid-template-columns:1fr;gap:24px;min-height:0}
+  .lp-workflow .lp-workflow-connector{display:none}
+  .lp-workflow .lp-workflow-document{padding:22px;transform:rotate(-1deg);margin:1px 6px 0}
+  .lp-workflow .lp-workflow-document h4{font-size:33px}
+  .lp-workflow .lp-workflow-document h5{font-size:14px}
+  .lp-workflow .lp-workflow-document-bottom{font-size:10px}
+  .lp-workflow .lp-workflow-document-role{font-size:12px}
+  .lp-workflow .lp-workflow-insight{padding:5px 3px 0}
+  .lp-workflow .lp-workflow-insight-icon{height:33px;width:33px;float:left;margin:0 12px 0 0}
+  .lp-workflow .lp-workflow-insight>.lp-workflow-eyebrow{padding-top:2px;font-size:8px;margin-bottom:5px}
+  .lp-workflow .lp-workflow-insight h4{font-size:23px;margin:0 0 17px}
+  .lp-workflow .lp-workflow-insight h4 br{display:none}
+  .lp-workflow .lp-workflow-insight .lp-workflow-fact{margin:7px 0;font-size:12px}
+  .lp-workflow .lp-workflow-insight .lp-workflow-small-note{font-size:10px;margin-top:13px}
+  .lp-workflow .lp-workflow-insight .lp-workflow-small-note br{display:none}
+  .lp-workflow .lp-workflow-profile{padding:22px}
+  .lp-workflow .lp-workflow-profile h4{font-size:31px}
+  .lp-workflow .lp-workflow-profile-headline{font-size:14px}
+  .lp-workflow .lp-workflow-status{font-size:10px}
+  .lp-workflow .lp-workflow-source{font-size:9px}
+  .lp-workflow .lp-workflow-profile-details{gap:16px}
+  .lp-workflow .lp-workflow-profile-details .lp-workflow-eyebrow{font-size:9px}
+  .lp-workflow .lp-workflow-detail{padding-bottom:16px}
+  .lp-workflow .lp-workflow-tags{gap:6px}
+  .lp-workflow .lp-workflow-tag{font-size:10px;padding:6px 8px}
+  .lp-workflow .lp-workflow-preferences h4{font-size:27px;margin-bottom:15px}
+  .lp-workflow .lp-workflow-preferences h4 br{display:none}
+  .lp-workflow .lp-workflow-preferences dl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .lp-workflow .lp-workflow-preferences dl>div:last-child{grid-column:1/-1}
+  .lp-workflow .lp-workflow-preferences dd{font-size:12px}
+  .lp-workflow .lp-workflow-preferences .lp-workflow-source{font-size:10px;margin-top:3px}
+  .lp-workflow .lp-workflow-job{padding:18px}
+  .lp-workflow .lp-workflow-job.is-secondary{margin-left:10px}
+  .lp-workflow .lp-workflow-job h4{font-size:15px}
+  .lp-workflow .lp-workflow-job-location{font-size:11px}
+  .lp-workflow .lp-workflow-match{font-size:10px}
+  .lp-workflow .lp-workflow-role-summary{padding:2px 2px 0}
+  .lp-workflow .lp-workflow-role-summary>.lp-workflow-company{float:left;margin:0 12px 12px 0}
+  .lp-workflow .lp-workflow-role-summary .lp-workflow-eyebrow{font-size:9px}
+  .lp-workflow .lp-workflow-role-summary h4{font-size:26px;margin-top:0}
+  .lp-workflow .lp-workflow-role-summary h4 br{display:none}
+  .lp-workflow .lp-workflow-role-summary>p:not(.lp-workflow-eyebrow){font-size:11px}
+  .lp-workflow .lp-workflow-role-summary .lp-workflow-rule{clear:both;margin:18px 0}
+  .lp-workflow .lp-workflow-role-summary .lp-workflow-small-note{font-size:10px;margin-top:14px}
+  .lp-workflow .lp-workflow-letter{padding:21px 19px}
+  .lp-workflow .lp-workflow-letter-top{gap:8px}
+  .lp-workflow .lp-workflow-letter-top .lp-workflow-tag{font-size:8px;padding:5px 6px}
+  .lp-workflow .lp-workflow-letter .lp-workflow-letter-greeting{font-size:24px}
+  .lp-workflow .lp-workflow-letter p{font-size:13px}
+  .lp-workflow .lp-workflow-review-reminder{font-size:10px}
+  .lp-workflow .lp-workflow-tracking-card{padding:22px}
+  .lp-workflow .lp-workflow-tracking-card h4{font-size:30px}
+  .lp-workflow .lp-workflow-tracking-card>p{font-size:13px}
+  .lp-workflow .lp-workflow-approval{font-size:12px}
+  .lp-workflow .lp-workflow-tracking-card .lp-workflow-source{font-size:11px}
+  .lp-workflow .lp-workflow-tracking{padding:3px 4px}
+  .lp-workflow .lp-workflow-tracking>.lp-workflow-eyebrow{font-size:9px}
+  .lp-workflow .lp-workflow-tracking h5{font-size:13px}
+  .lp-workflow .lp-workflow-tracking li p{font-size:11px}
+  .lp-workflow .lp-workflow-tracking li{min-height:82px;gap:14px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .lp-workflow *{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+}
+
+/* Keep the product story readable at its real rendered size. */
+.lp-workflow .lp-workflow-stage-top,
+.lp-workflow .lp-workflow-stage-owner,
+.lp-workflow .lp-workflow-stage-bottom,
+.lp-workflow .lp-workflow-document-role,
+.lp-workflow .lp-workflow-document-text,
+.lp-workflow .lp-workflow-document-bottom,
+.lp-workflow .lp-workflow-fact,
+.lp-workflow .lp-workflow-small-note,
+.lp-workflow .lp-workflow-status,
+.lp-workflow .lp-workflow-source,
+.lp-workflow .lp-workflow-detail>p:last-child,
+.lp-workflow .lp-workflow-tag,
+.lp-workflow .lp-workflow-edit-note,
+.lp-workflow .lp-workflow-preferences dd,
+.lp-workflow .lp-workflow-preferences .lp-workflow-source,
+.lp-workflow .lp-workflow-job-top,
+.lp-workflow .lp-workflow-job-location,
+.lp-workflow .lp-workflow-match,
+.lp-workflow .lp-workflow-role-summary>p:not(.lp-workflow-eyebrow),
+.lp-workflow .lp-workflow-letter-top>span:first-child,
+.lp-workflow .lp-workflow-letter p,
+.lp-workflow .lp-workflow-review-reminder,
+.lp-workflow .lp-workflow-review-link,
+.lp-workflow .lp-workflow-tracking-card>p,
+.lp-workflow .lp-workflow-tracking-card .lp-workflow-source,
+.lp-workflow .lp-workflow-approval,
+.lp-workflow .lp-workflow-tracking li p{font-size:12px}
+.lp-workflow .lp-workflow-letter .lp-workflow-letter-greeting{font-size:23px}
+.lp-workflow .lp-workflow-stage-bottom{flex-wrap:wrap;line-height:1.5;padding-block:12px}
+.lp-workflow .lp-workflow-letter{padding:17px}
+.lp-workflow .lp-workflow-letter-top{padding-bottom:12px;margin-bottom:14px}
+.lp-workflow .lp-workflow-letter p{line-height:1.7;margin-block:10px}
+.lp-workflow .lp-workflow-review-reminder{margin-top:14px;padding-top:12px}
+.lp-workflow .lp-workflow-job{padding:14px}
+.lp-workflow .lp-workflow-job h4{margin-top:11px}
+.lp-workflow .lp-workflow-job-location{margin-bottom:10px}
+.lp-workflow .lp-workflow-match{margin-top:10px;padding-top:9px}
+.lp-workflow .lp-workflow-tag{padding:4px 6px}
+.lp-workflow .lp-workflow-tracking li{min-height:78px}
+.lp-workflow .lp-workflow-tracking li:last-child{min-height:0}
+@media(min-width:1000px){
+  .lp-workflow.is-animated .lp-workflow-scenes{height:445px}
+}
+@media(max-width:599px){
+  .lp-workflow .lp-workflow-stage-owner{font-size:0}
+  .lp-workflow .lp-workflow-scene-heading>p,
+  .lp-workflow .lp-workflow-document-text,
+  .lp-workflow .lp-workflow-letter p,
+  .lp-workflow .lp-workflow-tracking-card>p{font-size:13px}
+  .lp-workflow .lp-workflow-letter .lp-workflow-letter-greeting{font-size:24px}
+}
