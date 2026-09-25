@@ -10,6 +10,7 @@ const title = (field: string) => field.replaceAll('_', ' ').replace(/\b\w/g, let
 const status = (error: unknown) => (error as { status?: number })?.status;
 const message = (error: unknown) => error instanceof Error ? error.message : 'Could not save profile changes.';
 const isSuggestion = (item: ProfileSuggestion) => !item.status || item.status === 'suggested';
+type GenerationEligibility = { allowed: boolean; kind: 'initial' | 'refresh' | 'unlimited'; remaining_refreshes: number | null; reset_at: string; reason: string | null };
 
 export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; enabled: boolean }) {
   const alive = useRef(true);
@@ -26,6 +27,9 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
   const manualDrafts = useRef(manual);
   manualDrafts.current = manual;
   const [pending, setPending] = useState(false);
+  const [eligibility, setEligibility] = useState<GenerationEligibility | null>(null);
+  const [eligibilityError, setEligibilityError] = useState('');
+  const eligibilityRequest = useRef(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [review, setReview] = useState<{ result: ProfileChangeReview; changes: ProfileChanges } | null>(null);
@@ -57,16 +61,29 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
     }
   }, []);
 
+  const loadEligibility = useCallback(async () => {
+    const request = ++eligibilityRequest.current;
+    try {
+      const result = await api<GenerationEligibility>(`/profile-suggestions/resumes/${resume.id}/eligibility`);
+      if (alive.current && request === eligibilityRequest.current) { setEligibility(result); setEligibilityError(''); }
+    } catch {
+      if (alive.current && request === eligibilityRequest.current) { setEligibility(null); setEligibilityError('Could not check AI profile allowance. Retry the check.'); }
+    }
+  }, [resume.id]);
+
   useEffect(() => {
     alive.current = true;
     if (!enabled) return;
+    setEligibility(null);
+    setEligibilityError('');
     void loadProfile();
+    void loadEligibility();
     let active = true;
     void api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`)
       .then(result => { if (active) adopt(result); })
       .catch(cause => { if (active && status(cause) !== 404) setError(message(cause)); });
-    return () => { active = false; alive.current = false; };
-  }, [adopt, enabled, loadProfile, resume.id]);
+    return () => { active = false; alive.current = false; eligibilityRequest.current += 1; };
+  }, [adopt, enabled, loadProfile, loadEligibility, resume.id]);
 
   useEffect(() => {
     const changed = (event: Event) => {
@@ -85,7 +102,7 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
   function edit() { invalidation.current += 1; setReview(null); setError(''); setNotice(''); }
 
   async function generate() {
-    if (pending) return;
+    if (pending || !eligibility?.allowed) return;
     setPending(true); setError(''); setReview(null); setNotice('');
     const previous = latest.current;
     try {
@@ -108,7 +125,7 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
         const result = await api<ProfileSuggestionSet>(`/profile-suggestions/resumes/${resume.id}/latest`);
         if (result && (result.id !== latest.current?.id || result.status !== latest.current?.status)) adopt(result);
       } catch { /* Keep the original error and the user's drafts. */ }
-    } finally { if (alive.current) setPending(false); }
+    } finally { if (alive.current) { setPending(false); void loadEligibility(); } }
   }
 
   function changes(): ProfileChanges {
@@ -162,14 +179,21 @@ export function ProfileSuggestionsPanel({ resume, enabled }: { resume: Resume; e
   if (!enabled) return null;
   const ready = set?.status === 'ready';
   const disabled = pending || !loaded || !ready;
+  const generationDisabled = pending || !eligibility?.allowed;
+  const generationDescription = eligibility?.allowed
+    ? eligibility.kind === 'unlimited' ? 'Administrator access: unlimited AI profile generations.'
+      : eligibility.kind === 'initial' ? 'This confirmed CV has one initial AI generation available.'
+      : `${eligibility.remaining_refreshes} AI profile refresh${eligibility.remaining_refreshes === 1 ? '' : 'es'} left this UTC month.`
+    : eligibility?.reason || eligibilityError || 'Checking AI profile allowance…';
   return <section className="ai-suggestions profile-suggestions-panel" aria-label={`Profile suggestions for ${resume.display_name}`}>
     <div className="panel-heading"><div><p className="eyebrow">Profile suggestions</p><h3><Sparkle size={20} />Review profile details</h3></div><span className={`status-badge ${ready ? 'is-confirmed' : ''}`}>{set?.status || 'idle'}</span></div>
     <p className="muted">Provider: {set?.provider || 'OpenAI when configured'}{set?.model ? ` · ${set.model}` : ''}. Your confirmed resume text is shared only when you request suggestions. Review selected suggestions and manual edits together before saving.</p>
+    <p className="muted" role="status">{generationDescription}{eligibility?.reset_at && eligibility.kind !== 'unlimited' ? ` Refresh allowance resets ${new Date(eligibility.reset_at).toLocaleDateString(undefined, { timeZone: 'UTC' })} UTC.` : ''} {eligibilityError && <button type="button" className="action-button" onClick={() => void loadEligibility()}>Retry allowance check</button>}</p>
     {loadError && <div role="alert"><p>{loadError}</p><button className="secondary-button" onClick={() => void loadProfile()}>Reload saved profile</button></div>}
-    {!set && <button className="secondary-button" aria-label={pending ? 'Generating…' : 'Suggest profile details with AI'} disabled={pending} onClick={() => void generate()}>{pending ? 'Generating…' : 'Generate suggestions'}</button>}
+    {!set && <button className="secondary-button" aria-label={pending ? 'Generating…' : 'Suggest profile details with AI'} disabled={generationDisabled} onClick={() => void generate()}>{pending ? 'Generating…' : 'Generate suggestions'}</button>}
     {set?.status === 'generating' && <p role="status">Generating suggestions… This page will update automatically.</p>}
-    {set?.status === 'failed' && <><p role="alert">{set.outcome_message}{set.failure_field ? ` · ${set.failure_field}` : ''}</p><button className="secondary-button" disabled={pending} onClick={() => void generate()}>Retry suggestions</button></>}
-    {(ready || set?.status === 'applied') && <button className="secondary-button" disabled={pending} onClick={() => void generate()}>{set?.status === 'applied' ? 'Refresh AI suggestions from this saved CV' : 'Regenerate suggestions'}</button>}
+    {set?.status === 'failed' && <><p role="alert">{set.outcome_message}{set.failure_field ? ` · ${set.failure_field}` : ''}</p><button className="secondary-button" disabled={generationDisabled} onClick={() => void generate()}>Retry suggestions</button></>}
+    {(ready || set?.status === 'applied') && <button className="secondary-button" disabled={generationDisabled} onClick={() => void generate()}>{set?.status === 'applied' ? 'Refresh AI suggestions from this saved CV' : 'Regenerate suggestions'}</button>}
     {(ready || set?.status === 'applied') && FIELDS.map(field => {
       const items = (set?.suggestions || []).filter(item => item.field === field && isSuggestion(item));
       const availability = set?.field_statuses?.[field] || ((set?.suggestions || []).some(item => item.field === field && item.status === 'not_found') ? 'not_found' : 'needs_review');

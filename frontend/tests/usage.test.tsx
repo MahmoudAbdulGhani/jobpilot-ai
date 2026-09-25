@@ -41,4 +41,10 @@ describe('server-driven usage and entitlements',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Refresh usage'}));await screen.findByRole('heading',{name:'Free access'});
     await waitFor(()=>expect(screen.getByRole('button',{name:'Generate pack'}).hasAttribute('disabled')).toBe(false));
   });
+  it('keeps administrator AI actions enabled and shows unlimited profile access',async()=>{
+    apiMock.mockResolvedValue({...usage,admin:true,profile_refreshes:{allowance:null,consumed:0,remaining:null,new_cv_initial_generation:true},features:{...usage.features,pack:{...entry,state:'admin',remaining:999999}}});
+    render(<EntitlementsProvider><UsageDetails/><MeteredButton feature="pack">Generate pack</MeteredButton></EntitlementsProvider>);
+    await screen.findByText(/AI profile refreshes: unlimited for administrators/);
+    expect(screen.getByRole('button',{name:'Generate pack'}).hasAttribute('disabled')).toBe(false);
+  });
 });

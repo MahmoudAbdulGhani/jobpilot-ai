@@ -35,6 +35,7 @@ describe('combined profile review and save', () => {
     generationMock = vi.fn(async () => record);
     apiMock.mockReset().mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === '/profile') return saved;
+      if (path.endsWith('/eligibility')) return { allowed: true, kind: 'refresh', remaining_refreshes: 2, reset_at: '2026-10-01T00:00:00Z', reason: null };
       if (path.endsWith('/latest')) return record;
       if (path.endsWith('/review')) return reviewMock(JSON.parse(String(init?.body)));
       if (path.endsWith('/apply')) return applyMock(JSON.parse(String(init?.body)));
@@ -201,6 +202,7 @@ describe('combined profile review and save', () => {
   it('generates only on an explicit click and shows provider errors and retry', async () => {
     apiMock.mockImplementation(async path => {
       if (path === '/profile') return saved;
+      if (path.endsWith('/eligibility')) return { allowed: true, kind: 'initial', remaining_refreshes: 2, reset_at: '2026-10-01T00:00:00Z', reason: null };
       if (path.endsWith('/latest')) throw Object.assign(new Error('Not found'), { status: 404 });
       return generationMock();
     });
@@ -212,6 +214,22 @@ describe('combined profile review and save', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Suggest profile details with AI' }));
     await screen.findByLabelText('Proposed headline');
     expect(generationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a new-CV allowance and blocks exhausted refreshes without losing manual edits', async () => {
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/profile') return saved;
+      if (path.endsWith('/latest')) return record;
+      if (path.endsWith('/eligibility')) return { allowed: false, kind: 'refresh', remaining_refreshes: 0, reset_at: '2026-10-01T00:00:00Z', reason: 'Two AI profile refreshes used this UTC month.' };
+      if (path.endsWith('/review')) return reviewMock(JSON.parse(String(init?.body)));
+      return generationMock();
+    });
+    view(); await ready();
+    await screen.findByText(/Two AI profile refreshes used this UTC month/);
+    expect(screen.getByRole('button', { name: 'Regenerate suggestions' }).hasAttribute('disabled')).toBe(true);
+    input('Proposed headline', 'User edit');
+    expect((screen.getByLabelText('Proposed headline') as HTMLTextAreaElement).value).toBe('User edit');
+    expect(generationMock).not.toHaveBeenCalled();
   });
 
   it('ignores a set belonging to another resume and shows failed provider diagnostics', async () => {

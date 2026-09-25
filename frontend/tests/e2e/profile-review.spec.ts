@@ -7,7 +7,7 @@ function database(input: object) {
   const backend = path.resolve(process.cwd(), '../backend');
   const executable = process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python';
   const result = spawnSync(path.join(backend, executable), ['scripts/profile_review_e2e.py'], {
-    cwd: backend, input: JSON.stringify(input), encoding: 'utf8', env: process.env,
+    cwd: backend, input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, ENVIRONMENT: 'test' },
   });
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
@@ -26,6 +26,33 @@ function pdf() {
 test.afterEach(async ({ request }) => {
   for (const email of createdUsers) await cleanupUser(request, email);
   createdUsers.length = 0;
+});
+
+test('meters two browser refreshes and persists quota across reload', async ({ page, request }) => {
+  const user = await bootstrapUser(request, 'profile-review-quota');
+  await grantAiConsent(request, user, ['ai_profile_suggestions']);
+  const auth = { Authorization: `Bearer ${await accessToken(request, user)}` };
+  const uploaded = await request.post(`${API}/resumes`, { headers: auth, multipart: { file: { name: 'quota-cv.pdf', mimeType: 'application/pdf', buffer: pdf() } } });
+  expect(uploaded.ok()).toBeTruthy();
+  const resume = await uploaded.json();
+  expect((await request.post(`${API}/resumes/${resume.id}/extract`, { headers: auth })).ok()).toBeTruthy();
+  expect((await request.patch(`${API}/resumes/${resume.id}/extraction`, { headers: auth, data: { draft_text: 'Synthetic profile engineer with SQL experience.' } })).ok()).toBeTruthy();
+  expect((await request.post(`${API}/resumes/${resume.id}/extraction/confirm`, { headers: auth })).ok()).toBeTruthy();
+  await login(page, user);
+  await page.goto('/resumes');
+  const panel = page.getByRole('region', { name: /Profile suggestions for/ });
+  await expect(panel.getByText(/one initial AI generation available/)).toBeVisible();
+  await panel.getByRole('button', { name: 'Suggest profile details with AI' }).click();
+  await expect(panel.getByText(/2 AI profile refreshes left/)).toBeVisible();
+  await panel.getByRole('button', { name: 'Regenerate suggestions' }).click();
+  await expect(panel.getByText(/1 AI profile refresh left/)).toBeVisible();
+  await panel.getByRole('button', { name: 'Regenerate suggestions' }).click();
+  await expect(panel.getByText(/Two AI profile refreshes used this UTC month/)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Regenerate suggestions' })).toBeDisabled();
+  expect(database({ action: 'quota', email: user.email })).toEqual({ kinds: ['initial', 'refresh', 'refresh'], reservation_count: 3 });
+  await page.reload();
+  await expect(panel.getByRole('button', { name: 'Regenerate suggestions' })).toBeDisabled();
+  expect((await (await request.get(`${API}/profile-suggestions/resumes/${resume.id}/eligibility`, { headers: auth })).json()).remaining_refreshes).toBe(0);
 });
 
 test('refreshes an applied old suggestion set from the saved CV without another upload', async ({ page, request }) => {
