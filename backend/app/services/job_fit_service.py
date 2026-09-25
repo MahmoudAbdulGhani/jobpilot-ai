@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import unicodedata
 import uuid
 
 from sqlalchemy import func, select
@@ -62,6 +63,51 @@ _FIT_SECTION = re.compile(
     r"\b(basic qualifications|required qualifications|required skills|minimum qualifications|"
     r"preferred qualifications|preferred skills(?:/experience)?|nice to have|"
     r"additional qualifications|key responsibilities)\s*:", re.I)
+_QUOTE_WORD = re.compile(r"[^\W_]+(?:[+#.-][^\W_]+)*", re.UNICODE)
+
+
+def source_job_quote(quote: str, description: str) -> str | None:
+    """Recover an exact source span when the model changes spacing or case.
+
+    Words must still match in the same contiguous order. An ambiguous match is
+    rejected, and the stored quote is always copied from the saved posting.
+    """
+    if quote in description:
+        return quote
+    normalized = lambda value: unicodedata.normalize("NFKC", value).casefold()
+    wanted = [normalized(match.group()) for match in _QUOTE_WORD.finditer(quote)]
+    if not wanted:
+        return None
+    found = list(_QUOTE_WORD.finditer(description))
+    tokens = [normalized(match.group()) for match in found]
+    matches = [(found[index].start(), found[index + len(wanted) - 1].end())
+               for index in range(len(found) - len(wanted) + 1)
+               if tokens[index:index + len(wanted)] == wanted]
+    if len(matches) != 1:
+        return None
+    start, end = matches[0]
+    return description[start:end]
+
+
+def skill_job_quote(skill: str, attempted_quote: str, description: str) -> str | None:
+    """Recover a source clause for an explicitly named skill, never AI prose."""
+    pattern = re.compile(r"(?<![\w+#.-])" + re.escape(skill) + r"(?![\w+#.-])", re.I)
+    requested = {match.group().casefold() for match in _QUOTE_WORD.finditer(attempted_quote)}
+    choices = []
+    for clause in re.finditer(r"[^•\n]+", description):
+        passage = clause.group().strip()
+        if not pattern.search(passage):
+            continue
+        if len(passage) > 1_000:
+            continue
+        words = {match.group().casefold() for match in _QUOTE_WORD.finditer(passage)}
+        choices.append((len(requested & words), passage))
+    if not choices:
+        return None
+    choices.sort(reverse=True)
+    if len(choices) > 1 and choices[0][0] == choices[1][0]:
+        return None
+    return choices[0][1]
 
 
 def evidenced_importance(quote: str, description: str) -> str:
@@ -71,6 +117,13 @@ def evidenced_importance(quote: str, description: str) -> str:
         return "required"
     if re.search(r"\b(preferred|preferably|bonus|nice to have)\b", lowered):
         return "preferred"
+    leading = _FIT_SECTION.match(quote.strip())
+    if leading:
+        heading = leading.group(1).casefold()
+        if heading.startswith(("basic", "required", "minimum")):
+            return "required"
+        if heading.startswith(("preferred", "nice to have")):
+            return "preferred"
     start = description.find(quote)
     if start < 0 or description.find(quote, start + 1) >= 0:
         return "unspecified"
@@ -88,19 +141,43 @@ def evidenced_importance(quote: str, description: str) -> str:
 def validate_output(output: ProviderJobFitOutput, description: str, facts: list[CandidateFact]) -> dict:
     fact_ids = {fact.id for fact in facts}
     result = output.model_dump(mode="json", exclude={"missing_skills"})
+    verified = []
+    changed = False
     for requirement, saved in zip(output.requirements, result["requirements"]):
         refs = set(requirement.candidate_fact_ids)
-        if requirement.job_quote not in description:
-            raise JobFitError(502, "The AI response contained unsupported job evidence.")
+        exact_quote = source_job_quote(requirement.job_quote, description)
+        if exact_quote is None:
+            exact_quote = skill_job_quote(requirement.skill_name, requirement.job_quote, description) if requirement.skill_name else None
+            if exact_quote is None:
+                changed = True
+                continue
+            saved["text"] = requirement.skill_name
+            saved["explanation"] = ("Review the cited saved profile evidence for this skill."
+                                    if refs else "No saved profile evidence was cited for this skill.")
+            changed = True
         if requirement.skill_name and requirement.skill_name.casefold() not in requirement.job_quote.casefold():
-            raise JobFitError(502, "The AI response named a skill absent from the quoted requirement.")
+            changed = True
+            continue
         if not refs <= fact_ids:
-            raise JobFitError(502, "The AI response referenced unknown candidate evidence.")
+            changed = True
+            continue
         if requirement.assessment in {"supported", "partially_supported", "explicit_mismatch"} and not refs:
-            raise JobFitError(502, "The AI response lacked required candidate evidence.")
+            changed = True
+            continue
         if requirement.assessment == "not_evidenced" and refs:
-            raise JobFitError(502, "The AI response used incompatible evidence for a missing-information assessment.")
-        saved["importance"] = evidenced_importance(requirement.job_quote, description)
+            changed = True
+            continue
+        saved["job_quote"] = exact_quote
+        saved["importance"] = evidenced_importance(exact_quote, description)
+        verified.append(saved)
+    if not verified:
+        raise JobFitError(502, "The AI response contained no verifiable job requirements. No fit analysis was saved.")
+    result["requirements"] = verified
+    if changed:
+        ids = {item["id"] for item in verified}
+        for field in ("strengths", "gaps", "actions"):
+            result[field] = [item for item in result[field] if item.split(":", 1)[0] in ids]
+        result["summary"] = "Some AI requirements lacked an exact job passage. Only requirements verified against the saved posting are shown; review the original posting."
     return result
 
 

@@ -67,8 +67,9 @@ def test_job_fit_lists_only_quoted_unevidenced_required_or_preferred_skills():
     assert [item["skill"] for item in JobFitResultResponse.model_validate(
         output.model_dump()).model_dump()["missing_skills"]] == ["Kubernetes", "Docker"]
     items[1]["skill_name"] = "AWS"
-    with pytest.raises(job_fit_service.JobFitError, match="absent"):
-        job_fit_service.validate_output(ProviderJobFitOutput(requirements=items), description, facts)
+    partial = job_fit_service.validate_output(ProviderJobFitOutput(requirements=items), description, facts)
+    assert "req-2" not in [item["id"] for item in partial["requirements"]]
+    assert "Only requirements verified" in partial["summary"]
 
 
 def test_production_pilot_claim_is_durable_and_single_use(db_session):
