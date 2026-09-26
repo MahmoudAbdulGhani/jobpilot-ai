@@ -1,5 +1,6 @@
 """Offline checks for a rejected AI sentence; no external provider call."""
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -122,11 +123,33 @@ def test_multiple_unsafe_blocks_and_empty_section_are_removed():
 @pytest.mark.parametrize("document, label", [("cv", "CV"), ("cover_letter", "cover letter")])
 def test_insufficient_supported_document_has_specific_content_free_failure(document, label):
     source, output = draft()
+    if document == "cover_letter":
+        source["profile_facts"] = []
     for block in output[document]["blocks"]:
         if block["kind"] != "heading":
             block["evidence"] = [{"fact_id": "fact-999", "cv_quote": None}]
     with pytest.raises(PackError, match=f"not retain enough supported {label} content"):
         salvage_generated(output, source)
+
+
+def test_unsupported_cover_letter_rebuilds_from_verified_relevant_facts():
+    source, output = draft()
+    source["job"]["description"] = "Python and PostgreSQL experience building booking APIs is required."
+    source["profile_facts"].append({"id": "fact-10", "path": "experience[0]", "value": json.dumps({
+        "title": "Backend Engineer", "organization": "Cedar Demo",
+        "notes": "Developed Python booking APIs for customers."})})
+    source["application_skills"] = [{"skill": "PostgreSQL", "importance": "required"}]
+    source["application_skill_facts"] = [{"id": "fact-11", "path": "application_skills[0]", "value": "PostgreSQL"}]
+    for block in output["cover_letter"]["blocks"]:
+        if block["kind"] != "heading":
+            block["text"] = "I led Kubernetes infrastructure at a fictional employer."
+            block["evidence"] = [{"fact_id": "fact-10", "cv_quote": None}]
+    checked = validate_generated(salvage_generated(output, source), source)
+    letter_text = " ".join(block.text for block in checked.cover_letter.blocks)
+    assert "I developed Python booking APIs for customers." in letter_text
+    assert "PostgreSQL" in letter_text
+    assert "Kubernetes" not in letter_text
+    assert "rebuilt from individual saved facts" in checked.review_notes[-1]
 
 
 def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():

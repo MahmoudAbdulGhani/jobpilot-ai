@@ -91,3 +91,20 @@ it('explains that failed source details are inputs, not generated files', async 
   fireEvent.click(screen.getByText('Review private source details'));
   expect(screen.getByText(/input snapshots captured before generation/)).not.toBeNull();
 });
+
+it('shows the saved failure reason immediately after Generate', async () => {
+  const failed = { id: 'pack-4', job_id: job.id, resume_id: 'resume-1', status: 'failed', current_version: 0,
+    version: null, review_notes: [], source_snapshot: { cv_text: 'Python', profile_facts: [], application_skill_facts: [], application_skills: [], job: { description: job.description } },
+    is_outdated: false, provider: 'deterministic-test', model: 'synthetic-v1', outcome_message: 'The cover letter did not retain enough supported content.', created_at: '2026-09-25T00:00:00Z' };
+  apiMock.mockImplementation((path: string, init?: RequestInit) => {
+    if (path.endsWith('/options')) return Promise.resolve(options);
+    if (path.includes('/fit-analyses/latest')) return Promise.resolve({ status: 'ready', is_outdated: false });
+    if (init?.method === 'POST') return Promise.resolve(failed);
+    return Promise.resolve({ items: [], total: 0, page: 1, page_size: 5 });
+  });
+  render(<ApplicationPacks job={job} />);
+  const generate = await screen.findByRole('button', { name: 'Generate application pack' });
+  await waitFor(() => expect(generate.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(generate);
+  expect(await screen.findByText(/Generation failed: The cover letter did not retain enough supported content/)).not.toBeNull();
+});

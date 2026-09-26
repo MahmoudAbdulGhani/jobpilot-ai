@@ -181,7 +181,9 @@ export function ApplicationPacks({ job }: { job: Job }) {
       const result = await api<ApplicationPack>(base, { method: 'POST', body: JSON.stringify({ resume_id: resumeId, idempotency_key: generationKey.current }) });
       generationKey.current = null;
       displayPack(result);
-      setNotice(result.status === 'ready' ? 'Both drafts are ready for your review.' : result.status === 'failed' ? 'Generation failed. Your source documents are unchanged; you can retry.' : 'Generation is pending. You can return to this saved pack.');
+      setNotice(result.status === 'ready' ? 'Both drafts are ready for your review.' : result.status === 'failed'
+        ? `Generation failed: ${result.outcome_message || 'The provider did not return a usable draft.'} Your source documents are unchanged.`
+        : 'Generation is pending. You can return to this saved pack.');
       await load(true);
     } catch (caught) { setError(messageFor(caught)); }
     finally { setBusy(''); }
@@ -254,7 +256,7 @@ export function ApplicationPacks({ job }: { job: Job }) {
       <div className="pack-actions"><MeteredButton feature="pack" className="primary-button" disabled={!canGenerate || !!busy || pack?.status === 'generating'} onClick={() => withSavedDraft(() => void generate())}>{busy === 'generate' ? <ArrowClockwise className="spin" size={19} /> : <Sparkle size={19} />}{busy === 'generate' ? 'Generating both drafts…' : pack?.status === 'failed' ? 'Retry generation' : 'Generate application pack'}</MeteredButton><button className="text-button" disabled={!!busy} onClick={() => withSavedDraft(() => void refreshActive())}>Refresh saved state</button></div>
     </div>
     {error && !deleting && !approving && <div className="form-error" role="alert">{error}{error.includes('AI data-use consent is required') && <p><Link href="/settings#privacy">Allow pack drafts AI use in Privacy settings</Link>, then return and generate your pack.</p>}{/conflict|changed|outdated|version/i.test(error) && <p>Refresh saved state after a conflict. Your unsaved text stays here until you choose to replace it.</p>}</div>}
-    {notice && <p className="pack-notice" role="status" aria-live="polite">{notice}</p>}
+    {notice && <p className={pack?.status === 'failed' ? 'form-error' : 'pack-notice'} role={pack?.status === 'failed' ? 'alert' : 'status'} aria-live="polite">{notice}</p>}
     {pack && <div className="pack-current">
       <div className="pack-state-row"><div><span className={`status-badge ${currentVersion?.approved_at ? 'is-confirmed' : 'is-unreviewed'}`}>{currentVersion?.approved_at ? `Approved version ${currentVersion.number}` : pack.status === 'generating' ? 'Generation pending' : pack.status === 'failed' ? 'Generation failed' : `Unapproved draft · version ${currentVersion?.number}`}</span><p className="muted pack-help">Created {date(pack.created_at)} · {pack.source_snapshot.resume_name || 'Selected CV'}</p></div><button className="icon-button" aria-label="Delete application pack" disabled={!!busy} onClick={() => setDeleting(true)}><Trash size={21} /></button></div>
       {pack.is_outdated && <p className="pack-warning" role="status"><WarningCircle size={20} />Source content changed. This pack is outdated. Generate a new pack before approving. Previously approved downloads remain unchanged.</p>}

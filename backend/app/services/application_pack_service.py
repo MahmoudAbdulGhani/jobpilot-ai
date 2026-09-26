@@ -351,6 +351,84 @@ def _remove_empty_sections(blocks: list[ProviderBlock], title: str) -> list[Prov
     return kept
 
 
+def _verified_cover_letter(snapshot, facts: dict[str, str]) -> list[ProviderBlock]:
+    """Build a short letter from individual saved facts after model prose fails.
+
+    The role example is one line from one saved experience entry. Skills are
+    listed as skills; they are never attached to that role or a project.
+    """
+    from app.services.evidence_validation import terms
+
+    blocks = [ProviderBlock(id="verified-letter-title", kind="heading", text="Cover letter", evidence=[])]
+    job_terms = terms(snapshot.get("job", {}).get("description") or "")
+
+    def add(text: str, references: list[dict]):
+        try:
+            block = ProviderBlock.model_validate({
+                "id": f"verified-letter-{len(blocks)}", "kind": "paragraph",
+                "text": text, "evidence": references,
+            })
+            _validate_block(block, facts, snapshot["cv_text"])
+        except (PackError, ValidationError):
+            return
+        blocks.append(block)
+
+    profile = snapshot["profile_facts"]
+    headline = next((fact for fact in profile if fact["path"] == "headline"), None)
+    if headline:
+        value = headline["value"].strip().rstrip(".")
+        add(f"I am a {value}.", [{"fact_id": headline["id"], "cv_quote": None}])
+
+    examples = []
+    for fact in profile:
+        if not fact["path"].startswith("experience["):
+            continue
+        try:
+            entry = json.loads(fact["value"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        for line in str(entry.get("notes") or "").splitlines():
+            wording = re.sub(r"^[\s•*\-]+", "", line).strip()
+            if not re.match(r"^(?:built|developed|implemented|integrated|designed|created|managed|led|wrote|applied|deployed|completed)\b", wording, re.I):
+                continue
+            if not 20 <= len(wording) <= 280:
+                continue
+            overlap = len(terms(wording) & job_terms)
+            if overlap:
+                examples.append((overlap, fact["id"], wording))
+    for _, fact_id, wording in sorted(examples, reverse=True):
+        sentence = "I " + wording[0].lower() + wording[1:]
+        if sentence[-1] not in ".!?":
+            sentence += "."
+        before = len(blocks)
+        add(sentence, [{"fact_id": fact_id, "cv_quote": None}])
+        if len(blocks) > before:
+            break
+
+    application_facts = snapshot.get("application_skill_facts", [])
+    selections = snapshot.get("application_skills", [])
+    app_ranked = sorted(enumerate(application_facts), key=lambda entry: (
+        0 if entry[0] < len(selections) and selections[entry[0]].get("importance") == "required" else 1,
+        entry[0]))
+    skill_facts = [fact for _, fact in app_ranked]
+    skill_facts += [fact for fact in profile if fact["path"].startswith("skills[")]
+    selected, seen = [], set()
+    for fact in skill_facts:
+        skill = fact["value"].strip()
+        if skill.casefold() in seen or not terms(skill) & job_terms:
+            continue
+        selected.append(fact)
+        seen.add(skill.casefold())
+        if len(selected) == 4:
+            break
+    if selected:
+        add("I bring " + ", ".join(fact["value"] for fact in selected) + " to this role.",
+            [{"fact_id": fact["id"], "cv_quote": None} for fact in selected])
+    return blocks
+
+
 def salvage_generated(output, snapshot):
     """Keep supported statements and safe single-source rewrites; omit the rest."""
     normalized = canonical_structural_labels(canonical_cv_quotes(output, snapshot), snapshot)
@@ -358,6 +436,7 @@ def salvage_generated(output, snapshot):
     payload = normalized.model_dump(mode="json")
     omitted = {"cv": 0, "cover_letter": 0}
     replaced = {"cv": 0, "cover_letter": 0}
+    rebuilt_letter = False
     for name, title in (("cv", "Curriculum vitae"), ("cover_letter", "Cover letter")):
         retained = []
         for block in getattr(normalized, name).blocks:
@@ -377,6 +456,10 @@ def salvage_generated(output, snapshot):
                     omitted[name] += 1
         retained = _remove_empty_sections(retained, title)
         body_count = sum(block.kind != "heading" for block in retained)
+        if name == "cover_letter" and body_count < 2:
+            retained = _verified_cover_letter(snapshot, facts)
+            body_count = sum(block.kind != "heading" for block in retained)
+            rebuilt_letter = body_count >= 2
         if body_count < 2:
             document = "CV" if name == "cv" else "cover letter"
             raise PackError(502, f"The AI draft did not retain enough supported {document} content. No documents were saved.")
@@ -385,6 +468,9 @@ def salvage_generated(output, snapshot):
         payload["review_notes"] = [*payload["review_notes"][:19],
             f"Evidence review: {replaced['cv']} CV and {replaced['cover_letter']} cover-letter statement(s) were rewritten from one exact CV passage; "
             f"{omitted['cv']} CV and {omitted['cover_letter']} cover-letter statement(s) were omitted because their claims or citations could not be verified. Review both documents before approval."]
+    if rebuilt_letter:
+        payload["review_notes"] = [*payload["review_notes"][:19],
+            "The cover letter was rebuilt from individual saved facts because too little AI wording passed evidence review. Check its relevance and accuracy before approval."]
     return PackProviderOutput.model_validate(payload)
 
 

@@ -534,3 +534,56 @@ def test_unsupported_block_is_omitted_and_download_requires_approval(client, db_
     finally:
         client.app.dependency_overrides.pop(get_settings, None)
         client.app.dependency_overrides.pop(get_db, None)
+
+
+def test_pack_recovers_when_model_cover_letter_has_no_supported_paragraphs(client, db_session, monkeypatch):
+    from app.services.ai_provider import DeterministicTestProvider
+    from app.schemas.application_packs import PackProviderOutput
+    from app.services import application_pack_service
+
+    owner = make_user(db_session, "ats-letter-recovery@jobpilot-test.com")
+    job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
+                   description=DESCRIPTION)
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    resume = seed_source(db_session, owner, job)
+    profile = db_session.scalar(select(CandidateProfile).where(CandidateProfile.owner_id == owner.id))
+    profile.experience = [{"title": "Backend Engineer", "organization": "Acme",
+                           "notes": "Developed Python and PostgreSQL services for customers."}]
+    db_session.commit()
+    grant_consent(db_session, owner.id, "ai_application_packs")
+    calls = []
+
+    class UnsupportedLetter(DeterministicTestProvider):
+        def create_pack(self, source):
+            calls.append(source)
+            output = super().create_pack(source).model_dump(mode="json")
+            for block in output["cover_letter"]["blocks"]:
+                if block["kind"] != "heading":
+                    block["text"] = "I led Kubernetes deployment at an invented employer."
+                    block["evidence"] = [{"fact_id": "fact-1", "cv_quote": None}]
+            return PackProviderOutput.model_validate(output)
+
+    monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda settings: UnsupportedLetter())
+    test_settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True, "JOBPILOT_AI_TEST_PROVIDER": True,
+        "E2E_TEST_MODE": True, "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
+    })
+    caller = start(client, db_session, owner)
+    try:
+        client.app.dependency_overrides[get_settings] = lambda: test_settings
+        opened = caller.post(f"/api/jobs/{job.id}/application-packs",
+                             json={"resume_id": str(resume.id), "idempotency_key": "pack-letter-recovery"},
+                             headers=auth(owner))
+        assert opened.status_code == status.HTTP_200_OK, opened.text
+        body = opened.json()
+        assert body["status"] == "ready"
+        assert len(calls) == 1
+        letter = " ".join(block["text"] for block in body["version"]["cover_letter"]["blocks"])
+        assert "I developed Python and PostgreSQL services for customers." in letter
+        assert "Kubernetes" not in letter
+        assert any("rebuilt from individual saved facts" in note for note in body["review_notes"])
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+        client.app.dependency_overrides.pop(get_db, None)
