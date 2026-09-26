@@ -28,6 +28,8 @@ export type ApplicationPack = {
     resume_name?: string;
     reviewed_at?: string;
     profile_facts?: { id: string; path: string; value: string }[];
+    application_skill_facts?: { id: string; path: string; value: string }[];
+    application_skills?: { id: string; skill: string; importance: string; job_quote: string; analysis_id: string }[];
     job?: { title?: string; company?: string; description?: string };
   };
   is_outdated: boolean;

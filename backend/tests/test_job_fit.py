@@ -111,6 +111,18 @@ def test_output_validation_rejects_invented_evidence_and_bad_assessments():
         job_fit_service.validate_output(ProviderJobFitOutput(requirements=[base]), "Python required", facts)
 
 
+def test_explicitly_saved_skill_is_not_shown_as_missing_when_provider_misclassifies_it():
+    facts = [CandidateFact(id="fact-1", path="skills[0]", value="Kubernetes")]
+    output = ProviderJobFitOutput(requirements=[{
+        "id": "req-1", "text": "Kubernetes", "job_quote": "Kubernetes required.",
+        "importance": "required", "assessment": "not_evidenced", "explanation": "No evidence.",
+        "candidate_fact_ids": [], "skill_name": "Kubernetes",
+    }])
+    checked = job_fit_service.validate_output(output, "Kubernetes required.", facts)
+    assert checked["requirements"][0]["assessment"] == "supported"
+    assert checked["requirements"][0]["candidate_fact_ids"] == ["fact-1"]
+
+
 def test_real_adapter_builds_tool_free_bounded_job_request():
     output = ProviderJobFitOutput(requirements=[])
     calls = {}
@@ -207,3 +219,38 @@ def test_fit_consent_revoked_after_reservation_finalizes_idempotently(
         f"/api/jobs/{job.id}/fit-analyses", headers=headers(owner),
         json={"idempotency_key": "fit-consent-race-retry"})
     assert fresh.status_code == 200 and fresh.json()["status"] == "ready"
+
+
+def test_job_only_skill_confirmation_is_owner_scoped_and_stale_after_job_change(fit_client, fit_users, db_session):
+    from app.models import JobFitAnalysis
+
+    owner, stranger = fit_users
+    profile, job = sources(db_session, owner)
+    job.description = "Kubernetes required. Python required."
+    db_session.commit()
+    snapshot, facts, job_hash, profile_hash = job_fit_service.input_state(job, profile)
+    result = ProviderJobFitOutput(requirements=[{
+        "id": "req-1", "text": "Kubernetes", "job_quote": "Kubernetes required.",
+        "importance": "required", "assessment": "not_evidenced", "explanation": "No saved evidence.",
+        "candidate_fact_ids": [], "skill_name": "Kubernetes",
+    }]).model_dump(mode="json")
+    analysis = JobFitAnalysis(owner_id=owner.id, job_id=job.id, profile_id=profile.id,
+        idempotency_key="selection-test-1", payload_hash="x" * 64, job_hash=job_hash,
+        profile_hash=profile_hash, job_snapshot=snapshot,
+        profile_facts=[fact.model_dump(mode="json") for fact in facts], status="ready",
+        result=result, counts=job_fit_service.counts(result), provider="mock", model="mock",
+        prompt_version="test")
+    db_session.add(analysis); db_session.commit()
+    url = f"/api/jobs/{job.id}/application-skills"
+    body = {"analysis_id": str(analysis.id), "requirement_id": "req-1", "confirmed": True}
+    saved = fit_client.post(url, headers=headers(owner), json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["skill"] == "Kubernetes"
+    assert profile.skills == ["Python", "PostgreSQL"]
+    assert fit_client.post(url, headers=headers(owner), json=body).json()["id"] == saved.json()["id"]
+    assert fit_client.get(url, headers=headers(stranger)).status_code == 404
+    assert len(fit_client.get(url, headers=headers(owner)).json()["items"]) == 1
+    job.description = "Go required."
+    db_session.commit()
+    assert fit_client.get(url, headers=headers(owner)).json()["items"] == []
+    assert fit_client.post(url, headers=headers(owner), json=body).status_code == 409

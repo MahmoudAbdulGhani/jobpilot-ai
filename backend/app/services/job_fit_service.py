@@ -169,6 +169,13 @@ def validate_output(output: ProviderJobFitOutput, description: str, facts: list[
             continue
         saved["job_quote"] = exact_quote
         saved["importance"] = evidenced_importance(exact_quote, description)
+        if requirement.skill_name and requirement.assessment == "not_evidenced":
+            listed = next((fact for fact in facts if fact.path.startswith("skills[")
+                           and fact.value.strip().casefold() == requirement.skill_name.strip().casefold()), None)
+            if listed:
+                saved["assessment"] = "supported"
+                saved["candidate_fact_ids"] = [listed.id]
+                saved["explanation"] = "Saved profile lists this skill."
         verified.append(saved)
     if not verified:
         raise JobFitError(502, "The AI response contained no verifiable job requirements. No fit analysis was saved.")

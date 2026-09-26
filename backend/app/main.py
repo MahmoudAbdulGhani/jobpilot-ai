@@ -34,6 +34,7 @@ from app.api.routes.privacy import router as privacy_router
 from app.api.routes.qa import router as qa_router
 from app.api.routes.digest import router as digest_router
 from app.api.routes.job_fit import router as job_fit_router
+from app.api.routes.job_application_skills import router as job_application_skills_router
 from app.api.routes.rankings import router as rankings_router
 from app.api.routes.ats import router as ats_router
 from app.api.routes.profile import router as profile_router
@@ -111,6 +112,7 @@ def create_application() -> FastAPI:
     application.include_router(usage_router, prefix=settings.API_PREFIX)
     application.add_middleware(ScrubMailboxCallback)
     application.include_router(job_fit_router, prefix=settings.API_PREFIX)
+    application.include_router(job_application_skills_router, prefix=settings.API_PREFIX)
     application.include_router(rankings_router, prefix=settings.API_PREFIX)
     application.include_router(ats_router, prefix=settings.API_PREFIX)
     application.include_router(profile_router, prefix=settings.API_PREFIX)

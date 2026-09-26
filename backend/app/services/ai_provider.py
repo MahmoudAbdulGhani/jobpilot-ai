@@ -21,7 +21,7 @@ from app.schemas.qa import ProviderQaOutput
 
 PROMPT_VERSION = "profile-suggestions-v6"
 JOB_FIT_PROMPT_VERSION = "job-fit-v1"
-PACK_PROMPT_VERSION = "application-pack-v3"
+PACK_PROMPT_VERSION = "application-pack-v4"
 QA_PROMPT_VERSION = "qa-answer-v1"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
@@ -868,7 +868,11 @@ class OpenAIResponsesProvider:
                 model=self.model, store=False,
                 max_output_tokens=self.max_output_tokens,
                 instructions=(
-                    "Produce a tailored CV and cover letter using only confirmed CV text and saved profile facts. "
+                    "Produce a tailored CV and cover letter using confirmed CV text, saved profile facts, "
+                    "and application_skill_facts explicitly confirmed by the user for this job. "
+                    "Application skills are self-attested skills only: list all in the CV Skills section and "
+                    "use at most two of the most relevant naturally in the cover letter. Never attach them "
+                    "to a project, employer, time period, certification, or achievement without separate CV or profile evidence. "
                     "Prioritize job-relevant skills only when the confirmed CV or saved facts support them; "
                     "put required or preferred job skills without candidate evidence in review_notes, not in the CV. "
                     "Make the CV a readable professional document: a Curriculum vitae heading, a compact contact line, "

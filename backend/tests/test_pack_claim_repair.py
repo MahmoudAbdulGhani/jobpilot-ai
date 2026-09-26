@@ -8,6 +8,7 @@ from app.services.ai_provider import DeterministicTestProvider
 from app.services.application_pack_service import (
     PackError, UnsupportedPackClaim, include_confirmed_job_skills,
     repair_unsupported_claims, validate_generated,
+    source_hash,
 )
 
 
@@ -77,7 +78,7 @@ def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():
     skills_heading = next(index for index, block in enumerate(cv_blocks) if block.kind == "heading" and block.text == "Skills")
     assert cv_blocks[skills_heading + 1].kind == "bullet"
     assert "Kubernetes" in cv_blocks[skills_heading + 1].text
-    assert any(block.kind == "paragraph" and "My skills include: Kubernetes" in block.text
+    assert any(block.kind == "paragraph" and "I bring Kubernetes to this role." in block.text
                for block in checked.cover_letter.blocks)
     assert "included as sourced statements" in checked.review_notes[-1]
 
@@ -87,7 +88,7 @@ def test_job_skill_matching_uses_word_boundaries():
     source["job"]["description"] = "PostgreSQL required."
     source["profile_facts"].append({"id": "fact-6", "path": "skills[2]", "value": "SQL"})
     enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
-    assert not any("My skills include: SQL" == block.text for block in enhanced.cv.blocks)
+    assert not any("I bring SQL to this role." == block.text for block in enhanced.cover_letter.blocks)
 
 
 def test_unconfirmed_job_requirement_is_not_added_to_documents():
@@ -96,3 +97,36 @@ def test_unconfirmed_job_requirement_is_not_added_to_documents():
     enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
     assert all("Kubernetes" not in block.text for document in (enhanced.cv, enhanced.cover_letter)
                for block in document.blocks)
+
+
+def test_job_only_confirmed_skill_is_cited_without_changing_profile_or_cv():
+    source, output = draft()
+    old_profile = deepcopy(source["profile_facts"])
+    old_cv = source["cv_text"]
+    source["application_skill_facts"] = [{"id": "fact-6", "path": "application_skills[0]", "value": "Kubernetes"}]
+    source["application_skills"] = [{"id": "selection-1", "skill": "Kubernetes", "importance": "required"}]
+    enhanced = include_confirmed_job_skills(validate_generated(output, source), source)
+    checked = validate_generated(enhanced, source)
+    assert any(block.kind == "bullet" and "Kubernetes" in block.text and
+               any(ref.fact_id == "fact-6" for ref in block.evidence) for block in checked.cv.blocks)
+    assert any("Kubernetes" in block.text and any(ref.fact_id == "fact-6" for ref in block.evidence)
+               for block in checked.cover_letter.blocks)
+    assert source["profile_facts"] == old_profile and source["cv_text"] == old_cv
+
+
+def test_self_attested_skill_cannot_support_invented_project_experience():
+    source, output = draft()
+    source["application_skill_facts"] = [{"id": "fact-6", "path": "application_skills[0]", "value": "Kubernetes"}]
+    output["cv"]["blocks"][1] = {"id": "false-experience", "kind": "bullet",
+        "text": "Built Kubernetes systems at Acme", "evidence": [{"fact_id": "fact-6", "cv_quote": None}]}
+    with pytest.raises(UnsupportedPackClaim):
+        validate_generated(output, source)
+
+
+def test_legacy_pack_hash_is_stable_until_job_only_skills_are_selected():
+    source = {"job": {"description": "Kubernetes required"}, "profile_id": "profile-1",
+              "profile": {"skills": ["Python"]}, "resume_id": "resume-1",
+              "extraction_id": "extraction-1", "cv_text": "Python"}
+    old_hash = source_hash(source)
+    assert source_hash({**source, "application_skills": []}) == old_hash
+    assert source_hash({**source, "application_skills": [{"skill": "Kubernetes"}]}) != old_hash

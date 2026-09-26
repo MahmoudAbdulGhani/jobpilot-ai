@@ -124,9 +124,16 @@ def capture(db, owner_id, job_id, resume_id, lock=False):
                 continue
             facts.append({"id": f"fact-{len(facts) + 1}", "path": f"{path}[{index}]" if isinstance(value, list) else path,
                           "value": json.dumps(item, ensure_ascii=False, sort_keys=True) if isinstance(item, dict) else str(item)})
+    from app.services.job_application_skill_service import list_current
+    selected = list_current(db, owner_id, job_id)
+    application_skills = [{"id": str(item.id), "skill": item.skill, "importance": item.importance,
+                           "job_quote": item.job_quote, "analysis_id": str(item.analysis_id)} for item in selected]
+    application_skill_facts = [{"id": f"fact-{len(facts) + index + 1}", "path": f"application_skills[{index}]",
+                                "value": item["skill"]} for index, item in enumerate(application_skills)]
     snapshot = {
         "job": {"id": str(job.id), "title": job.title, "company": job.company, "location": job.location, "description": job.description},
         "profile_id": str(profile.id), "profile": values, "profile_facts": facts,
+        "application_skills": application_skills, "application_skill_facts": application_skill_facts,
         "resume_id": str(resume.id), "extraction_id": str(extraction.id), "cv_text": extraction.draft_text,
         "resume_name": resume.display_name, "reviewed_at": extraction.reviewed_at.isoformat(),
         "job_updated_at": job.updated_at.isoformat(), "profile_updated_at": profile.updated_at.isoformat(),
@@ -136,7 +143,10 @@ def capture(db, owner_id, job_id, resume_id, lock=False):
 
 def source_hash(snapshot):
     # Display names and timestamps/notes/archive are not candidate facts.
-    return digest({key: snapshot[key] for key in ("job", "profile_id", "profile", "resume_id", "extraction_id", "cv_text")})
+    values = {key: snapshot[key] for key in ("job", "profile_id", "profile", "resume_id", "extraction_id", "cv_text")}
+    if snapshot.get("application_skills"):
+        values["application_skills"] = snapshot["application_skills"]
+    return digest(values)
 
 
 def outdated(db, pack):
@@ -205,7 +215,7 @@ def canonical_structural_labels(output: PackProviderOutput, snapshot):
 def validate_generated(output, snapshot):
     from app.services.evidence_validation import supported_claim
     output = canonical_structural_labels(PackProviderOutput.model_validate(output), snapshot)
-    facts = {fact["id"]: fact["value"] for fact in snapshot["profile_facts"]}
+    facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
     for document in (output.cv, output.cover_letter):
         for block in document.blocks:
             if block.kind == "heading" and block.text not in HEADINGS:
@@ -241,7 +251,7 @@ def repair_unsupported_claims(output, snapshot):
     from app.services.evidence_validation import supported_claim, terms
 
     payload = PackProviderOutput.model_validate(output).model_dump(mode="json")
-    facts = {fact["id"]: fact["value"] for fact in snapshot["profile_facts"]}
+    facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
     repaired = 0
     for name in ("cv", "cover_letter"):
         for block in payload[name]["blocks"]:
@@ -282,12 +292,24 @@ def include_confirmed_job_skills(output, snapshot):
         return bool(re.search(r"(?<![\w+#.-])" + re.escape(skill.casefold()) + r"(?![\w+#.-])", text))
     relevant = [fact for fact in snapshot["profile_facts"]
                 if fact["path"].startswith("skills[") and mentions(job_text, fact["value"])]
+    relevant += snapshot.get("application_skill_facts", [])
     added = 0
     for name in ("cv", "cover_letter"):
         blocks = payload[name]["blocks"]
-        body = " ".join(block["text"].casefold() for block in blocks if block["kind"] != "heading")
-        missing = [fact for fact in relevant if not mentions(body, fact["value"])]
-        if missing and name == "cv" and len(blocks) <= 98 and not any(block["kind"] == "heading" and block["text"] == "Skills" for block in blocks):
+        if name == "cv":
+            section = next((index for index, block in enumerate(blocks)
+                            if block["kind"] == "heading" and block["text"] == "Skills"), None)
+            next_section = next((index for index in range(section + 1, len(blocks))
+                                 if blocks[index]["kind"] == "heading"), len(blocks)) if section is not None else 0
+            body = " ".join(block["text"].casefold() for block in blocks[(section + 1 if section is not None else 0):next_section])
+            candidates = relevant
+        else:
+            body = " ".join(block["text"].casefold() for block in blocks if block["kind"] != "heading")
+            candidates = [*relevant[:2], *snapshot.get("application_skill_facts", [])[:2]]
+        missing = [fact for fact in candidates if not mentions(body, fact["value"])]
+        if missing and name == "cv" and not any(block["kind"] == "heading" and block["text"] == "Skills" for block in blocks):
+            if len(blocks) >= 99:
+                raise PackError(502, "The generated CV is too long to include confirmed skills. Try a shorter confirmed CV.")
             heading_id = "confirmed-skills-heading"
             existing_ids = {block["id"] for block in blocks}
             while heading_id in existing_ids:
@@ -296,13 +318,13 @@ def include_confirmed_job_skills(output, snapshot):
         for offset in range(0, len(missing), 10):
             group = missing[offset:offset + 10]
             if len(blocks) >= 100:
-                break
+                raise PackError(502, "The generated CV is too long to include confirmed skills. Try a shorter confirmed CV.")
             block_id = f"confirmed-skills-{offset // 10 + 1}"
             existing_ids = {block["id"] for block in blocks}
             while block_id in existing_ids:
                 block_id += "-1"
             addition = {"id": block_id, "kind": "bullet" if name == "cv" else "paragraph",
-                        "text": ("" if name == "cv" else "My skills include: ") + ", ".join(fact["value"] for fact in group),
+                        "text": ("" if name == "cv" else "I bring ") + ", ".join(fact["value"] for fact in group) + ("" if name == "cv" else " to this role."),
                         "evidence": [{"fact_id": fact["id"], "cv_quote": None} for fact in group]}
             if name == "cv":
                 section = next((index for index, block in enumerate(blocks)
@@ -345,7 +367,8 @@ def generate(db, owner_id, job_id, body, settings):
     except SuggestionError as error:
         raise PackError(error.status_code, error.message) from None
     request_source = {
-        "job": snapshot["job"], "profile_facts": snapshot["profile_facts"], "cv_text": snapshot["cv_text"]}
+        "job": snapshot["job"], "profile_facts": snapshot["profile_facts"],
+        "application_skill_facts": snapshot["application_skill_facts"], "cv_text": snapshot["cv_text"]}
     if len(json.dumps(request_source, ensure_ascii=False)) > settings.JOBPILOT_AI_MAX_INPUT_CHARS:
         raise PackError(
             413, "The job, profile and CV text exceed the AI input limit. Use a shorter confirmed CV.")
@@ -379,10 +402,7 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        try:
-            output = validate_generated(result, snapshot)
-        except UnsupportedPackClaim:
-            output = validate_generated(repair_unsupported_claims(result, snapshot), snapshot)
+        output = validate_generated(result, snapshot)
         output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
         failure = None
     except PackError as error:

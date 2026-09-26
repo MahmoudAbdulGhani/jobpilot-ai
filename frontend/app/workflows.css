@@ -119,6 +119,38 @@
 .job-detail-page .pack-paper > p { margin: 0 0 11px; padding: 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: break-word; }
 .job-detail-page .pack-paper > p.pack-bullet { display: block; margin: 0 0 7px; padding-left: 12px; text-indent: -12px; line-height: 1.55; }
 .job-detail-page .pack-paper > p.pack-bullet span { margin-right: 7px; color: #244d3c; }
+
+.job-detail-page .fit-skill-section { margin-top: 28px; }
+.job-detail-page .fit-skill-intro { display: flex; justify-content: space-between; align-items: start; gap: 22px; margin-bottom: 18px; }
+.job-detail-page .fit-skill-intro h3 { margin: 0 0 7px; font: 600 25px/1.25 var(--serif); color: #20382d; }
+.job-detail-page .fit-skill-intro p { margin: 0; max-width: 62ch; color: var(--muted); line-height: 1.55; }
+.job-detail-page .fit-skill-count { flex: none; padding: 7px 11px; border-radius: 999px; background: #edf4ed; color: #28503a; font-size: 13px; font-weight: 650; }
+.job-detail-page .fit-skill-list { display: grid; gap: 12px; }
+.job-detail-page .fit-skill-card { padding: 19px 20px; border: 1px solid #dce6df; border-radius: 11px; background: #fff; }
+.job-detail-page .fit-skill-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.job-detail-page .fit-skill-card h4 { margin: 0; font: 600 21px/1.3 var(--serif); color: #1e3b2e; }
+.job-detail-page .fit-skill-priority { padding: 5px 10px; border-radius: 999px; background: #eef3ee; color: #335947; font-size: 12px; font-weight: 700; }
+.job-detail-page .fit-skill-priority.is-required { background: #f9efe2; color: #79531d; }
+.job-detail-page .fit-skill-evidence { margin: 14px 0 17px; }
+.job-detail-page .fit-skill-evidence > span { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.job-detail-page .fit-skill-evidence blockquote { margin: 8px 0 0; padding: 0 0 0 13px; border-left: 3px solid #b9d0bf; color: #415149; line-height: 1.55; }
+.job-detail-page .fit-skill-action { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.job-detail-page .fit-skill-action span { display: inline-flex; align-items: center; gap: 7px; color: #246443; font-weight: 650; }
+.job-detail-page .fit-skill-empty { display: flex; gap: 12px; padding: 20px; border: 1px solid #dce6df; border-radius: 11px; background: #f7faf6; color: #28503a; }
+.job-detail-page .fit-skill-empty p { margin: 5px 0 0; color: var(--muted); }
+.job-detail-page .pack-skill-note { display: flex; align-items: center; gap: 8px; color: #28503a; font-size: 14px; line-height: 1.5; }
+.job-detail-page .pack-selected-skills { margin: 20px 0; padding: 15px 18px; border-radius: 9px; background: #f3f7f2; color: #294b38; }
+.job-detail-page .pack-selected-skills p { margin: 5px 0 0; line-height: 1.5; }
+.job-detail-page .pack-document { padding: 20px; border: 1px solid #e0e7e2; border-radius: 12px; background: #f8faf8; }
+.job-detail-page .pack-paper { max-width: 760px; line-height: 1.55; }
+.job-detail-page .pack-paper h4.pack-paper-title { letter-spacing: -.015em; }
+.job-detail-page .pack-paper h4.pack-paper-section { letter-spacing: .06em; }
+@media (max-width: 720px) {
+  .job-detail-page .fit-skill-intro { flex-direction: column; gap: 12px; }
+  .job-detail-page .fit-skill-card { padding: 16px; }
+  .job-detail-page .pack-document { padding: 12px; }
+  .job-detail-page .pack-skill-note { align-items: flex-start; }
+}
 .job-detail-page .pack-block { padding: 16px 0; }
 .job-detail-page .pack-block-heading > span { font-size: 14px; letter-spacing: .25px; }
 .job-detail-page .pack-block-actions { gap: 16px; flex-wrap: wrap; }

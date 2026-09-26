@@ -32,6 +32,7 @@ EXPORT_COLUMNS = {
     "interview_live_voice": "session_id status expires_at confirmed_turns created_at updated_at",
     "profile_suggestion_sets": "id resume_id extraction_id source_text source_reviewed_at status suggestions provider model prompt_version outcome_message applied_at apply_result created_at updated_at",
     "job_fit_analyses": "id job_id profile_id job_snapshot profile_facts status result counts provider model prompt_version outcome_message created_at updated_at",
+    "job_application_skills": "id job_id analysis_id skill importance job_quote created_at updated_at",
     "email_applications": "id job_id application_id snapshot status approved_at dispatch_at provider_message_id provider_thread_id outcome provider_status created_at updated_at",
     "mailbox_connections": "id provider email capabilities status expires_at created_at updated_at",
     "mailbox_replies": "id mailbox_id attempt_id suggested_job_id job_id message_id thread_id rfc_message_id match_kind sender subject preview received_at corrected_at created_at updated_at",

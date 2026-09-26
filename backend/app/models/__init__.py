@@ -11,6 +11,7 @@ from app.models.candidate_profile import CandidateProfile
 from app.models.refresh_token import RefreshToken
 from app.models.profile_suggestion import ProfileSuggestionSet
 from app.models.job_fit_analysis import JobFitAnalysis
+from app.models.job_application_skill import JobApplicationSkill
 from app.models.job_ranking import JobRanking
 from app.models.ats_report import AtsReport
 from app.models.resume import Resume
@@ -44,6 +45,7 @@ __all__ = [
     "ResumeExtraction",
     "ProfileSuggestionSet",
     "JobFitAnalysis",
+    "JobApplicationSkill",
     "JobRanking",
     "AtsReport",
 ]

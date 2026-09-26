@@ -20,7 +20,7 @@ from app.models.data_use_consent import DataUseConsent
 OPTIONAL_KEYS = {
     "ai_profile_suggestions": "Confirmed CV text sent to the AI provider for profile suggestions.",
     "ai_job_fit": "Saved job description and profile facts sent to the AI provider for fit analysis.",
-    "ai_application_packs": "Confirmed CV text and profile facts sent to the pack provider for drafts.",
+    "ai_application_packs": "Confirmed CV text, saved job, profile facts and skills confirmed for this application sent to the pack provider for drafts.",
     "ai_qa": "Retrieved field excerpts sent to the AI provider for natural-language answers.",
     "ai_interview": "Selected interview evidence and answers sent for practice feedback.",
     "ai_voice": "Selected interview source, question text or microphone audio sent for speech processing and optional live practice.",

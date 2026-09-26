@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 WORD = re.compile(r"[^\W_]+(?:[+#.-][^\W_]+)*", re.UNICODE)
 NUMBER = re.compile(r"(?<!\w)\d+(?:[.,]\d+)*(?:%|\+)?")
-GRAMMAR = set("a an the and or of to in on at for from with by as is are was were be been being i my me we our your it its this that these those have has had do does did can will would am background includes include including skills skill experience education summary contact languages language degree company role title location start end date present current year years month months worked work working responsible responsibility responsibilities professional career application dear hiring team sincerely regards interested interest applying opportunity position contribute contribution".split())
+GRAMMAR = set("a an the and or of to in on at for from with by as is are was were be been being i my me we our your it its this that these those have has had do does did can will would am background includes include including skills skill experience education summary contact languages language degree company role title location start end date present current year years month months worked work working responsible responsibility responsibilities professional career application dear hiring team sincerely regards interested interest applying opportunity position contribute contribution bring".split())
 GRAMMAR -= {"experience", "year", "years", "month", "months", "worked", "work", "working",
             "responsible", "responsibility", "responsibilities", "degree", "professional"}
 
