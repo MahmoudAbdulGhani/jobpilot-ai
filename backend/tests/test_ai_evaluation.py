@@ -262,7 +262,7 @@ def test_schema_contract_violation_halts_eval_without_fallbacks():
     """Regression for the demonstrated pilot: plain-string experience/education
     is now a provider-boundary schema violation. Profile fails first with safe
     diagnostics, and fit/pack must NOT run after it."""
-    plan = evaluation.build_plan("groq", pilot=True)
+    plan = evaluation.build_plan("groq", pilot=True, env={"JOBPILOT_GROQ_TPM": "12000"})
     calls = []
 
     def parse(**kwargs):
@@ -301,7 +301,7 @@ def test_schema_contract_violation_halts_eval_without_fallbacks():
 def test_evidence_validation_failure_still_halts_eval_without_fallbacks():
     """Typed structured output can still fail the production evidence/contract
     validator (e.g. fabricated quotes); that must also stop the pilot run."""
-    plan = evaluation.build_plan("groq", pilot=True)
+    plan = evaluation.build_plan("groq", pilot=True, env={"JOBPILOT_GROQ_TPM": "12000"})
     calls = []
 
     def parse(**kwargs):
@@ -334,7 +334,7 @@ def test_evidence_validation_failure_still_halts_eval_without_fallbacks():
 def test_stop_on_failure_records_only_exception_class_for_provider_failure():
     """The transport failure's payload must be discarded; only the exception
     class name is recorded, matching the pack failure's retained diagnostics."""
-    plan = evaluation.build_plan("groq", pilot=True)
+    plan = evaluation.build_plan("groq", pilot=True, env={"JOBPILOT_GROQ_TPM": "12000"})
     payload = "synthetic-sensitive-error-0123456789"
 
     def parse(**kwargs):

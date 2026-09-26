@@ -24,6 +24,9 @@ def block_network(tmp_path, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
+    # Full mocked pilots use an explicit synthetic account limit. The
+    # documented 8,000 TPM fallback is tested separately below.
+    monkeypatch.setenv("JOBPILOT_GROQ_TPM", "12000")
     # Tests must never read the real private .env.
     monkeypatch.setattr(evaluation, "ENV_FILE", tmp_path / "no-private-env.env")
 
@@ -181,12 +184,13 @@ def test_actual_sdk_wire_contract_and_failures(task, mode):
 
 
 def test_groq_dry_run_and_live_rejection(tmp_path, monkeypatch):
+    monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
     monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "synthetic-secret")
     monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
     monkeypatch.setattr("openai.OpenAI", lambda **
                         kwargs: pytest.fail("Dry run constructed a network client"))
     path = tmp_path / "groq.json"
-    # The v2 pack prompt makes the longer non-pilot fixtures exceed 8,000.
+    # The current pack prompt makes the longer non-pilot fixtures exceed 8,000.
     # Keep the hard gate; full-suite planning is no longer expected to fit.
     with pytest.raises(SystemExit):
         evaluation.main(["--provider", "groq", "--output", str(path)])
@@ -241,9 +245,9 @@ def test_groq_pilot_dry_run_and_zero_network(tmp_path, monkeypatch):
         for r in plan["requests"]).quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
     assert plan["max_estimated_cost_usd"] == expected_cost
     assert plan["rates_usd_per_million"] == {"input": 0.075, "output": 0.30}
-    assert plan["tokens_per_minute"] == evaluation.GROQ_DOCUMENTED_LIMITS["tpm"]
-    assert plan["tokens_per_minute_source"] == "documented_assumption"
-    assert plan["limits_are_assumptions"] is True
+    assert plan["tokens_per_minute"] == 12000
+    assert plan["tokens_per_minute_source"] == "account_from_env"
+    assert plan["limits_are_assumptions"] is False
     assert plan["billing_plan_verified"] is False
     assert plan["free_tier_assumed_zero_cost"] is False
     assert "pacing_seconds" not in plan
@@ -349,12 +353,7 @@ def test_groq_pilot_mocked_live_execution(tmp_path, monkeypatch):
     assert construction_kwargs["max_retries"] == 0
 
     assert len(captured_requests) == 3
-    # Rolling-window scheduling under the 8,000 TPM documented assumption:
-    # profile (complete ~7880) dispatches at t=0; fit (~6198) would push the
-    # active window over 8000 while profile is still reserved, so it waits for
-    # the profile window to expire at t=60; pack (~7584) likewise waits for
-    # fit to expire at t=120. Ideal dispatch times 0/60/120.
-    assert len(slept) == 2
+    # The current complete reservations cannot share a 12,000 TPM window.
     assert slept == [pytest.approx(60.0), pytest.approx(60.0)]
     assert state["now"] == pytest.approx(120.0)
 
@@ -455,17 +454,16 @@ def test_groq_accepted_tpm_from_env_file_without_private_env(tmp_path, monkeypat
     assert report["plan"]["limits_are_assumptions"] is False
 
 
-def test_groq_tokens_per_minute_override_labeling():
+def test_groq_tokens_per_minute_override_labeling(monkeypatch):
     plan = evaluation.build_plan("groq", pilot=True,
                                  env={"JOBPILOT_GROQ_TPM": "12000"})
     assert plan["tokens_per_minute"] == 12000
     assert plan["tokens_per_minute_source"] == "account_from_env"
     assert plan["limits_are_assumptions"] is False
-    fallback = evaluation.build_plan("groq", pilot=True,
-                                     env={"JOBPILOT_GROQ_TPM": "0"})
-    assert fallback["tokens_per_minute"] == evaluation.GROQ_DOCUMENTED_LIMITS["tpm"]
-    assert fallback["tokens_per_minute_source"] == "documented_assumption"
-    assert fallback["limits_are_assumptions"] is True
+    monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
+    assert evaluation.groq_tokens_per_minute({"JOBPILOT_GROQ_TPM": "0"}) == (8000, "documented_assumption")
+    with pytest.raises(ValueError, match="complete input"):
+        evaluation.build_plan("groq", pilot=True)
 
 
 def test_groq_execute_reports_incomplete_as_failure_and_stops():
@@ -603,6 +601,7 @@ def test_task_selection_precedes_estimation(pilot, task, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["success", "failure"])
 def test_profile_only_cli_dry_and_mocked_live_share_plan(tmp_path, monkeypatch, mode):
+    monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
     monkeypatch.setenv("JOBPILOT_GROQ_API_KEY", "synthetic-key")
     monkeypatch.setenv("JOBPILOT_EVAL_ALLOW_LIVE", "1")
     monkeypatch.setattr(evaluation.logging, "disable", lambda *args: None)

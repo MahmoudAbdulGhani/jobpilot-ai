@@ -216,8 +216,6 @@ def main(argv=None):
     base_url = GROQ_BASE_URL if args.provider == "groq" else "https://api.openai.com/v1"
     plan = evaluation.build_plan(args.provider, pilot=True, task=args.task, env={},
                                  pack_reasoning="minimal" if args.provider == "openai" else None)
-    if args.provider == "groq" and plan["tokens_per_minute"] != 8000:
-        parser.error("This diagnostic requires the existing 8,000 TPM limit")
     request = prepared_request(args.task, args.provider)
     if hashlib.sha256(request).hexdigest() != plan["requests"][0]["sha256"]:
         parser.error("Prepared request differs from the plan")
@@ -265,7 +263,9 @@ def main(argv=None):
         temporary.replace(args.output)
     with OpenAI(api_key=key, base_url=base_url, max_retries=0, timeout=60,
                 http_client=httpx.Client(transport=transport, timeout=60, follow_redirects=False)) as client:
-        report = evaluation.execute(client, plan, save, scheduler=evaluation.TokenScheduler(8000) if args.provider == "groq" else None, stop_on_failure=True)
+        report = evaluation.execute(client, plan, save,
+            scheduler=evaluation.TokenScheduler(plan["tokens_per_minute"]) if args.provider == "groq" else None,
+            stop_on_failure=True)
     print(f"Stopped after {transport.count} HTTP attempt; see {args.output}")
     return 0 if report["results"][0]["status"] == "contract_pass" else 1
 

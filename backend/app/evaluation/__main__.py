@@ -50,7 +50,9 @@ GROQ_TPM_ENV = "JOBPILOT_GROQ_TPM"
 GROQ_MAX_OUTPUT_TOKENS = 1_500
 # Profile-only extraction evaluation; other capabilities retain their existing cap.
 GROQ_PROFILE_MAX_OUTPUT_TOKENS = 2_250
-# Pack-only pilot: final serialized input 6,336 + completion 1,664 = 8,000.
+# Pack-only pilot completion cap. The current pack prompt exceeds the
+# documented 8,000 TPM assumption, so a higher verified account limit is
+# required before a Groq pack pilot can be planned.
 GROQ_PACK_MAX_OUTPUT_TOKENS = 1_664
 # Reservation rates are Developer-tier documented pricing assumptions used
 # only to bound the pilot cost acknowledgment. The free tier does not imply

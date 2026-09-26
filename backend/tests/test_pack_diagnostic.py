@@ -15,6 +15,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.delenv("JOBPILOT_GROQ_TPM", raising=False)
+    monkeypatch.setenv("JOBPILOT_GROQ_TPM", "12000")
     monkeypatch.setattr(evaluation, "_load_dotenv", lambda: {})
 
 def test_pack_serialization_preserves_production_contract():
@@ -27,7 +28,7 @@ def test_pack_serialization_preserves_production_contract():
     plan = evaluation.build_plan("groq", pilot=True, task="pack")
     assert plan["max_requests"] == 1 and plan["retries"] == 0
     assert plan["requests"][0]["input_token_estimate"] == len(diagnostic.prepared_request("pack")) + 2048
-    assert plan["requests"][0]["complete_token_estimate"] <= 8000
+    assert plan["requests"][0]["complete_token_estimate"] <= plan["tokens_per_minute"] == 12000
 
 @pytest.mark.parametrize("provider_name", ["groq", "openai"])
 @pytest.mark.parametrize("mode", ["success", "structural_labels", "missing_notes", "missing_nullable", "missing_letter", "truncated", "incomplete", "empty_evidence", "unsupported_quote", "http_schema", "http_generation"])
@@ -101,16 +102,17 @@ def test_compact_pack_schema_preserves_every_validation_keyword():
             return [without_annotations(value) for value in node]
         return node
     assert proposed["text"]["format"]["schema"] == without_annotations(previous["text"]["format"]["schema"])
-    assert "application-pack-v3" == evaluation.PACK_PROMPT_VERSION
+    assert "application-pack-v4" == evaluation.PACK_PROMPT_VERSION
     assert "Keep each career fact associated only" in proposed["instructions"]
     assert "Never combine separately supported facts" in proposed["instructions"]
     assert "exact contiguous source excerpts" in proposed["instructions"]
     assert "evidence-free body kind" in proposed["instructions"]
     assert proposed["input"] == previous["input"]
     plan = evaluation.build_plan("groq", pilot=True, task="pack")
-    assert plan["requests"][0]["complete_token_estimate"] == 8000
+    assert plan["requests"][0]["complete_token_estimate"] == plan["requests"][0]["input_token_estimate"] + evaluation.GROQ_PACK_MAX_OUTPUT_TOKENS
+    assert plan["requests"][0]["complete_token_estimate"] <= plan["tokens_per_minute"]
     assert plan["requests"][0]["max_output_tokens"] > 1500
-    # The persisted baseline is also the exact OpenAI pack contract (no compaction).
+    # The schema compaction remains the same; the current prompt is version 4.
     from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
     from openai import OpenAI
     captured = []
@@ -193,7 +195,9 @@ def test_openai_comparison_uses_existing_adapter_and_same_source():
     baseline = json.loads((Path(__file__).resolve().parents[2] / "evidence/groq-pack-v2-dry-20260917.json").read_text())["request"]
     wire = json.loads(diagnostic.prepared_request("pack", "openai"))
     assert wire["input"] == baseline["input"]
-    assert wire["instructions"] == baseline["instructions"]
+    assert wire["instructions"] != baseline["instructions"]
+    assert "application_skill_facts" in wire["instructions"]
+    assert "Never combine separately supported facts" in wire["instructions"]
     assert wire["model"] == "gpt-5-mini"
     assert wire["max_output_tokens"] == 4000
     assert wire["reasoning"] == {"effort": "minimal"}
@@ -205,10 +209,21 @@ def test_openai_comparison_uses_existing_adapter_and_same_source():
 
 
 def test_minimal_diagnostic_changes_only_reasoning_in_serialized_request():
-    from pathlib import Path
-    original = json.loads((Path(__file__).resolve().parents[2] /
-        "evidence/openai-pack-comparison-dry-20260917.json").read_text())["request"]
+    from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
+    from openai import OpenAI
+    captured = []
+    def transport(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
+    with OpenAI(api_key="synthetic", max_retries=0,
+                http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        provider = OpenAIResponsesProvider(api_key="unused", model="gpt-5-mini", timeout=60,
+                                           max_output_tokens=4000, client=client)
+        with pytest.raises(ProviderFailure):
+            provider.create_pack(cases()[0]["source"])
+    original = captured[0]
     proposed = json.loads(diagnostic.prepared_request("pack", "openai"))
     assert proposed.pop("reasoning") == {"effort": "minimal"}
+    assert proposed.pop("service_tier") == "default"
     assert proposed == original
     assert "pack_reasoning" not in evaluation.build_plan("openai", pilot=True, task="pack")
