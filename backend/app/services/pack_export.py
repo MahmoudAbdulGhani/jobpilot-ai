@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -36,6 +37,12 @@ MAX_PAGES = 20
 MAX_EXPORT_BYTES = 5 * 1024 * 1024
 EXPORT_TIMEOUT_SECONDS = 10
 _WORKERS = threading.BoundedSemaphore(4)
+_BULLET_PREFIX = re.compile(r"^[\s\u2022\u25e6\u25cf\u25aa*\-]+")
+
+
+def display_text(kind: str, value: str) -> str:
+    """Present one list marker even when an older saved bullet contains one."""
+    return _BULLET_PREFIX.sub("", value).strip() if kind == "bullet" else value
 
 
 class ExportFailure(Exception):
@@ -53,7 +60,7 @@ def _validated_blocks(document: dict) -> list[dict[str, str]]:
     result = []
     total = 0
     for block in blocks:
-        if not isinstance(block, dict) or block.get("kind") not in {"heading", "paragraph", "bullet"}:
+        if not isinstance(block, dict) or block.get("kind") not in {"heading", "subheading", "paragraph", "bullet"}:
             raise ExportFailure(
                 "invalid", "The approved document contains an invalid block.")
         value = block.get("text")
@@ -68,7 +75,10 @@ def _validated_blocks(document: dict) -> list[dict[str, str]]:
             raise ExportFailure(
                 "limit", "The document exceeds the 30,000-character export limit.")
         # Deliberately drop identifiers, evidence, authorship and every audit field.
-        result.append({"kind": block["kind"], "text": value})
+        presented = display_text(block["kind"], value)
+        if not presented:
+            raise ExportFailure("invalid", "An approved bullet contains no text.")
+        result.append({"kind": block["kind"], "text": presented})
     return result
 
 
@@ -105,6 +115,11 @@ def _pdf(blocks: list[dict[str, str]], deadline: float) -> bytes:
         "heading": ParagraphStyle(
             "Pack heading", fontName="PackVeraBold", fontSize=11, leading=15,
             textColor=HexColor("#244d3c"), spaceBefore=17, spaceAfter=7,
+            keepWithNext=True, allowWidows=0, allowOrphans=0,
+        ),
+        "subheading": ParagraphStyle(
+            "Pack subheading", fontName="PackVeraBold", fontSize=10.5, leading=15,
+            textColor=HexColor("#202c26"), spaceBefore=10, spaceAfter=3,
             keepWithNext=True, allowWidows=0, allowOrphans=0,
         ),
         "paragraph": ParagraphStyle(
@@ -190,6 +205,13 @@ def _docx(blocks: list[dict[str, str]], deadline: float) -> bytes:
     heading.paragraph_format.keep_with_next = True
     heading.paragraph_format.space_before = Pt(12)
     heading.paragraph_format.space_after = Pt(7)
+    subheading = document.styles["Heading 2"]
+    subheading.font.name, subheading.font.size = "Arial", Pt(10.5)
+    subheading.font.bold = True
+    subheading.font.color.rgb = RGBColor.from_string("202C26")
+    subheading.paragraph_format.keep_with_next = True
+    subheading.paragraph_format.space_before = Pt(9)
+    subheading.paragraph_format.space_after = Pt(3)
     title = document.styles["Title"]
     title.font.name, title.font.size = "Arial", Pt(19)
     title.font.bold = True
@@ -201,7 +223,7 @@ def _docx(blocks: list[dict[str, str]], deadline: float) -> bytes:
     for block in blocks:
         _check_deadline(deadline)
         style = ("Title" if block["kind"] == "heading" and not title_used else
-                 {"heading": "Heading 1", "paragraph": "Normal", "bullet": "List Bullet"}[block["kind"]])
+                 {"heading": "Heading 1", "subheading": "Heading 2", "paragraph": "Normal", "bullet": "List Bullet"}[block["kind"]])
         if style == "Title":
             title_used = True
         paragraph = document.add_paragraph(block["text"], style)

@@ -1,6 +1,7 @@
 """Owner-scoped immutable source snapshots and append-only document revisions."""
 import copy
 import hashlib
+from itertools import combinations
 import json
 import re
 import unicodedata
@@ -226,6 +227,10 @@ def _claim_typography(text: str) -> str:
     return text.translate(_QUOTE_DASHES).translate(_QUOTE_MARKS)
 
 
+def _bullet_content(text: str) -> str:
+    return re.sub(r"^[\s\u2022\u25e6\u25cf\u25aa*\-]+", "", text).strip()
+
+
 def canonical_cv_quotes(output, snapshot):
     """Recover an exact CV span from a uniquely matching formatted citation.
 
@@ -276,15 +281,26 @@ def validate_generated(output, snapshot):
     facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
     for document in (output.cv, output.cover_letter):
         for block in document.blocks:
-            _validate_block(block, facts, snapshot["cv_text"])
+            _validate_block(block, facts, snapshot["cv_text"], snapshot)
     return output
 
 
-def _validate_block(block: ProviderBlock, facts: dict[str, str], cv_text: str):
+def _validate_block(block: ProviderBlock, facts: dict[str, str], cv_text: str, snapshot=None):
     from app.services.evidence_validation import supported_claim
 
-    if block.kind == "heading" and block.text not in HEADINGS:
+    candidate_title = block.kind == "heading" and block.text not in HEADINGS
+    if candidate_title and (len(block.evidence) != 1 or block.evidence[0].cv_quote != block.text
+                            or len(block.text) > 100):
         raise PackError(502, "The generated document included an unsupported heading. Retry generation.")
+    job = (snapshot or {}).get("job", {})
+    framing = {
+        ("letter-context", "subheading"): f"Application for {job.get('title')} at {job.get('company')}",
+        ("letter-greeting", "paragraph"): "Dear Hiring Team,",
+        ("letter-closing", "paragraph"): "I would welcome the opportunity to discuss this application.",
+        ("letter-signoff", "paragraph"): "Sincerely,",
+    }
+    if snapshot and not block.evidence and framing.get((block.id, block.kind)) == block.text:
+        return
     if block.kind != "heading" and not block.evidence:
         raise PackError(502, "A generated claim was missing source evidence. Retry generation.")
     for evidence in block.evidence:
@@ -294,10 +310,10 @@ def _validate_block(block: ProviderBlock, facts: dict[str, str], cv_text: str):
             raise PackError(502, "The generated document referenced an unknown profile fact.")
         if evidence.cv_quote is not None and (not evidence.cv_quote.strip() or evidence.cv_quote not in cv_text):
             raise PackError(502, "The generated document included an unsupported CV passage.")
-    if block.kind != "heading":
+    if block.kind != "heading" or candidate_title:
         passages = [passage for evidence in block.evidence
                     for passage in (facts.get(evidence.fact_id), evidence.cv_quote) if passage]
-        relationship_claim = bool(re.search(
+        relationship_claim = candidate_title or block.kind == "subheading" or bool(re.search(
             r"\b(?:use|used|using|applied|integrated|created|designed|implemented|architected|deployed|maintained|delivered)\b",
             block.text, re.I))
         if not supported_claim(_claim_typography(block.text), [_claim_typography(p) for p in passages],
@@ -351,12 +367,36 @@ def _remove_empty_sections(blocks: list[ProviderBlock], title: str) -> list[Prov
     return kept
 
 
-def _verified_cover_letter(snapshot, facts: dict[str, str]) -> list[ProviderBlock]:
-    """Build a short letter from individual saved facts after model prose fails.
+def _supported_sentences(block: ProviderBlock, facts: dict[str, str], snapshot) -> list[ProviderBlock]:
+    """Retain individually supported sentences with only their useful citations."""
+    if block.kind != "paragraph":
+        return []
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", block.text.strip())
+    if len(sentences) < 2:
+        return []
+    kept = []
+    for index, sentence in enumerate(sentences):
+        for count in range(1, min(3, len(block.evidence)) + 1):
+            for references in combinations(block.evidence, count):
+                candidate = block.model_copy(update={
+                    "id": f"{block.id[:56]}-s{index + 1}",
+                    "text": sentence,
+                    "evidence": list(references),
+                })
+                try:
+                    _validate_block(candidate, facts, snapshot["cv_text"], snapshot)
+                except PackError:
+                    continue
+                kept.append(candidate)
+                break
+            else:
+                continue
+            break
+    return kept
 
-    The role example is one line from one saved experience entry. Skills are
-    listed as skills; they are never attached to that role or a project.
-    """
+
+def _verified_cover_letter(snapshot, facts: dict[str, str]) -> list[ProviderBlock]:
+    """Build distinct, relevant paragraphs from individual saved facts."""
     from app.services.evidence_validation import terms
 
     blocks = [ProviderBlock(id="verified-letter-title", kind="heading", text="Cover letter", evidence=[])]
@@ -368,16 +408,36 @@ def _verified_cover_letter(snapshot, facts: dict[str, str]) -> list[ProviderBloc
                 "id": f"verified-letter-{len(blocks)}", "kind": "paragraph",
                 "text": text, "evidence": references,
             })
-            _validate_block(block, facts, snapshot["cv_text"])
+            _validate_block(block, facts, snapshot["cv_text"], snapshot)
         except (PackError, ValidationError):
             return
         blocks.append(block)
 
     profile = snapshot["profile_facts"]
+    application_facts = snapshot.get("application_skill_facts", [])
+    selections = snapshot.get("application_skills", [])
+    app_ranked = sorted(enumerate(application_facts), key=lambda entry: (
+        0 if entry[0] < len(selections) and selections[entry[0]].get("importance") == "required" else 1,
+        entry[0]))
+    skill_facts = [fact for _, fact in app_ranked]
+    skill_facts += [fact for fact in profile if fact["path"].startswith("skills[")]
+    selected, seen = [], set()
+    for fact in skill_facts:
+        skill = fact["value"].strip()
+        if skill.casefold() in seen or not terms(skill) & job_terms:
+            continue
+        selected.append(fact)
+        seen.add(skill.casefold())
+        if len(selected) == 3:
+            break
+
     headline = next((fact for fact in profile if fact["path"] == "headline"), None)
     if headline:
         value = headline["value"].strip().rstrip(".")
         add(f"I am a {value}.", [{"fact_id": headline["id"], "cv_quote": None}])
+    if selected:
+        add("I bring " + ", ".join(fact["value"] for fact in selected) + " to this role.",
+            [{"fact_id": fact["id"], "cv_quote": None} for fact in selected])
 
     examples = []
     for fact in profile:
@@ -398,34 +458,19 @@ def _verified_cover_letter(snapshot, facts: dict[str, str]) -> list[ProviderBloc
             overlap = len(terms(wording) & job_terms)
             if overlap:
                 examples.append((overlap, fact["id"], wording))
+    used = set()
     for _, fact_id, wording in sorted(examples, reverse=True):
+        if wording.casefold() in used:
+            continue
         sentence = "I " + wording[0].lower() + wording[1:]
         if sentence[-1] not in ".!?":
             sentence += "."
         before = len(blocks)
         add(sentence, [{"fact_id": fact_id, "cv_quote": None}])
         if len(blocks) > before:
+            used.add(wording.casefold())
+        if len(blocks) >= 5:
             break
-
-    application_facts = snapshot.get("application_skill_facts", [])
-    selections = snapshot.get("application_skills", [])
-    app_ranked = sorted(enumerate(application_facts), key=lambda entry: (
-        0 if entry[0] < len(selections) and selections[entry[0]].get("importance") == "required" else 1,
-        entry[0]))
-    skill_facts = [fact for _, fact in app_ranked]
-    skill_facts += [fact for fact in profile if fact["path"].startswith("skills[")]
-    selected, seen = [], set()
-    for fact in skill_facts:
-        skill = fact["value"].strip()
-        if skill.casefold() in seen or not terms(skill) & job_terms:
-            continue
-        selected.append(fact)
-        seen.add(skill.casefold())
-        if len(selected) == 4:
-            break
-    if selected:
-        add("I bring " + ", ".join(fact["value"] for fact in selected) + " to this role.",
-            [{"fact_id": fact["id"], "cv_quote": None} for fact in selected])
     return blocks
 
 
@@ -437,13 +482,26 @@ def salvage_generated(output, snapshot):
     omitted = {"cv": 0, "cover_letter": 0}
     replaced = {"cv": 0, "cover_letter": 0}
     rebuilt_letter = False
+    short_letter = False
     for name, title in (("cv", "Curriculum vitae"), ("cover_letter", "Cover letter")):
         retained = []
         for block in getattr(normalized, name).blocks:
+            if block.kind == "bullet":
+                cleaned = _bullet_content(block.text)
+                if not cleaned:
+                    omitted[name] += 1
+                    continue
+                block = block.model_copy(update={"text": cleaned})
             try:
-                _validate_block(block, facts, snapshot["cv_text"])
+                _validate_block(block, facts, snapshot["cv_text"], snapshot)
                 retained.append(block)
             except PackError as error:
+                sentences = (_supported_sentences(block, facts, snapshot)
+                             if isinstance(error, UnsupportedPackClaim) else [])
+                if sentences:
+                    retained.extend(sentences)
+                    omitted[name] += len(re.split(r"(?<=[.!?])\s+(?=[A-Z])", block.text.strip())) - len(sentences)
+                    continue
                 try:
                     repaired = (_readable_cv_passage(block, name, facts, snapshot["cv_text"])
                                 if isinstance(error, UnsupportedPackClaim) else None)
@@ -456,13 +514,18 @@ def salvage_generated(output, snapshot):
                     omitted[name] += 1
         retained = _remove_empty_sections(retained, title)
         body_count = sum(block.kind != "heading" for block in retained)
-        if name == "cover_letter" and body_count < 2:
-            retained = _verified_cover_letter(snapshot, facts)
-            body_count = sum(block.kind != "heading" for block in retained)
-            rebuilt_letter = body_count >= 2
+        if name == "cover_letter" and body_count < 4:
+            alternative = _verified_cover_letter(snapshot, facts)
+            alternative_count = sum(block.kind != "heading" for block in alternative)
+            if alternative_count > body_count:
+                retained = alternative
+                body_count = alternative_count
+                rebuilt_letter = True
         if body_count < 2:
             document = "CV" if name == "cv" else "cover letter"
             raise PackError(502, f"The AI draft did not retain enough supported {document} content. No documents were saved.")
+        if name == "cover_letter" and body_count < 4:
+            short_letter = True
         payload[name]["blocks"] = [block.model_dump(mode="json") for block in retained]
     if any(omitted.values()) or any(replaced.values()):
         payload["review_notes"] = [*payload["review_notes"][:19],
@@ -471,6 +534,9 @@ def salvage_generated(output, snapshot):
     if rebuilt_letter:
         payload["review_notes"] = [*payload["review_notes"][:19],
             "The cover letter was rebuilt from individual saved facts because too little AI wording passed evidence review. Check its relevance and accuracy before approval."]
+    if short_letter:
+        payload["review_notes"] = [*payload["review_notes"][:19],
+            "The confirmed sources support a shorter cover letter. Review it before approval; add more verified facts to your profile and CV if you want a fuller letter."]
     return PackProviderOutput.model_validate(payload)
 
 
@@ -539,6 +605,157 @@ def include_confirmed_job_skills(output, snapshot):
     return PackProviderOutput.model_validate(payload)
 
 
+def _cv_identity(snapshot):
+    """Use only exact spans from the reviewed CV for identity and contact."""
+    source = snapshot["cv_text"]
+    header_lines = source.splitlines()[:8]
+    name = None
+    for raw_line in header_lines[:5]:
+        line = re.sub(r"^\s*---\s*Page\s+\d+\s*---\s*", "", raw_line).strip()
+        candidate = re.match(r"^([^\d@|•]{4,80}?)(?:\s{3,}|$)", line)
+        if candidate:
+            words = candidate.group(1).strip().split()
+            if (2 <= len(words) <= 5 and all(word[0].isupper() for word in words)
+                    and not set(word.casefold() for word in words) & {"skills", "summary", "engineer", "developer", "experience"}):
+                name = candidate.group(1).strip()
+                break
+    header = "\n".join(header_lines)
+    email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", header)
+    phone_match = re.search(r"\+\d{1,3}(?:[\s.-]*\d){7,12}", header)
+    return name, email_match.group(0) if email_match else None, phone_match.group(0) if phone_match else None
+
+
+def _organize_cv(blocks: list[dict], snapshot) -> list[dict]:
+    """Give supported experience a role label; keep unassigned bullets neutral."""
+    experience = []
+    for fact in snapshot["profile_facts"]:
+        if not fact["path"].startswith("experience["):
+            continue
+        try:
+            value = json.loads(fact["value"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict) and value.get("title") and value.get("organization"):
+            experience.append((fact, value))
+
+    def source_key(value):
+        return re.sub(r"\W+", "", value.casefold())
+
+    ordered, highlights = [], []
+    section, active_role, project_quote, project_label, project_emitted = "", None, None, None, False
+    for block in blocks:
+        if block["kind"] == "heading":
+            section, active_role, project_quote, project_label, project_emitted = block["text"], None, None, None, False
+            ordered.append(block)
+            continue
+        if section == "Experience" and block["kind"] == "subheading":
+            # Recreate the role label from the exact fact associated with each bullet.
+            continue
+        if section == "Projects" and block["kind"] == "subheading":
+            project_label, project_emitted = block, False
+            project_quote = next((ref.get("cv_quote") for ref in block["evidence"] if ref.get("cv_quote")), None)
+            continue
+        if block["kind"] != "bullet" or section not in {"Experience", "Projects"}:
+            ordered.append(block)
+            continue
+        if section == "Experience":
+            role = next(((fact, value) for fact, value in experience if any(
+                ref.get("fact_id") == fact["id"] for ref in block["evidence"])), None)
+            if role is None:
+                role = next(((fact, value) for fact, value in experience
+                             if source_key(block["text"]) and source_key(block["text"]) in source_key(value.get("notes") or "")), None)
+            if role is None:
+                highlights.append(block)
+                continue
+            fact, value = role
+            if active_role != fact["id"]:
+                label = f"{value['title']} — {value['organization']}"
+                if value.get("period"):
+                    label += f" · {value['period']}"
+                ordered.append({"id": f"verified-role-{fact['id']}-{len(ordered)}", "kind": "subheading",
+                                "text": label, "evidence": [{"fact_id": fact["id"], "cv_quote": None}]})
+                active_role = fact["id"]
+            ordered.append(block)
+        else:
+            bullet_quote = next((ref.get("cv_quote") for ref in block["evidence"] if ref.get("cv_quote")), None)
+            source = snapshot["cv_text"]
+            if (project_quote and bullet_quote and 0 <= source.find(bullet_quote) - source.find(project_quote) <= 600
+                    and source.find(project_quote) >= 0):
+                if project_label and not project_emitted:
+                    ordered.append(project_label)
+                    project_emitted = True
+                ordered.append(block)
+            else:
+                highlights.append(block)
+
+    retained = _remove_empty_sections([ProviderBlock.model_validate(block) for block in ordered], ordered[0]["text"])
+    ordered = [block.model_dump(mode="json") for block in retained]
+    if highlights:
+        insert_at = next((index for index, block in enumerate(ordered)
+                          if block["kind"] == "heading" and block["text"] in {"Education", "Languages"}), len(ordered))
+        ordered[insert_at:insert_at] = [
+            {"id": "verified-highlights", "kind": "heading", "text": "Relevant highlights", "evidence": []},
+            *highlights,
+        ]
+    section_order = {name: index for index, name in enumerate((
+        "Contact", "Summary", "Skills", "Experience", "Projects", "Relevant highlights",
+        "Education", "Languages", "Additional information"))}
+    prefix, sections = [], []
+    current = None
+    for block in ordered:
+        if block["kind"] == "heading" and block["text"] in section_order:
+            current = [block]
+            sections.append(current)
+        elif current is None:
+            prefix.append(block)
+        else:
+            current.append(block)
+    sections.sort(key=lambda section: section_order[section[0]["text"]])
+    return [*prefix, *(block for section in sections for block in section)]
+
+
+def finish_documents(output, snapshot):
+    """Add reviewed identity and a deterministic formal letter frame."""
+    payload = output.model_dump(mode="json")
+    facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
+    name, email, phone = _cv_identity(snapshot)
+
+    def make(block_id, kind, text, quotes=()):
+        references = [{"fact_id": None, "cv_quote": quote} for quote in quotes]
+        block = ProviderBlock.model_validate({"id": block_id, "kind": kind, "text": text, "evidence": references})
+        _validate_block(block, facts, snapshot["cv_text"], snapshot)
+        return block.model_dump(mode="json")
+
+    cv = payload["cv"]["blocks"]
+    if name and cv and cv[0]["kind"] == "heading" and cv[0]["text"] == "Curriculum vitae":
+        cv[0] = make("verified-cv-name", "heading", name, [name])
+        cv[:] = [block for index, block in enumerate(cv) if index == 0 or block["text"] != name]
+    contact_parts = [part for part in (email, phone) if part]
+    if contact_parts and not any(all(part in block["text"] for part in contact_parts) for block in cv):
+        cv.insert(1 if cv and cv[0]["kind"] == "heading" else 0,
+                  make("verified-cv-contact", "paragraph", " | ".join(contact_parts), contact_parts))
+    payload["cv"]["blocks"] = _organize_cv(cv, snapshot)
+
+    letter_body = [block for block in payload["cover_letter"]["blocks"]
+                   if block["kind"] != "heading" and block["id"] not in {
+                       "letter-context", "letter-greeting", "letter-closing", "letter-signoff", "letter-signature"}]
+    letter = [make("formal-letter-title", "heading", "Cover letter")]
+    if name:
+        letter.append(make("verified-letter-name", "paragraph", name, [name]))
+    if contact_parts:
+        letter.append(make("verified-letter-contact", "paragraph", " | ".join(contact_parts), contact_parts))
+    job = snapshot["job"]
+    letter.append(make("letter-context", "subheading", f"Application for {job['title']} at {job['company']}"))
+    letter.append(make("letter-greeting", "paragraph", "Dear Hiring Team,"))
+    letter.extend(letter_body)
+    letter.append(make("letter-closing", "paragraph", "I would welcome the opportunity to discuss this application."))
+    letter.append(make("letter-signoff", "paragraph", "Sincerely,"))
+    if name:
+        letter.append(make("letter-signature", "paragraph", name, [name]))
+    payload["cover_letter"]["blocks"] = letter
+    return PackProviderOutput.model_validate(payload)
+
+
 def store_generated(document):
     return {"blocks": [{**block.model_dump(mode="json"), "origin": "ai"} for block in document.blocks]}
 
@@ -599,7 +816,7 @@ def generate(db, owner_id, job_id, body, settings):
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
         output = validate_generated(salvage_generated(result, snapshot), snapshot)
-        output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
+        output = validate_generated(finish_documents(include_confirmed_job_skills(output, snapshot), snapshot), snapshot)
         failure = None
     except PackError as error:
         output, failure = None, error.message

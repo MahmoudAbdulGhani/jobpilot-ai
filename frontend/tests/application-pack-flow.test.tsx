@@ -36,7 +36,9 @@ it('shows generated documents for review without edit controls', async () => {
   const block = { id: 'one', kind: 'paragraph', text: 'Python', origin: 'ai', evidence: [{ fact_id: 'fact-1', cv_quote: null }] };
   const heading = { id: 'title', kind: 'heading', text: 'Curriculum vitae', origin: 'ai', evidence: [] };
   const pack = { id: 'pack-1', job_id: job.id, resume_id: 'resume-1', status: 'ready', current_version: 1,
-    version: { id: 'version-1', number: 1, cv: { blocks: [heading, block] }, cover_letter: { blocks: [{ ...heading, text: 'Cover letter' }, block] }, approved_at: null, created_at: '2026-09-25T00:00:00Z' },
+    version: { id: 'version-1', number: 1, cv: { blocks: [heading, block,
+      { id: 'role', kind: 'subheading', text: 'Backend Engineer — Cedar Demo', origin: 'ai', evidence: [{ fact_id: 'fact-1', cv_quote: null }] },
+      { id: 'bullet', kind: 'bullet', text: '•• Python', origin: 'ai', evidence: [{ fact_id: 'fact-1', cv_quote: null }] }] }, cover_letter: { blocks: [{ ...heading, text: 'Cover letter' }, block] }, approved_at: null, created_at: '2026-09-25T00:00:00Z' },
     review_notes: [], source_snapshot: { cv_text: 'Python', profile_facts: [{ id: 'fact-1', path: 'skills[0]', value: 'Python' }],
       application_skill_facts: [{ id: 'fact-2', path: 'application_skills[0]', value: 'Kubernetes' }],
       application_skills: [{ id: 'selected-1', analysis_id: 'analysis-1', skill: 'Kubernetes', importance: 'required', job_quote: 'Kubernetes required' }],
@@ -47,9 +49,11 @@ it('shows generated documents for review without edit controls', async () => {
     if (path.includes('/fit-analyses/latest')) return Promise.resolve({ status: 'ready', is_outdated: false });
     return Promise.resolve({ items: [pack], total: 1, page: 1, page_size: 5 });
   });
-  render(<ApplicationPacks job={job} />);
+  const view = render(<ApplicationPacks job={job} />);
   expect(await screen.findByRole('button', { name: /Approve version 1/ })).not.toBeNull();
   expect(screen.getByRole('heading', { name: 'Curriculum vitae' }).classList.contains('pack-paper-title')).toBe(true);
+  expect(screen.getByRole('heading', { name: 'Backend Engineer — Cedar Demo' })).not.toBeNull();
+  expect(view.container.querySelector('.pack-bullet')?.textContent).toBe('•Python');
   expect(screen.getByText('Confirmed for this application')).toBeTruthy();
   expect(screen.getAllByText('Kubernetes').length).toBeGreaterThan(0);
   expect(screen.queryByRole('textbox', { name: /block 1 text/ })).toBeNull();

@@ -71,6 +71,24 @@ def test_docx_export_exact_unicode_headings_pagination_and_private_metadata():
     assert document.core_properties.last_modified_by == ""
 
 
+def test_legacy_bullet_markers_render_once_with_subheading_in_both_formats():
+    source = {"blocks": [
+        {"kind": "heading", "text": "Curriculum vitae"},
+        {"kind": "heading", "text": "Experience"},
+        {"kind": "subheading", "text": "Backend Engineer — Cedar Demo"},
+        {"kind": "bullet", "text": "•• Developed Python services."},
+    ]}
+    pdf = PdfReader(BytesIO(pack_export.render_document(source, "pdf")))
+    pdf_text = "\n".join(page.extract_text() for page in pdf.pages)
+    assert "Developed Python services." in pdf_text
+    assert "••" not in pdf_text
+    docx = Document(BytesIO(pack_export.render_document(source, "docx")))
+    assert docx.paragraphs[2].style.name == "Heading 2"
+    assert docx.paragraphs[3].style.name == "List Bullet"
+    assert docx.paragraphs[3].text == "Developed Python services."
+    assert source["blocks"][3]["text"] == "•• Developed Python services."
+
+
 def test_pdf_multipage_content_stays_in_order_and_headings_stay_with_text():
     blocks = []
     for number in range(1, 35):

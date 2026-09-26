@@ -12,6 +12,7 @@ import type { Job, JobFitAnalysis } from '../lib/types';
 type Documents = { cv: PackDocument; cover_letter: PackDocument };
 type DocumentName = keyof Documents;
 const names: Record<DocumentName, string> = { cv: 'Tailored CV', cover_letter: 'Cover letter' };
+const bulletText = (value: string) => value.replace(/^[\s•◦●▪*\-]+/u, '').trim();
 const messageFor = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed. Please try again.';
 const date = (value: string) => new Date(value).toLocaleString();
 
@@ -39,8 +40,9 @@ function DocumentReview({ name, document, original, editable, facts, application
     <div className={`pack-paper pack-paper-${name}`} aria-label={`${names[name]} preview`}>
       {document.blocks.map((block, index) => block.kind === 'heading'
         ? <h4 className={index === firstHeading ? 'pack-paper-title' : 'pack-paper-section'} key={block.id}>{block.text}</h4>
-        : block.kind === 'bullet' ? <p className="pack-bullet" key={block.id}><span aria-hidden="true">•</span>{block.text}</p>
-          : <p key={block.id}>{block.text}</p>)}
+        : block.kind === 'subheading' ? <h5 className="pack-paper-subheading" key={block.id}>{block.text}</h5>
+          : block.kind === 'bullet' ? <p className="pack-bullet" key={block.id}><span aria-hidden="true">•</span>{bulletText(block.text)}</p>
+            : <p key={block.id}>{block.text}</p>)}
     </div>
     <details className="pack-edit">
       <summary>{editable ? 'Review evidence and edit' : 'Review saved evidence'}</summary>
@@ -52,7 +54,7 @@ function DocumentReview({ name, document, original, editable, facts, application
         return <div className="pack-block" key={block.id}>
           <div className="pack-block-heading"><span>Block {index + 1}</span><span className="pack-origin">{userAuthored ? 'User-authored · check facts' : block.kind === 'heading' ? 'Document heading' : 'AI draft · verify evidence'}</span></div>
           {editable ? <>
-            <label className="pack-field">{names[name]} block {index + 1} style<select value={block.kind} onChange={event => update(index, { kind: event.target.value as PackBlock['kind'] })}><option value="heading">Heading</option><option value="paragraph">Paragraph</option><option value="bullet">Bullet</option></select></label>
+            <label className="pack-field">{names[name]} block {index + 1} style<select value={block.kind} onChange={event => update(index, { kind: event.target.value as PackBlock['kind'] })}><option value="heading">Heading</option><option value="subheading">Subheading</option><option value="paragraph">Paragraph</option><option value="bullet">Bullet</option></select></label>
             <label className="pack-field">{names[name]} block {index + 1} text<textarea value={block.text} rows={block.kind === 'heading' ? 2 : 4} maxLength={2000} onChange={event => update(index, { text: event.target.value })} /></label>
             <div className="pack-block-actions"><button className="text-button" disabled={index === 0} aria-label={`Move ${names[name]} block ${index + 1} up`} onClick={() => move(index, -1)}>Move up</button><button className="text-button" disabled={index === document.blocks.length - 1} aria-label={`Move ${names[name]} block ${index + 1} down`} onClick={() => move(index, 1)}>Move down</button><button className="text-button" disabled={document.blocks.length === 1} aria-label={`Remove ${names[name]} block ${index + 1}`} onClick={() => onChange({ blocks: document.blocks.filter((_, current) => current !== index) })}>Remove</button></div>
           </> : <p className="preserve-lines">{block.text}</p>}

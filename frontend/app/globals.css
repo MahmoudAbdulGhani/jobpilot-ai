@@ -348,6 +348,7 @@ summary:focus-visible{outline:2px solid var(--forest);outline-offset:3px;border-
 .pack-paper{padding:26px 30px;border:1px solid var(--line);border-radius:6px;background:#fffefb;box-shadow:0 1px 2px #242f200d;margin-top:12px}
 .pack-paper h4{font-family:var(--serif);font-size:21px;font-weight:650;margin:18px 0 6px}
 .pack-paper h4:first-child{margin-top:0}
+.pack-paper .pack-paper-subheading{font-family:var(--sans);font-size:16px;font-weight:700;line-height:1.4;color:var(--ink);margin:12px 0 3px}
 .pack-paper>p{font-size:16px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;padding:2px 0}
 .pack-paper .pack-bullet{display:flex;gap:10px;align-items:flex-start;padding:2px 0}
 .pack-paper .pack-bullet span{color:var(--forest);line-height:1.55}

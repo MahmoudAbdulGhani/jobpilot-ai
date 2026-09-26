@@ -101,8 +101,14 @@ def test_compact_pack_schema_preserves_every_validation_keyword():
         if isinstance(node, list):
             return [without_annotations(value) for value in node]
         return node
-    assert proposed["text"]["format"]["schema"] == without_annotations(previous["text"]["format"]["schema"])
-    assert "application-pack-v4" == evaluation.PACK_PROMPT_VERSION
+    current_schema = proposed["text"]["format"]["schema"]
+    prior_schema = without_annotations(previous["text"]["format"]["schema"])
+    kind_enum = current_schema["$defs"]["ProviderBlock"]["properties"]["kind"]["enum"]
+    assert "subheading" in kind_enum
+    without_new_kind = json.loads(json.dumps(current_schema))
+    without_new_kind["$defs"]["ProviderBlock"]["properties"]["kind"]["enum"].remove("subheading")
+    assert without_new_kind == prior_schema
+    assert "application-pack-v5" == evaluation.PACK_PROMPT_VERSION
     assert "Keep each career fact associated only" in proposed["instructions"]
     assert "Never combine separately supported facts" in proposed["instructions"]
     assert "exact contiguous source excerpts" in proposed["instructions"]
@@ -112,7 +118,7 @@ def test_compact_pack_schema_preserves_every_validation_keyword():
     assert plan["requests"][0]["complete_token_estimate"] == plan["requests"][0]["input_token_estimate"] + evaluation.GROQ_PACK_MAX_OUTPUT_TOKENS
     assert plan["requests"][0]["complete_token_estimate"] <= plan["tokens_per_minute"]
     assert plan["requests"][0]["max_output_tokens"] > 1500
-    # The schema compaction remains the same; the current prompt is version 4.
+    # The provider request keeps the compact schema apart from the new block kind.
     from app.services.ai_provider import OpenAIResponsesProvider, ProviderFailure
     from openai import OpenAI
     captured = []
@@ -124,7 +130,9 @@ def test_compact_pack_schema_preserves_every_validation_keyword():
         provider = OpenAIResponsesProvider(api_key="unused", model="gpt-5-mini", timeout=60, max_output_tokens=1500, client=client)
         with pytest.raises(ProviderFailure):
             provider.create_pack(cases()[0]["source"])
-    assert captured[0]["text"] == previous["text"]
+    captured_text = json.loads(json.dumps(captured[0]["text"]))
+    captured_text["format"]["schema"]["$defs"]["ProviderBlock"]["properties"]["kind"]["enum"].remove("subheading")
+    assert captured_text == previous["text"]
     assert "reasoning" not in captured[0]
 
 

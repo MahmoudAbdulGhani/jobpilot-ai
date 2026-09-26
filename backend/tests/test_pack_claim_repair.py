@@ -7,7 +7,7 @@ import pytest
 from app.evaluation.fixtures import cases
 from app.services.ai_provider import DeterministicTestProvider
 from app.services.application_pack_service import (
-    PackError, UnsupportedPackClaim, include_confirmed_job_skills,
+    PackError, UnsupportedPackClaim, include_confirmed_job_skills, finish_documents,
     canonical_cv_quotes, salvage_generated, validate_generated,
     source_hash,
 )
@@ -120,6 +120,79 @@ def test_multiple_unsafe_blocks_and_empty_section_are_removed():
     assert "2 CV" in checked.review_notes[-1]
 
 
+def test_professional_frame_and_orphan_bullets_use_verified_context():
+    source, output = draft()
+    source["profile_facts"].append({"id": "fact-10", "path": "experience[1]", "value": json.dumps({
+        "title": "API Developer", "organization": "Cedar Demo", "period": "2022-2024",
+        "notes": "Developed Python booking APIs for customers."})})
+    output["cv"]["blocks"].extend([
+        {"id": "work-heading", "kind": "heading", "text": "Experience", "evidence": []},
+        {"id": "work-bullet", "kind": "bullet", "text": "•• Developed Python booking APIs for customers.",
+         "evidence": [{"fact_id": "fact-10", "cv_quote": None}]},
+        {"id": "project-heading", "kind": "heading", "text": "Projects", "evidence": []},
+        {"id": "project-bullet", "kind": "bullet", "text": "• Project: built a booking API",
+         "evidence": [{"fact_id": None, "cv_quote": "Project: built a booking API"}]},
+    ])
+    checked = validate_generated(finish_documents(salvage_generated(output, source), source), source)
+    cv = checked.cv.blocks
+    assert cv[0].text == "Alex Example" and cv[0].kind == "heading"
+    assert any(block.kind == "subheading" and "API Developer" in block.text for block in cv)
+    assert any(block.kind == "heading" and block.text == "Relevant highlights" for block in cv)
+    assert all(not block.text.startswith("•") for block in cv if block.kind == "bullet")
+    letter = checked.cover_letter.blocks
+    assert any(block.text == "Application for Backend Engineer at Harbor Demo" for block in letter)
+    assert any(block.text == "Dear Hiring Team," for block in letter)
+    assert any(block.text == "Sincerely," for block in letter)
+    assert letter[-1].text == "Alex Example"
+
+
+def test_sentence_level_salvage_keeps_supported_sentence_only():
+    source, output = draft()
+    block = output["cover_letter"]["blocks"][1]
+    block["text"] = "I bring Python to this role. I led Kubernetes deployment at Acme."
+    block["evidence"] = [{"fact_id": "fact-2", "cv_quote": None}]
+    checked = validate_generated(salvage_generated(output, source), source)
+    texts = [item.text for item in checked.cover_letter.blocks]
+    assert "I bring Python to this role." in texts
+    assert all("Kubernetes" not in text for text in texts)
+
+
+def test_later_reference_contact_is_not_used_as_applicant_contact():
+    source, output = draft()
+    source["cv_text"] += "\n\nProjects\nReference: reference@example.org, +1 202 555 0198"
+    checked = validate_generated(finish_documents(salvage_generated(output, source), source), source)
+    for document in (checked.cv, checked.cover_letter):
+        assert all("reference@example.org" not in block.text for block in document.blocks)
+
+
+def test_verified_header_contact_appears_in_both_documents():
+    source, output = draft()
+    source["cv_text"] = "Alex Example\nalex@example.org | +1 202 555 0101\n" + source["cv_text"]
+    checked = validate_generated(finish_documents(salvage_generated(output, source), source), source)
+    contact = "alex@example.org | +1 202 555 0101"
+    assert any(block.text == contact for block in checked.cv.blocks)
+    assert any(block.text == contact for block in checked.cover_letter.blocks)
+    assert checked.cover_letter.blocks[1].text == "Alex Example"
+
+
+def test_orphaned_project_subheading_is_removed_with_its_bullet_moved_to_highlights():
+    source, output = draft()
+    orphan = {"id": "orphan-project-bullet", "kind": "bullet", "text": "Backend engineer",
+              "evidence": [{"fact_id": None, "cv_quote": "Backend engineer"}]}
+    output["cv"]["blocks"].extend([
+        {"id": "projects", "kind": "heading", "text": "Projects", "evidence": []},
+        {"id": "project-label", "kind": "subheading", "text": "Project: built a booking API",
+         "evidence": [{"fact_id": None, "cv_quote": "Project: built a booking API"}]},
+        orphan,
+    ])
+    checked = validate_generated(finish_documents(salvage_generated(output, source), source), source)
+    texts = [block.text for block in checked.cv.blocks]
+    assert "Projects" not in texts
+    assert all(block.id != "project-label" for block in checked.cv.blocks)
+    assert "Relevant highlights" in texts
+    assert orphan["text"] in texts
+
+
 @pytest.mark.parametrize("document, label", [("cv", "CV"), ("cover_letter", "cover letter")])
 def test_insufficient_supported_document_has_specific_content_free_failure(document, label):
     source, output = draft()
@@ -149,7 +222,8 @@ def test_unsupported_cover_letter_rebuilds_from_verified_relevant_facts():
     assert "I developed Python booking APIs for customers." in letter_text
     assert "PostgreSQL" in letter_text
     assert "Kubernetes" not in letter_text
-    assert "rebuilt from individual saved facts" in checked.review_notes[-1]
+    assert any("rebuilt from individual saved facts" in note for note in checked.review_notes)
+    assert any("shorter cover letter" in note for note in checked.review_notes)
 
 
 def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():

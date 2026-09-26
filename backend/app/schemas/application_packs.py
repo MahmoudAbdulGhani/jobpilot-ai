@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 MAX_DOCUMENT_CHARS = 30_000
 HEADINGS = {"Summary", "Contact", "Experience", "Education", "Skills", "Projects",
-            "Languages", "Cover letter", "Curriculum vitae", "Additional information"}
+            "Languages", "Cover letter", "Curriculum vitae", "Additional information",
+            "Relevant highlights"}
 
 
 class StrictModel(BaseModel):
@@ -23,7 +24,7 @@ class ClaimEvidence(StrictModel):
 
 class EditableBlock(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    kind: Literal["heading", "paragraph", "bullet"]
+    kind: Literal["heading", "subheading", "paragraph", "bullet"]
     text: str = Field(min_length=1, max_length=2_000)
 
     @field_validator("text")

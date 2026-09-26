@@ -1,6 +1,6 @@
 export type PackBlock = {
   id: string;
-  kind: 'heading' | 'paragraph' | 'bullet';
+  kind: 'heading' | 'subheading' | 'paragraph' | 'bullet';
   text: string;
 };
 export type PackEvidence = { fact_id: string | null; cv_quote: string | null };
