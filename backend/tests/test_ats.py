@@ -188,6 +188,7 @@ def test_pack_generation_repairs_unsupported_wording_without_another_provider_ca
             calls.append(source)
             output = DeterministicTestProvider().create_pack(source).model_dump(mode="json")
             output["cv"]["blocks"][1]["text"] = "Accomplished professional at Acme"
+            output["cv"]["blocks"][1]["evidence"][0]["cv_quote"] = "Backend  Engineer at Acme"
             return output
 
     monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda _: MockProvider())
@@ -203,6 +204,7 @@ def test_pack_generation_repairs_unsupported_wording_without_another_provider_ca
         assert len(calls) == 1
         assert body["version"]["cv"]["blocks"][1]["text"] == "Backend Engineer at Acme"
         assert "exact cited source text" in " ".join(body["review_notes"])
+        assert "matched to exact passages" in " ".join(body["review_notes"])
     finally:
         client.app.dependency_overrides.pop(get_settings, None)
         client.app.dependency_overrides.pop(get_db, None)

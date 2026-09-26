@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -212,6 +213,63 @@ def canonical_structural_labels(output: PackProviderOutput, snapshot):
     return PackProviderOutput.model_validate(payload)
 
 
+_QUOTE_DASHES = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
+_QUOTE_MARKS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
+
+def _quote_char(char: str) -> str:
+    return unicodedata.normalize("NFKC", char).casefold().translate(_QUOTE_DASHES).translate(_QUOTE_MARKS)
+
+
+def _claim_typography(text: str) -> str:
+    return text.translate(_QUOTE_DASHES).translate(_QUOTE_MARKS)
+
+
+def canonical_cv_quotes(output, snapshot):
+    """Recover an exact CV span from a uniquely matching formatted citation.
+
+    Only whitespace and common typographic dash/quote variants may differ.
+    The returned citation is always a contiguous excerpt of the reviewed CV.
+    Ambiguous matches and changed words remain invalid for the strict validator.
+    """
+    payload = PackProviderOutput.model_validate(output).model_dump(mode="json")
+    source = snapshot["cv_text"]
+    compact, positions = [], []
+    for index, char in enumerate(source):
+        for normalized_char in _quote_char(char):
+            if not normalized_char.isspace():
+                compact.append(normalized_char)
+                positions.append(index)
+    compact_source = "".join(compact)
+    corrected = 0
+    for name in ("cv", "cover_letter"):
+        for block in payload[name]["blocks"]:
+            for evidence in block["evidence"]:
+                quote = evidence["cv_quote"]
+                if quote is None or quote in source:
+                    continue
+                trimmed = quote.strip()
+                if trimmed in source:
+                    evidence["cv_quote"] = trimmed
+                    corrected += 1
+                    continue
+                key = "".join(_quote_char(char) for char in quote if not char.isspace())
+                if len(key) < 8:
+                    continue
+                start = compact_source.find(key)
+                if start < 0 or compact_source.find(key, start + 1) >= 0:
+                    continue
+                original = source[positions[start]:positions[start + len(key) - 1] + 1]
+                if len(original) > 4_000:
+                    continue
+                evidence["cv_quote"] = original
+                corrected += 1
+    if corrected:
+        payload["review_notes"] = [*payload["review_notes"][:19],
+            f"{corrected} CV citation(s) were matched to exact passages in the confirmed text after formatting differences. Review the cited source before approval."]
+    return PackProviderOutput.model_validate(payload)
+
+
 def validate_generated(output, snapshot):
     from app.services.evidence_validation import supported_claim
     output = canonical_structural_labels(PackProviderOutput.model_validate(output), snapshot)
@@ -237,7 +295,7 @@ def validate_generated(output, snapshot):
             if block.kind != "heading":
                 passages = [passage for e in block.evidence
                             for passage in (facts.get(e.fact_id), e.cv_quote) if passage]
-                if not supported_claim(block.text, passages):
+                if not supported_claim(_claim_typography(block.text), [_claim_typography(p) for p in passages]):
                     raise UnsupportedPackClaim(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
     return output
 
@@ -269,7 +327,7 @@ def repair_unsupported_claims(output, snapshot):
                     raise PackError(502, "The generated document included an unsupported CV passage.")
             passages = [passage for item in evidence
                         for passage in (facts.get(item["fact_id"]), item["cv_quote"]) if passage]
-            if supported_claim(block["text"], passages):
+            if supported_claim(_claim_typography(block["text"]), [_claim_typography(p) for p in passages]):
                 continue
             # Replacing an unsupported action/experience sentence could hide
             # an invented relationship between a role, project, and skill.
@@ -416,7 +474,7 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(repair_unsupported_claims(result, snapshot), snapshot)
+        output = validate_generated(repair_unsupported_claims(canonical_cv_quotes(result, snapshot), snapshot), snapshot)
         output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
         failure = None
     except PackError as error:
@@ -574,7 +632,7 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
         raise
     try:
         result = ai_usage.bounded_call(lambda: provider.improve_pack(revision), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(repair_unsupported_claims(result, snap), snap)
+        output = validate_generated(repair_unsupported_claims(canonical_cv_quotes(result, snap), snap), snap)
         failure = None
     except PackError as error:
         output, failure = None, error.message

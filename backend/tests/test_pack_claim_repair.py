@@ -7,7 +7,7 @@ from app.evaluation.fixtures import cases
 from app.services.ai_provider import DeterministicTestProvider
 from app.services.application_pack_service import (
     PackError, UnsupportedPackClaim, include_confirmed_job_skills,
-    repair_unsupported_claims, validate_generated,
+    canonical_cv_quotes, repair_unsupported_claims, validate_generated,
     source_hash,
 )
 
@@ -34,6 +34,36 @@ def test_reworded_claim_uses_exact_cited_cv_text_and_keeps_supported_blocks():
     assert checked.cv.blocks[2].model_dump(mode="json") == untouched
     assert "exact cited source text" in checked.review_notes[-1]
     assert output["cv"]["blocks"][1]["text"] == "Accomplished professional Alex Example"
+
+
+def test_formatted_cv_quote_recovers_unique_exact_span_without_changing_source():
+    source, output = draft()
+    source["cv_text"] = source["cv_text"].replace(
+        "Engineer at Cedar Demo, 2021-2024", "Engineer   at Cedar Demo, 2021–2024")
+    block = next(block for block in output["cv"]["blocks"] if "Engineer at Cedar" in block["text"])
+    block["text"] = "Engineer at Cedar Demo, 2021-2024"
+    quote = block["evidence"][0]
+    assert quote["cv_quote"] not in source["cv_text"]
+    original = deepcopy(output)
+    with pytest.raises(PackError, match="unsupported CV passage"):
+        validate_generated(output, source)
+    checked = validate_generated(canonical_cv_quotes(output, source), source)
+    assert next(block for block in checked.cv.blocks if block.text.startswith("Engineer at Cedar")).evidence[0].cv_quote == "Engineer   at Cedar Demo, 2021–2024"
+    assert "matched to exact passages" in checked.review_notes[-1]
+    assert output == original
+
+
+def test_cv_quote_recovery_rejects_changed_words_and_ambiguous_matches():
+    source, output = draft()
+    output["cv"]["blocks"][1]["evidence"][0]["cv_quote"] = "Invented Example"
+    with pytest.raises(PackError, match="unsupported CV passage"):
+        validate_generated(canonical_cv_quotes(output, source), source)
+
+    source, output = draft()
+    source["cv_text"] += "\nBackend   engineer\nBackend engineer"
+    output["cv"]["blocks"][1]["evidence"][0]["cv_quote"] = "Backend  engineer"
+    with pytest.raises(PackError, match="unsupported CV passage"):
+        validate_generated(canonical_cv_quotes(output, source), source)
 
 
 def test_cover_letter_repair_does_not_hide_invented_relation():
