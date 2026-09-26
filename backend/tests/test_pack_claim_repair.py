@@ -36,14 +36,12 @@ def test_reworded_claim_uses_exact_cited_cv_text_and_keeps_supported_blocks():
     assert output["cv"]["blocks"][1]["text"] == "Accomplished professional Alex Example"
 
 
-def test_cover_letter_repair_uses_saved_fact_without_inventing_relation():
+def test_cover_letter_repair_does_not_hide_invented_relation():
     source, output = draft()
     block = output["cover_letter"]["blocks"][1]
     block["text"] = "I built Kubernetes systems with Python"
-    checked = validate_generated(repair_unsupported_claims(output, source), source)
-    assert checked.cover_letter.blocks[1].text == source["profile_facts"][0]["value"]
-    assert checked.cover_letter.blocks[1].evidence[0].fact_id == "fact-1"
-    assert "Kubernetes" not in checked.cover_letter.blocks[1].text
+    with pytest.raises(UnsupportedPackClaim):
+        validate_generated(repair_unsupported_claims(output, source), source)
 
 
 def test_invalid_citation_is_not_repaired_or_accepted():
@@ -53,6 +51,15 @@ def test_invalid_citation_is_not_repaired_or_accepted():
     block["evidence"] = [{"fact_id": None, "cv_quote": "Invented employer"}]
     with pytest.raises(PackError, match="unsupported CV passage"):
         validate_generated(repair_unsupported_claims(output, source), source)
+
+
+def test_repair_cannot_discard_bad_citation_beside_valid_one():
+    source, output = draft()
+    block = output["cv"]["blocks"][1]
+    block["text"] = "Invented employer"
+    block["evidence"].append({"fact_id": "fact-999", "cv_quote": None})
+    with pytest.raises(PackError, match="unknown profile fact"):
+        repair_unsupported_claims(output, source)
 
 
 def test_unsupported_claim_without_usable_source_still_fails():

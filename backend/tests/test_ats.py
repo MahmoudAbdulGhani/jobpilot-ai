@@ -162,6 +162,52 @@ def seed_source(db_session, owner, job):
     return resume
 
 
+def test_pack_generation_repairs_unsupported_wording_without_another_provider_call(
+        client, db_session, monkeypatch):
+    from app.services import application_pack_service
+    from app.services.ai_provider import DeterministicTestProvider
+
+    owner = make_user(db_session, "pack-repair-owner@jobpilot-test.com")
+    job = SavedJob(owner_id=owner.id, title="Backend Engineer", company="Cedar Labs",
+                   location="Remote", description=DESCRIPTION)
+    db_session.add(job)
+    db_session.commit()
+    resume = seed_source(db_session, owner, job)
+    grant_consent(db_session, owner.id, "ai_application_packs")
+    settings = get_settings().model_copy(update={
+        "JOBPILOT_AI_ENABLED": True, "JOBPILOT_AI_TEST_PROVIDER": True,
+        "E2E_TEST_MODE": True, "POSTGRES_DB": get_settings().POSTGRES_TEST_DB,
+    })
+    calls = []
+
+    class MockProvider:
+        name = "mock"
+        model = "mock-pack"
+
+        def create_pack(self, source):
+            calls.append(source)
+            output = DeterministicTestProvider().create_pack(source).model_dump(mode="json")
+            output["cv"]["blocks"][1]["text"] = "Accomplished professional at Acme"
+            return output
+
+    monkeypatch.setattr(application_pack_service, "pack_provider_for", lambda _: MockProvider())
+    caller = start(client, db_session, owner)
+    try:
+        client.app.dependency_overrides[get_settings] = lambda: settings
+        response = caller.post(f"/api/jobs/{job.id}/application-packs",
+                               json={"resume_id": str(resume.id), "idempotency_key": "pack-repair-001"},
+                               headers=auth(owner))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "ready"
+        assert len(calls) == 1
+        assert body["version"]["cv"]["blocks"][1]["text"] == "Backend Engineer at Acme"
+        assert "exact cited source text" in " ".join(body["review_notes"])
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+        client.app.dependency_overrides.pop(get_db, None)
+
+
 @pytest.mark.parametrize("revoke_at_dispatch", [False, True])
 def test_ats_improve_closed_loop(client, db_session, monkeypatch, revoke_at_dispatch):
     owner = make_user(db_session, "ats-improve-owner@jobpilot-test.com")

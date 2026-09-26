@@ -258,9 +258,23 @@ def repair_unsupported_claims(output, snapshot):
             if block["kind"] == "heading":
                 continue
             evidence = block["evidence"]
+            # A wording repair must never hide a bad reference by replacing it
+            # with another citation from the same block.
+            for item in evidence:
+                if not item["fact_id"] and not (item["cv_quote"] or "").strip():
+                    raise PackError(502, "The generated document included empty evidence.")
+                if item["fact_id"] and item["fact_id"] not in facts:
+                    raise PackError(502, "The generated document referenced an unknown profile fact.")
+                if item["cv_quote"] is not None and (not item["cv_quote"].strip() or item["cv_quote"] not in snapshot["cv_text"]):
+                    raise PackError(502, "The generated document included an unsupported CV passage.")
             passages = [passage for item in evidence
                         for passage in (facts.get(item["fact_id"]), item["cv_quote"]) if passage]
             if supported_claim(block["text"], passages):
+                continue
+            # Replacing an unsupported action/experience sentence could hide
+            # an invented relationship between a role, project, and skill.
+            if re.search(r"\b(worked|led|built|managed|developed|engineer|manager|employer|company|experience)\b",
+                         block["text"], re.I):
                 continue
             choices = []
             for item in evidence:
@@ -402,7 +416,7 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(result, snapshot)
+        output = validate_generated(repair_unsupported_claims(result, snapshot), snapshot)
         output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
         failure = None
     except PackError as error:
@@ -560,7 +574,7 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
         raise
     try:
         result = ai_usage.bounded_call(lambda: provider.improve_pack(revision), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(result, snap)
+        output = validate_generated(repair_unsupported_claims(result, snap), snap)
         failure = None
     except PackError as error:
         output, failure = None, error.message
