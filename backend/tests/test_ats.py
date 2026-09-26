@@ -1,9 +1,11 @@
 """ATS/readiness reports: explicit checks only, approved packs, owner isolation."""
 import uuid
 from datetime import datetime, timezone
+from io import BytesIO
 
 import pytest
 from fastapi import status
+from pypdf import PdfReader
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -203,7 +205,7 @@ def test_pack_generation_repairs_unsupported_wording_without_another_provider_ca
         assert body["status"] == "ready"
         assert len(calls) == 1
         assert body["version"]["cv"]["blocks"][1]["text"] == "Backend Engineer at Acme"
-        assert "exact cited source text" in " ".join(body["review_notes"])
+        assert "rewritten from one exact CV passage" in " ".join(body["review_notes"])
         assert "matched to exact passages" in " ".join(body["review_notes"])
     finally:
         client.app.dependency_overrides.pop(get_settings, None)
@@ -472,7 +474,7 @@ def test_pack_consent_revoked_after_reservation_finalizes_idempotently(client, d
         client.app.dependency_overrides.pop(get_db, None)
 
 
-def test_unsupported_draft_is_never_ready_and_approval_still_409(client, db_session, monkeypatch):
+def test_unsupported_block_is_omitted_and_download_requires_approval(client, db_session, monkeypatch):
     from app.services.ai_provider import DeterministicTestProvider
     from app.schemas.application_packs import PackProviderOutput
     from app.services import application_pack_service
@@ -506,15 +508,29 @@ def test_unsupported_draft_is_never_ready_and_approval_still_409(client, db_sess
                              headers=auth(owner))
         assert opened.status_code == status.HTTP_200_OK, opened.text
         body = opened.json()
-        assert body["status"] == "failed"
-        assert body["current_version"] == 0
-        assert "not supported" in body["outcome_message"]
+        assert body["status"] == "ready"
+        assert body["current_version"] == 1
+        assert all("booking API using Python" not in block["text"] for block in body["version"]["cover_letter"]["blocks"])
+        assert any("omitted" in note for note in body["review_notes"])
         ids = caller.get(f"/api/jobs/{job.id}/application-packs", headers=auth(owner)).json()["items"]
-        pack_id = next(item["id"] for item in ids if item["status"] == "failed")
-        blocked = caller.post(f"/api/jobs/{job.id}/application-packs/{pack_id}/approve",
-                              json={"expected_version": 1, "idempotency_key": "approve-unsupported"},
-                              headers=auth(owner))
+        pack_id = next(item["id"] for item in ids if item["status"] == "ready")
+        download = f"/api/jobs/{job.id}/application-packs/{pack_id}/versions/1/download"
+        blocked = caller.get(download, params={"document": "cv", "format": "pdf"}, headers=auth(owner))
         assert blocked.status_code == status.HTTP_409_CONFLICT, blocked.text
+        approved = caller.post(f"/api/jobs/{job.id}/application-packs/{pack_id}/approve",
+                               json={"expected_version": 1, "idempotency_key": "approve-unsupported"},
+                               headers=auth(owner))
+        assert approved.status_code == status.HTTP_200_OK, approved.text
+        for document in ("cv", "cover_letter"):
+            pdf = caller.get(download, params={"document": document, "format": "pdf"}, headers=auth(owner))
+            assert pdf.status_code == status.HTTP_200_OK, pdf.text
+            assert pdf.content.startswith(b"%PDF-")
+            pdf_text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf.content)).pages)
+            assert "booking API using Python" not in pdf_text
+            assert "Python" in pdf_text
+            docx = caller.get(download, params={"document": document, "format": "docx"}, headers=auth(owner))
+            assert docx.status_code == status.HTTP_200_OK, docx.text
+            assert docx.content.startswith(b"PK")
     finally:
         client.app.dependency_overrides.pop(get_settings, None)
         client.app.dependency_overrides.pop(get_db, None)

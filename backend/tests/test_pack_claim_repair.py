@@ -7,7 +7,7 @@ from app.evaluation.fixtures import cases
 from app.services.ai_provider import DeterministicTestProvider
 from app.services.application_pack_service import (
     PackError, UnsupportedPackClaim, include_confirmed_job_skills,
-    canonical_cv_quotes, repair_unsupported_claims, validate_generated,
+    canonical_cv_quotes, salvage_generated, validate_generated,
     source_hash,
 )
 
@@ -27,12 +27,12 @@ def test_reworded_claim_uses_exact_cited_cv_text_and_keeps_supported_blocks():
     with pytest.raises(UnsupportedPackClaim):
         validate_generated(output, source)
 
-    repaired = repair_unsupported_claims(output, source)
+    repaired = salvage_generated(output, source)
     checked = validate_generated(repaired, source)
     assert checked.cv.blocks[1].text == original_quote
     assert checked.cv.blocks[1].evidence[0].cv_quote == original_quote
     assert checked.cv.blocks[2].model_dump(mode="json") == untouched
-    assert "exact cited source text" in checked.review_notes[-1]
+    assert "rewritten from one exact CV passage" in checked.review_notes[-1]
     assert output["cv"]["blocks"][1]["text"] == "Accomplished professional Alex Example"
 
 
@@ -70,17 +70,19 @@ def test_cover_letter_repair_does_not_hide_invented_relation():
     source, output = draft()
     block = output["cover_letter"]["blocks"][1]
     block["text"] = "I built Kubernetes systems with Python"
-    with pytest.raises(UnsupportedPackClaim):
-        validate_generated(repair_unsupported_claims(output, source), source)
+    checked = validate_generated(salvage_generated(output, source), source)
+    assert all("Kubernetes" not in block.text for block in checked.cover_letter.blocks)
+    assert "1 cover-letter statement(s) were omitted" in checked.review_notes[-1]
 
 
-def test_invalid_citation_is_not_repaired_or_accepted():
+def test_invalid_citation_is_omitted_from_recoverable_draft():
     source, output = draft()
     block = output["cv"]["blocks"][1]
     block["text"] = "Invented employer"
     block["evidence"] = [{"fact_id": None, "cv_quote": "Invented employer"}]
-    with pytest.raises(PackError, match="unsupported CV passage"):
-        validate_generated(repair_unsupported_claims(output, source), source)
+    checked = validate_generated(salvage_generated(output, source), source)
+    assert all("Invented employer" not in block.text for block in checked.cv.blocks)
+    assert "1 CV" in checked.review_notes[-1]
 
 
 def test_repair_cannot_discard_bad_citation_beside_valid_one():
@@ -88,17 +90,43 @@ def test_repair_cannot_discard_bad_citation_beside_valid_one():
     block = output["cv"]["blocks"][1]
     block["text"] = "Invented employer"
     block["evidence"].append({"fact_id": "fact-999", "cv_quote": None})
-    with pytest.raises(PackError, match="unknown profile fact"):
-        repair_unsupported_claims(output, source)
+    checked = validate_generated(salvage_generated(output, source), source)
+    assert all("Invented employer" not in block.text for block in checked.cv.blocks)
 
 
-def test_unsupported_claim_without_usable_source_still_fails():
+def test_unsupported_claim_without_usable_source_is_omitted():
     source, output = draft()
     block = output["cv"]["blocks"][1]
     block["text"] = "Invented employer"
     block["evidence"] = []
-    with pytest.raises(PackError, match="missing source evidence"):
-        validate_generated(repair_unsupported_claims(output, source), source)
+    checked = validate_generated(salvage_generated(output, source), source)
+    assert all("Invented employer" not in block.text for block in checked.cv.blocks)
+
+
+def test_multiple_unsafe_blocks_and_empty_section_are_removed():
+    source, output = draft()
+    blocks = output["cv"]["blocks"]
+    blocks.insert(2, {"id": "empty-section", "kind": "heading", "text": "Projects", "evidence": []})
+    blocks.insert(3, {"id": "false-project", "kind": "bullet", "text": "Built an unrelated project",
+                      "evidence": [{"fact_id": None, "cv_quote": "Made-up CV line"}]})
+    blocks.insert(4, {"id": "next-section", "kind": "heading", "text": "Experience", "evidence": []})
+    blocks.insert(5, {"id": "false-experience", "kind": "bullet", "text": "Led a fictional team",
+                      "evidence": [{"fact_id": "fact-999", "cv_quote": None}]})
+    checked = validate_generated(salvage_generated(output, source), source)
+    texts = [block.text for block in checked.cv.blocks]
+    assert "Projects" not in texts and texts.count("Experience") == 1
+    assert "Built an unrelated project" not in texts and "Led a fictional team" not in texts
+    assert "2 CV" in checked.review_notes[-1]
+
+
+@pytest.mark.parametrize("document, label", [("cv", "CV"), ("cover_letter", "cover letter")])
+def test_insufficient_supported_document_has_specific_content_free_failure(document, label):
+    source, output = draft()
+    for block in output[document]["blocks"]:
+        if block["kind"] != "heading":
+            block["evidence"] = [{"fact_id": "fact-999", "cv_quote": None}]
+    with pytest.raises(PackError, match=f"not retain enough supported {label} content"):
+        salvage_generated(output, source)
 
 
 def test_job_relevant_confirmed_skill_is_in_both_documents_with_fact_evidence():
@@ -151,6 +179,25 @@ def test_job_only_confirmed_skill_is_cited_without_changing_profile_or_cv():
     assert source["profile_facts"] == old_profile and source["cv_text"] == old_cv
 
 
+def test_required_application_skills_take_priority_in_cover_letter():
+    source, output = draft()
+    source["application_skills"] = [
+        {"skill": "Docker", "importance": "preferred"},
+        {"skill": "Kubernetes", "importance": "required"},
+        {"skill": "Terraform", "importance": "required"},
+    ]
+    source["application_skill_facts"] = [
+        {"id": f"fact-{len(source['profile_facts']) + index + 1}", "path": f"application_skills[{index}]", "value": skill["skill"]}
+        for index, skill in enumerate(source["application_skills"])
+    ]
+    checked = validate_generated(include_confirmed_job_skills(validate_generated(output, source), source), source)
+    cv_text = " ".join(block.text for block in checked.cv.blocks)
+    letter_text = " ".join(block.text for block in checked.cover_letter.blocks)
+    assert all(skill in cv_text for skill in ("Docker", "Kubernetes", "Terraform"))
+    assert "Kubernetes" in letter_text and "Terraform" in letter_text
+    assert "Docker" not in letter_text
+
+
 def test_self_attested_skill_cannot_support_invented_project_experience():
     source, output = draft()
     source["application_skill_facts"] = [{"id": "fact-6", "path": "application_skills[0]", "value": "Kubernetes"}]
@@ -158,6 +205,20 @@ def test_self_attested_skill_cannot_support_invented_project_experience():
         "text": "Built Kubernetes systems at Acme", "evidence": [{"fact_id": "fact-6", "cv_quote": None}]}
     with pytest.raises(UnsupportedPackClaim):
         validate_generated(output, source)
+
+
+def test_separate_skill_and_project_citations_cannot_create_a_relationship():
+    source, output = draft()
+    source["application_skill_facts"] = [{"id": "fact-6", "path": "application_skills[0]", "value": "Kubernetes"}]
+    source["cv_text"] += "\nBooking Project"
+    output["cv"]["blocks"][1] = {"id": "false-project-skill", "kind": "bullet",
+        "text": "Used Kubernetes on Booking Project",
+        "evidence": [{"fact_id": "fact-6", "cv_quote": None},
+                     {"fact_id": None, "cv_quote": "Booking Project"}]}
+    with pytest.raises(UnsupportedPackClaim):
+        validate_generated(output, source)
+    checked = validate_generated(salvage_generated(output, source), source)
+    assert all("Used Kubernetes on Booking Project" != block.text for block in checked.cv.blocks)
 
 
 def test_legacy_pack_hash_is_stable_until_job_only_skills_are_selected():

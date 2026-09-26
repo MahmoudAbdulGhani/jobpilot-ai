@@ -21,6 +21,7 @@ from app.schemas.application_packs import (
     PackResponse,
     PackVersionList,
     PackVersionResponse,
+    ProviderBlock,
 )
 from app.schemas.profile import CandidateProfileUpdate
 from app.services import ai_usage
@@ -271,88 +272,119 @@ def canonical_cv_quotes(output, snapshot):
 
 
 def validate_generated(output, snapshot):
-    from app.services.evidence_validation import supported_claim
     output = canonical_structural_labels(PackProviderOutput.model_validate(output), snapshot)
     facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
     for document in (output.cv, output.cover_letter):
         for block in document.blocks:
-            if block.kind == "heading" and block.text not in HEADINGS:
-                raise PackError(
-                    502, "The generated document included an unsupported heading. Retry generation.")
-            if block.kind != "heading" and not block.evidence:
-                raise PackError(
-                    502, "A generated claim was missing source evidence. Retry generation.")
-            for evidence in block.evidence:
-                if not evidence.fact_id and not (evidence.cv_quote or "").strip():
-                    raise PackError(
-                        502, "The generated document included empty evidence.")
-                if evidence.fact_id and evidence.fact_id not in facts:
-                    raise PackError(
-                        502, "The generated document referenced an unknown profile fact.")
-                if evidence.cv_quote is not None and (not evidence.cv_quote.strip() or evidence.cv_quote not in snapshot["cv_text"]):
-                    raise PackError(
-                        502, "The generated document included an unsupported CV passage.")
-            if block.kind != "heading":
-                passages = [passage for e in block.evidence
-                            for passage in (facts.get(e.fact_id), e.cv_quote) if passage]
-                if not supported_claim(_claim_typography(block.text), [_claim_typography(p) for p in passages]):
-                    raise UnsupportedPackClaim(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
+            _validate_block(block, facts, snapshot["cv_text"])
     return output
 
 
-def repair_unsupported_claims(output, snapshot):
-    """Replace unsupported prose with one exact, cited source passage.
+def _validate_block(block: ProviderBlock, facts: dict[str, str], cv_text: str):
+    from app.services.evidence_validation import supported_claim
 
-    This keeps the model's choice of relevant evidence, never adds a candidate
-    fact, and still requires the entire repaired draft to pass validation.
-    """
+    if block.kind == "heading" and block.text not in HEADINGS:
+        raise PackError(502, "The generated document included an unsupported heading. Retry generation.")
+    if block.kind != "heading" and not block.evidence:
+        raise PackError(502, "A generated claim was missing source evidence. Retry generation.")
+    for evidence in block.evidence:
+        if not evidence.fact_id and not (evidence.cv_quote or "").strip():
+            raise PackError(502, "The generated document included empty evidence.")
+        if evidence.fact_id and evidence.fact_id not in facts:
+            raise PackError(502, "The generated document referenced an unknown profile fact.")
+        if evidence.cv_quote is not None and (not evidence.cv_quote.strip() or evidence.cv_quote not in cv_text):
+            raise PackError(502, "The generated document included an unsupported CV passage.")
+    if block.kind != "heading":
+        passages = [passage for evidence in block.evidence
+                    for passage in (facts.get(evidence.fact_id), evidence.cv_quote) if passage]
+        relationship_claim = bool(re.search(
+            r"\b(?:use|used|using|applied|integrated|created|designed|implemented|architected|deployed|maintained|delivered)\b",
+            block.text, re.I))
+        if not supported_claim(_claim_typography(block.text), [_claim_typography(p) for p in passages],
+                               single_passage=relationship_claim):
+            raise UnsupportedPackClaim(502, "The draft contains a claim not supported by its cited evidence. Review the source and try again.")
+
+
+def _readable_cv_passage(block: ProviderBlock, document_name: str, facts: dict[str, str], cv_text: str):
+    """Use one short cited CV passage; never join independent sources."""
     from app.services.evidence_validation import supported_claim, terms
 
-    payload = PackProviderOutput.model_validate(output).model_dump(mode="json")
+    if len(block.evidence) != 1:
+        return None
+    reference = block.evidence[0]
+    quote = reference.cv_quote
+    if reference.fact_id or not quote or quote not in cv_text or len(quote) > 400:
+        return None
+    claim_terms, source_terms = terms(_claim_typography(block.text)), terms(_claim_typography(quote))
+    overlap = claim_terms & source_terms
+    if not overlap:
+        return None
+    if source_terms & {"no", "not", "never", "without"} and not claim_terms & {"no", "not", "never", "without"}:
+        return None
+    wording = re.sub(r"\s+", " ", quote).strip()
+    wording = re.sub(r"^(?:[•*]\s*|-\s+)", "", wording)
+    if not wording or len(wording) > 400:
+        return None
+    if document_name == "cover_letter" and re.match(
+            r"^(?:built|developed|implemented|integrated|designed|created|managed|led|wrote)\b", wording, re.I):
+        wording = "I " + wording[0].lower() + wording[1:]
+    if document_name == "cover_letter" and wording[-1] not in ".!?":
+        wording += "."
+    if not supported_claim(_claim_typography(wording), [_claim_typography(quote)]):
+        return None
+    candidate = block.model_copy(update={"text": wording})
+    _validate_block(candidate, facts, cv_text)
+    return candidate
+
+
+def _remove_empty_sections(blocks: list[ProviderBlock], title: str) -> list[ProviderBlock]:
+    kept = []
+    for index, block in enumerate(blocks):
+        if block.kind != "heading":
+            kept.append(block)
+            continue
+        next_heading = next((offset for offset in range(index + 1, len(blocks))
+                             if blocks[offset].kind == "heading"), len(blocks))
+        if block.text == title or any(next_block.kind != "heading"
+                                      for next_block in blocks[index + 1:next_heading]):
+            kept.append(block)
+    return kept
+
+
+def salvage_generated(output, snapshot):
+    """Keep supported statements and safe single-source rewrites; omit the rest."""
+    normalized = canonical_structural_labels(canonical_cv_quotes(output, snapshot), snapshot)
     facts = {fact["id"]: fact["value"] for fact in [*snapshot["profile_facts"], *snapshot.get("application_skill_facts", [])]}
-    repaired = 0
-    for name in ("cv", "cover_letter"):
-        for block in payload[name]["blocks"]:
-            if block["kind"] == "heading":
-                continue
-            evidence = block["evidence"]
-            # A wording repair must never hide a bad reference by replacing it
-            # with another citation from the same block.
-            for item in evidence:
-                if not item["fact_id"] and not (item["cv_quote"] or "").strip():
-                    raise PackError(502, "The generated document included empty evidence.")
-                if item["fact_id"] and item["fact_id"] not in facts:
-                    raise PackError(502, "The generated document referenced an unknown profile fact.")
-                if item["cv_quote"] is not None and (not item["cv_quote"].strip() or item["cv_quote"] not in snapshot["cv_text"]):
-                    raise PackError(502, "The generated document included an unsupported CV passage.")
-            passages = [passage for item in evidence
-                        for passage in (facts.get(item["fact_id"]), item["cv_quote"]) if passage]
-            if supported_claim(_claim_typography(block["text"]), [_claim_typography(p) for p in passages]):
-                continue
-            # Replacing an unsupported action/experience sentence could hide
-            # an invented relationship between a role, project, and skill.
-            if re.search(r"\b(worked|led|built|managed|developed|engineer|manager|employer|company|experience)\b",
-                         block["text"], re.I):
-                continue
-            choices = []
-            for item in evidence:
-                if item["cv_quote"] and item["cv_quote"] in snapshot["cv_text"]:
-                    choices.append((item["cv_quote"], {"fact_id": None, "cv_quote": item["cv_quote"]}))
-                elif item["fact_id"] in facts:
-                    choices.append((facts[item["fact_id"]], {"fact_id": item["fact_id"], "cv_quote": None}))
-            choices = [(text, ref) for text, ref in choices
-                       if len(text) <= 2_000 and supported_claim(text, [text])]
-            if not choices:
-                continue
-            original_terms = terms(block["text"])
-            replacement, reference = max(choices, key=lambda choice: len(original_terms & terms(choice[0])))
-            block["text"], block["evidence"] = replacement, [reference]
-            repaired += 1
-    if repaired:
-        payload["review_notes"] = [
-            *payload["review_notes"][:19],
-            f"{repaired} generated passage(s) were replaced with exact cited source text because their wording could not be verified. Review the wording and relevance before approval.",
-        ]
+    payload = normalized.model_dump(mode="json")
+    omitted = {"cv": 0, "cover_letter": 0}
+    replaced = {"cv": 0, "cover_letter": 0}
+    for name, title in (("cv", "Curriculum vitae"), ("cover_letter", "Cover letter")):
+        retained = []
+        for block in getattr(normalized, name).blocks:
+            try:
+                _validate_block(block, facts, snapshot["cv_text"])
+                retained.append(block)
+            except PackError as error:
+                try:
+                    repaired = (_readable_cv_passage(block, name, facts, snapshot["cv_text"])
+                                if isinstance(error, UnsupportedPackClaim) else None)
+                except PackError:
+                    repaired = None
+                if repaired:
+                    retained.append(repaired)
+                    replaced[name] += 1
+                else:
+                    omitted[name] += 1
+        retained = _remove_empty_sections(retained, title)
+        body_count = sum(block.kind != "heading" for block in retained)
+        if body_count < 2:
+            document = "CV" if name == "cv" else "cover letter"
+            raise PackError(502, f"The AI draft did not retain enough supported {document} content. No documents were saved.")
+        payload[name]["blocks"] = [block.model_dump(mode="json") for block in retained]
+    if any(omitted.values()) or any(replaced.values()):
+        payload["review_notes"] = [*payload["review_notes"][:19],
+            f"Evidence review: {replaced['cv']} CV and {replaced['cover_letter']} cover-letter statement(s) were rewritten from one exact CV passage; "
+            f"{omitted['cv']} CV and {omitted['cover_letter']} cover-letter statement(s) were omitted because their claims or citations could not be verified. Review both documents before approval."]
     return PackProviderOutput.model_validate(payload)
 
 
@@ -362,9 +394,15 @@ def include_confirmed_job_skills(output, snapshot):
     job_text = (snapshot.get("job", {}).get("description") or "").casefold()
     def mentions(text, skill):
         return bool(re.search(r"(?<![\w+#.-])" + re.escape(skill.casefold()) + r"(?![\w+#.-])", text))
-    relevant = [fact for fact in snapshot["profile_facts"]
-                if fact["path"].startswith("skills[") and mentions(job_text, fact["value"])]
-    relevant += snapshot.get("application_skill_facts", [])
+    profile_relevant = [fact for fact in snapshot["profile_facts"]
+                        if fact["path"].startswith("skills[") and mentions(job_text, fact["value"])]
+    application_facts = snapshot.get("application_skill_facts", [])
+    selections = snapshot.get("application_skills", [])
+    prioritized_application_facts = sorted(
+        enumerate(application_facts),
+        key=lambda entry: (0 if entry[0] < len(selections) and selections[entry[0]].get("importance") == "required" else 1,
+                           entry[0]))
+    relevant = [*profile_relevant, *application_facts]
     added = 0
     for name in ("cv", "cover_letter"):
         blocks = payload[name]["blocks"]
@@ -377,7 +415,7 @@ def include_confirmed_job_skills(output, snapshot):
             candidates = relevant
         else:
             body = " ".join(block["text"].casefold() for block in blocks if block["kind"] != "heading")
-            candidates = [*relevant[:2], *snapshot.get("application_skill_facts", [])[:2]]
+            candidates = [*(fact for _, fact in prioritized_application_facts[:2]), *profile_relevant[:2]]
         missing = [fact for fact in candidates if not mentions(body, fact["value"])]
         if missing and name == "cv" and not any(block["kind"] == "heading" and block["text"] == "Skills" for block in blocks):
             if len(blocks) >= 99:
@@ -474,7 +512,7 @@ def generate(db, owner_id, job_id, body, settings):
     try:
         result = ai_usage.bounded_call(lambda: provider.create_pack(
             request_source), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(repair_unsupported_claims(canonical_cv_quotes(result, snapshot), snapshot), snapshot)
+        output = validate_generated(salvage_generated(result, snapshot), snapshot)
         output = validate_generated(include_confirmed_job_skills(output, snapshot), snapshot)
         failure = None
     except PackError as error:
@@ -632,7 +670,7 @@ def improve_pack(db, owner_id, job_id, pack_id, *, report_id, target_version,
         raise
     try:
         result = ai_usage.bounded_call(lambda: provider.improve_pack(revision), settings.JOBPILOT_PACK_TIMEOUT_SECONDS)
-        output = validate_generated(repair_unsupported_claims(canonical_cv_quotes(result, snap), snap), snap)
+        output = validate_generated(salvage_generated(result, snap), snap)
         failure = None
     except PackError as error:
         output, failure = None, error.message
@@ -698,6 +736,8 @@ def list_versions(db, owner_id, job_id, pack_id, page, page_size):
 def get_download_version(db, owner_id, job_id, pack_id, version_number):
     pack = get_owned(db, owner_id, job_id, pack_id)
     version = version_for(db, pack, version_number)
+    if version.approved_at is None:
+        raise PackError(409, "Approve this pack version before downloading.")
     return pack, version
 
 
